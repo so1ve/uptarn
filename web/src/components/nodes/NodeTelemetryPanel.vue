@@ -84,8 +84,14 @@ function scalarSummaryNote(series: SeriesSnapshot): string | null {
     <div v-if="hasChecksOrSeries" class="space-y-3">
       <h2 class="text-sm font-semibold">Checks</h2>
       <div class="divide-y divide-default border-y border-default">
-        <div v-for="c in node.checks" :key="c.key" class="space-y-2 py-3.5">
-          <div class="flex items-center justify-between gap-3 text-[13px]">
+        <div v-for="c in node.checks" :key="c.key">
+          <button
+            v-if="c.detail"
+            :aria-expanded="isDetailOpen(c)"
+            class="group -mx-2 flex w-[calc(100%+1rem)] cursor-pointer items-center justify-between gap-3 rounded-md px-2 py-3.5 text-left text-[13px] transition-colors hover:bg-elevated/60 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary"
+            type="button"
+            @click="toggleDetail(c)"
+          >
             <div class="flex min-w-0 items-center gap-2">
               <StatusDot :status="c.status" />
               <span class="truncate font-medium">{{ c.label }}</span>
@@ -106,30 +112,54 @@ function scalarSummaryNote(series: SeriesSnapshot): string | null {
               >
                 {{ c.summary ?? c.status }}
               </span>
-              <button
-                v-if="c.detail"
-                :aria-expanded="isDetailOpen(c)"
-                :aria-label="`Toggle details for ${c.label}`"
-                class="inline-flex size-6 items-center justify-center rounded-md text-dimmed transition-colors hover:bg-elevated hover:text-default"
-                type="button"
-                @click="toggleDetail(c)"
+              <span
+                aria-hidden="true"
+                class="inline-flex size-6 items-center justify-center rounded-md text-dimmed transition-colors group-hover:text-default"
               >
                 <UIcon
                   class="size-3.5 transition-transform"
                   :class="isDetailOpen(c) ? 'rotate-180' : ''"
                   name="i-lucide-chevron-down"
                 />
-              </button>
+              </span>
+            </div>
+          </button>
+
+          <div
+            v-else
+            class="flex items-center justify-between gap-3 py-3.5 text-[13px]"
+          >
+            <div class="flex min-w-0 items-center gap-2">
+              <StatusDot :status="c.status" />
+              <span class="truncate font-medium">{{ c.label }}</span>
+              <UBadge
+                v-if="c.group"
+                class="shrink-0"
+                color="neutral"
+                size="xs"
+                variant="subtle"
+              >
+                {{ c.group }}
+              </UBadge>
+            </div>
+            <div class="flex shrink-0 items-center gap-2">
               <span
-                v-else-if="hasAnyCheckDetail"
+                class="font-mono text-xs"
+                :class="statusTextClass(c.status)"
+              >
+                {{ c.summary ?? c.status }}
+              </span>
+              <span
+                v-if="hasAnyCheckDetail"
                 aria-hidden="true"
                 class="size-6 shrink-0"
               />
             </div>
           </div>
+
           <pre
             v-if="c.detail && isDetailOpen(c)"
-            class="max-h-56 overflow-auto rounded-lg bg-muted p-3 font-mono text-xs leading-relaxed"
+            class="mb-3.5 max-h-56 overflow-auto rounded-lg bg-muted p-3 font-mono text-xs leading-relaxed"
             >{{ c.detail }}</pre>
         </div>
 

@@ -53,13 +53,13 @@ const onRemoveJob = (key: string) =>
 
     <div v-else class="divide-y divide-default border-y border-default">
       <div v-for="job in snap.jobs" :key="job.key" class="space-y-2 py-4">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <div class="flex min-w-0 flex-wrap items-center gap-2">
+        <div class="flex items-start justify-between gap-3">
+          <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <StatusDot :status="job.overall_status" />
             <span class="text-sm font-semibold">{{ job.label }}</span>
             <span
               v-if="job.label.toLowerCase() !== job.key.toLowerCase()"
-              class="font-mono text-xs text-dimmed"
+              class="hidden font-mono text-xs text-dimmed sm:inline"
             >
               {{ job.key }}
             </span>
@@ -87,10 +87,9 @@ const onRemoveJob = (key: string) =>
           </div>
 
           <div
-            class="flex shrink-0 items-center gap-2 font-mono text-xs tabular-nums"
+            class="flex shrink-0 items-center gap-2 pt-0.5 font-mono text-xs tabular-nums sm:pt-0"
           >
             <span
-              class="mr-1"
               :class="
                 job.overall_status === 'ok'
                   ? 'text-muted'
@@ -104,26 +103,28 @@ const onRemoveJob = (key: string) =>
               }}
             </span>
 
-            <UButton
-              class="font-sans"
-              color="neutral"
-              :loading="busy === `mute:${job.key}`"
-              size="xs"
-              variant="ghost"
-              @click="onToggleMute(job)"
-            >
-              {{ job.muted_until > snap.now ? "Unmute" : "Mute 1h" }}
-            </UButton>
+            <div class="hidden items-center gap-1 sm:flex">
+              <UButton
+                class="font-sans"
+                color="neutral"
+                :loading="busy === `mute:${job.key}`"
+                size="xs"
+                variant="ghost"
+                @click="onToggleMute(job)"
+              >
+                {{ job.muted_until > snap.now ? "Unmute" : "Mute 1h" }}
+              </UButton>
 
-            <ConfirmPopover
-              label="Remove"
-              :loading="busy === job.key"
-              @confirm="onRemoveJob(job.key)"
-            >
-              Remove
-              <strong>{{ job.label }}</strong>
-              ?
-            </ConfirmPopover>
+              <ConfirmPopover
+                label="Remove"
+                :loading="busy === job.key"
+                @confirm="onRemoveJob(job.key)"
+              >
+                Remove
+                <strong>{{ job.label }}</strong>
+                ?
+              </ConfirmPopover>
+            </div>
           </div>
         </div>
 
@@ -143,11 +144,42 @@ const onRemoveJob = (key: string) =>
                 : (job.last_summary ?? job.last_status)
             }}
           </span>
-          <span class="shrink-0 font-mono text-[11px] text-dimmed tabular-nums">
+          <span
+            class="hidden shrink-0 font-mono text-[11px] text-dimmed tabular-nums sm:inline"
+          >
             {{
               `Every ${formatDuration(job.interval_secs)}${job.last_duration_ms === null ? "" : `, ${formatMs(job.last_duration_ms)}`}`
             }}
           </span>
+        </div>
+
+        <div class="flex items-center justify-between gap-2 pl-4 sm:hidden">
+          <span class="font-mono text-[11px] text-dimmed tabular-nums">
+            {{
+              `Every ${formatDuration(job.interval_secs)}${job.last_duration_ms === null ? "" : `, ${formatMs(job.last_duration_ms)}`}`
+            }}
+          </span>
+          <div class="flex shrink-0 items-center gap-1">
+            <UButton
+              color="neutral"
+              :loading="busy === `mute:${job.key}`"
+              size="xs"
+              variant="ghost"
+              @click="onToggleMute(job)"
+            >
+              {{ job.muted_until > snap.now ? "Unmute" : "Mute 1h" }}
+            </UButton>
+
+            <ConfirmPopover
+              label="Remove"
+              :loading="busy === job.key"
+              @confirm="onRemoveJob(job.key)"
+            >
+              Remove
+              <strong>{{ job.label }}</strong>
+              ?
+            </ConfirmPopover>
+          </div>
         </div>
 
         <pre

@@ -122,40 +122,27 @@ const errorText = computed(() =>
         <StatusDot :status="dotStatus" />
       </div>
 
-      <div class="flex min-w-0 flex-1 items-start gap-2">
-        <a
-          v-if="displayLink"
-          class="group/link inline-flex min-w-0 flex-col gap-0.5 transition-colors hover:text-primary"
-          :href="displayLink.href"
-          rel="noreferrer"
-          target="_blank"
-          @click.stop
-        >
-          <span
-            class="truncate text-[13.5px] leading-5 font-semibold transition-colors group-hover/link:text-primary"
+      <div
+        class="min-w-0 flex-1 space-y-0.5 [&:has(.monitor-link:hover)_.monitor-link]:text-primary"
+      >
+        <div class="flex min-w-0 items-center gap-1.5">
+          <a
+            v-if="displayLink"
+            class="monitor-link truncate text-[13.5px] leading-5 font-semibold transition-colors"
+            :href="displayLink.href"
+            rel="noreferrer"
+            target="_blank"
+            @click.stop
           >
             {{ monitor.name }}
+          </a>
+          <span v-else class="truncate text-[13.5px] leading-5 font-semibold">
+            {{ monitor.name }}
           </span>
-          <span
-            class="inline-flex max-w-full items-center gap-1 font-mono text-[11.5px] text-dimmed transition-colors group-hover/link:text-primary"
-          >
-            <span class="truncate">{{ displayLink.text }}</span>
-            <UIcon class="size-3 shrink-0" name="i-lucide-external-link" />
-          </span>
-        </a>
-        <span v-else class="truncate text-[13.5px] leading-5 font-semibold">
-          {{ monitor.name }}
-        </span>
 
-        <div
-          v-if="
-            !monitor.enabled ||
-            (adminMon && (!adminMon.is_public || adminMon.muted_until > now))
-          "
-          class="flex h-5 shrink-0 items-center gap-1.5"
-        >
           <UBadge
             v-if="!monitor.enabled"
+            class="shrink-0"
             color="neutral"
             size="xs"
             variant="subtle"
@@ -164,6 +151,7 @@ const errorText = computed(() =>
           </UBadge>
           <UBadge
             v-if="adminMon && !adminMon.is_public"
+            class="shrink-0"
             color="neutral"
             size="xs"
             variant="subtle"
@@ -172,6 +160,7 @@ const errorText = computed(() =>
           </UBadge>
           <UBadge
             v-if="adminMon && adminMon.muted_until > now"
+            class="shrink-0"
             color="warning"
             size="xs"
             variant="subtle"
@@ -179,6 +168,18 @@ const errorText = computed(() =>
             Muted {{ formatRemaining(adminMon.muted_until, now) }}
           </UBadge>
         </div>
+
+        <a
+          v-if="displayLink"
+          class="monitor-link inline-flex max-w-full items-center gap-1 font-mono text-[11.5px] text-dimmed transition-colors"
+          :href="displayLink.href"
+          rel="noreferrer"
+          target="_blank"
+          @click.stop
+        >
+          <span class="truncate">{{ displayLink.text }}</span>
+          <UIcon class="size-3 shrink-0" name="i-lucide-external-link" />
+        </a>
       </div>
     </div>
 
@@ -278,9 +279,12 @@ const errorText = computed(() =>
       <span v-else-if="monitor.last_latency_ms === null" class="text-dimmed">
         -
       </span>
-      <span v-else class="inline-flex items-baseline gap-2">
-        <span v-if="adminMon" class="text-muted">
-          {{ adminMon.last_http_status }}
+      <span v-else class="inline-flex items-center gap-1.5">
+        <span
+          v-if="adminMon && adminMon.last_http_status !== null"
+          class="rounded bg-muted px-1.5 py-0.5 text-[10.5px] leading-none text-muted"
+        >
+          HTTP {{ adminMon.last_http_status }}
         </span>
         <span>{{ Math.round(monitor.last_latency_ms) }} ms</span>
       </span>
