@@ -24,103 +24,98 @@ const issuedToken = ref<IssuedToken | null>(null);
 const tokenModalOpen = ref(false);
 const syncGeneration = ref(0);
 
-let snapshotRefreshPromise: Promise<void> | null = null;
-let snapshotRefreshSeq = 0;
-let lastSnapshotFetchedAt = 0;
-
-let publicRefreshPromise: Promise<void> | null = null;
-let publicRefreshSeq = 0;
-let lastPublicFetchedAt = 0;
-
 const colorMode = useColorMode();
 const isDark = computed(() => colorMode.value === "dark");
-
 function toggleTheme() {
   colorMode.value = colorMode.value === "dark" ? "light" : "dark";
 }
+
+function createRefresher<T>(
+  url: string,
+  onData: (data: T, force: boolean) => void,
+  onError?: (err: unknown) => Promise<void> | void,
+) {
+  let inFlight: Promise<void> | null = null;
+  let seq = 0;
+  let lastFetchedAt = 0;
+
+  function refresh(options: { force?: boolean } = {}) {
+    if (!options.force && inFlight) {
+      return inFlight;
+    }
+    const id = ++seq;
+    const task = (async () => {
+      try {
+        const next = await apiFetch<T>(url);
+        if (id === seq) {
+          onData(next, Boolean(options.force));
+          lastFetchedAt = Date.now();
+        }
+      } catch (err) {
+        if (id === seq && onError) {
+          await onError(err);
+        }
+      } finally {
+        if (id === seq) {
+          inFlight = null;
+        }
+      }
+    })();
+    inFlight = task;
+
+    return task;
+  }
+
+  return {
+    refresh,
+    markFetched: (ts = Date.now()) => {
+      lastFetchedAt = ts;
+    },
+    lastFetchedAt: () => lastFetchedAt,
+  };
+}
+
+const adminRefresher = createRefresher<DashboardSnapshot>(
+  "/api/v1/admin/snapshot",
+  (next, force) => {
+    snapshot.value = next;
+    if (force) {
+      syncGeneration.value += 1;
+    }
+  },
+  async (err) => {
+    if (err instanceof ApiError && err.status === 401) {
+      await loadState();
+    }
+  },
+);
+
+const publicRefresher = createRefresher<PublicStatusSnapshot>(
+  "/api/v1/public/status",
+  (next) => {
+    publicStatus.value = next;
+  },
+);
+
+const refreshSnapshot = adminRefresher.refresh;
+const refreshPublicStatus = publicRefresher.refresh;
 
 async function loadState() {
   loadError.value = null;
   try {
     const boot = await apiFetch<BootPayload>("/api/v1/boot");
-    const now = Date.now();
     if (boot.mode === "admin") {
       snapshot.value = boot.snapshot;
       publicStatus.value = null;
-      lastSnapshotFetchedAt = now;
+      adminRefresher.markFetched();
     } else {
       snapshot.value = null;
       publicStatus.value = boot.status;
-      lastPublicFetchedAt = now;
+      publicRefresher.markFetched();
     }
   } catch (err) {
     loadError.value = errorMessage(err);
   }
-}
-
-async function refreshSnapshot(options: { force?: boolean } = {}) {
-  if (!options.force && snapshotRefreshPromise) {
-    return snapshotRefreshPromise;
-  }
-
-  const seq = ++snapshotRefreshSeq;
-  const task = (async () => {
-    try {
-      const next = await apiFetch<DashboardSnapshot>("/api/v1/admin/snapshot");
-      if (seq === snapshotRefreshSeq) {
-        snapshot.value = next;
-        lastSnapshotFetchedAt = Date.now();
-        if (options.force) {
-          syncGeneration.value += 1;
-        }
-      }
-    } catch (err) {
-      if (
-        seq === snapshotRefreshSeq &&
-        err instanceof ApiError &&
-        err.status === 401
-      ) {
-        await loadState();
-      }
-    } finally {
-      if (seq === snapshotRefreshSeq) {
-        snapshotRefreshPromise = null;
-      }
-    }
-  })();
-
-  snapshotRefreshPromise = task;
-
-  return task;
-}
-
-async function refreshPublicStatus(options: { force?: boolean } = {}) {
-  if (!options.force && publicRefreshPromise) {
-    return publicRefreshPromise;
-  }
-
-  const seq = ++publicRefreshSeq;
-  const task = (async () => {
-    try {
-      const next = await apiFetch<PublicStatusSnapshot>(
-        "/api/v1/public/status",
-      );
-      if (seq === publicRefreshSeq) {
-        publicStatus.value = next;
-        lastPublicFetchedAt = Date.now();
-      }
-    } catch {
-      // Keep existing snapshot visible on transient network blips.
-    } finally {
-      if (seq === publicRefreshSeq) {
-        publicRefreshPromise = null;
-      }
-    }
-  })();
-
-  publicRefreshPromise = task;
-
-  return task;
 }
 
 export function useLiveRefresh(
@@ -128,29 +123,26 @@ export function useLiveRefresh(
   intervalMs = 10_000,
   focusDebounceMs = 3000,
 ) {
-  const trigger = () =>
-    kind === "admin" ? refreshSnapshot() : refreshPublicStatus();
-  const lastFetchedAt = () =>
-    kind === "admin" ? lastSnapshotFetchedAt : lastPublicFetchedAt;
-
-  useIntervalFn(() => {
+  const refresher = kind === "admin" ? adminRefresher : publicRefresher;
+  function trigger() {
     if (!document.hidden) {
-      void trigger();
+      void refresher.refresh();
     }
-  }, intervalMs);
-
-  function onFocusOrVisible() {
-    if (document.hidden) {
-      return;
-    }
-    if (Date.now() - lastFetchedAt() < focusDebounceMs) {
-      return;
-    }
-    void trigger();
   }
 
-  useEventListener(document, "visibilitychange", onFocusOrVisible);
-  useEventListener(window, "focus", onFocusOrVisible);
+  useIntervalFn(trigger, intervalMs);
+
+  function onVisible() {
+    if (
+      !document.hidden &&
+      Date.now() - refresher.lastFetchedAt() >= focusDebounceMs
+    ) {
+      void refresher.refresh();
+    }
+  }
+
+  useEventListener(document, "visibilitychange", onVisible);
+  useEventListener(window, "focus", onVisible);
 }
 
 function showIssuedToken(payload: IssuedToken) {
@@ -249,24 +241,23 @@ function sortByOrder<T extends { id: string }>(
   );
 }
 
-async function persistOrder(kind: "nodes" | "monitors", ids: string[]) {
+async function persistOrder<K extends "nodes" | "monitors">(
+  kind: K,
+  ids: string[],
+) {
   if (!snapshot.value) {
     return;
   }
-  const prevNodes = snapshot.value.nodes;
-  const prevMonitors = snapshot.value.monitors;
-  snapshot.value =
-    kind === "nodes"
-      ? { ...snapshot.value, nodes: sortByOrder(prevNodes, ids) }
-      : { ...snapshot.value, monitors: sortByOrder(prevMonitors, ids) };
+  const prev = snapshot.value[kind];
+  snapshot.value = {
+    ...snapshot.value,
+    [kind]: sortByOrder<DashboardSnapshot[K][number]>(prev, ids),
+  };
   try {
     await apiFetch(`/api/v1/admin/${kind}/order`, "PUT", { ids });
   } catch (err) {
     if (snapshot.value) {
-      snapshot.value =
-        kind === "nodes"
-          ? { ...snapshot.value, nodes: prevNodes }
-          : { ...snapshot.value, monitors: prevMonitors };
+      snapshot.value = { ...snapshot.value, [kind]: prev };
     }
 
     throw err;

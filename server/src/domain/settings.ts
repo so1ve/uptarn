@@ -117,6 +117,20 @@ export async function setTargetMute(
   return res.changes > 0;
 }
 
+export async function reorderTargets(
+  db: SqlDatabase,
+  targetType: "node" | "monitor",
+  ids: readonly string[],
+): Promise<void> {
+  const { table, pk } = TARGET_TABLE[targetType];
+  await db.batch(
+    ids.map((id, index) => ({
+      sql: `UPDATE ${table} SET sort_order = ?1 WHERE ${pk} = ?2`,
+      params: [index, id],
+    })),
+  );
+}
+
 export async function deleteTarget(
   db: SqlDatabase,
   targetType: TargetType,

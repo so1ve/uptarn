@@ -14,6 +14,12 @@ import {
 } from "../lib/index.ts";
 import AppLayout from "./AppLayout.vue";
 
+const ROUTE_TITLES: Record<string, string> = {
+  monitors: "Monitors",
+  jobs: "Jobs",
+  alerts: "Alerts",
+};
+
 const route = useRoute();
 const snap = useSnapshot();
 const { busy, run } = useAction();
@@ -32,13 +38,8 @@ const pageTitle = computed(() => {
 
     return snap.value.nodes.find((n) => n.id === id)?.label ?? id;
   }
-  const titles: Record<string, string> = {
-    monitors: "Monitors",
-    jobs: "Jobs",
-    alerts: "Alerts",
-  };
 
-  return titles[String(route.name)] ?? "Nodes";
+  return ROUTE_TITLES[String(route.name)] ?? "Nodes";
 });
 
 const navItems = computed(() => [
@@ -139,9 +140,7 @@ async function onSignOut() {
         size="xs"
         variant="subtle"
       >
-        {{
-          `Muted ${formatRemaining(snap.settings.global_muted_until, snap.now)}`
-        }}
+        Muted {{ formatRemaining(snap.settings.global_muted_until, snap.now) }}
       </UBadge>
       <UButton
         color="neutral"

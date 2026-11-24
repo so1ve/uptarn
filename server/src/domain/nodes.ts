@@ -7,9 +7,17 @@ import type { LoadedConfig } from "../config.ts";
 import type { SqlDatabase, SqlStatement } from "../db/index.ts";
 import { httpError } from "../http.ts";
 import type { NodeMonitorSpec, NodeReportPayload } from "../shared/index.ts";
-import { formatBytes, formatSeriesValue, unixNow } from "../shared/index.ts";
+import {
+  formatBytes,
+  formatSeriesValue,
+  memPercent,
+  round1,
+  unixNow,
+} from "../shared/index.ts";
 import type { AlertObservation, AlertStateRow } from "./alerts.ts";
 import { ALERT_STATE_COLUMNS, buildAlertStatements } from "./alerts.ts";
+import type { MonitorConfigFields } from "./monitors.ts";
+import { buildMonitorUpsertStatements } from "./monitors.ts";
 import type { SettingRow } from "./settings.ts";
 import { SELECT_SETTINGS_SQL, parseRuntimeSettings } from "./settings.ts";
 
@@ -20,28 +28,27 @@ interface NodeIngestRow {
   interval_secs: number;
   grace_secs: number;
   muted_until: number;
+  is_public: number;
   prev_rx_bytes: number | null;
   prev_tx_bytes: number | null;
   prev_net_at: number | null;
-  is_public: number;
   rx_bps: number | null;
   tx_bps: number | null;
 }
 
-interface ManagedMonitorRow {
-  id: string;
-  name: string;
-  url: string;
-  public_url: string | null;
-  method: string;
-  expected_status_min: number;
-  expected_status_max: number;
-  expected_body: string | null;
-  timeout_ms: number;
-  interval_secs: number;
-  enabled: number;
-  is_public: number;
-}
+const MONITOR_DIFF_KEYS = [
+  "name",
+  "url",
+  "public_url",
+  "method",
+  "expected_status_min",
+  "expected_status_max",
+  "expected_body",
+  "timeout_ms",
+  "interval_secs",
+  "enabled",
+  "is_public",
+] as const satisfies readonly (keyof MonitorConfigFields)[];
 
 async function issueNodeToken() {
   const token = generateRandomToken("uptn_node");
@@ -81,18 +88,6 @@ export async function createNode(
   return { id: input.id, label, token };
 }
 
-export async function reorderNodes(
-  db: SqlDatabase,
-  ids: readonly string[],
-): Promise<void> {
-  await db.batch(
-    ids.map((id, index) => ({
-      sql: "UPDATE nodes SET sort_order = ?1 WHERE id = ?2",
-      params: [index, id],
-    })),
-  );
-}
-
 export async function setNodePublic(
   db: SqlDatabase,
   nodeId: string,
@@ -116,10 +111,26 @@ export async function setNodePublic(
   return res.changes > 0;
 }
 
+export async function rotateNodeToken(
+  db: SqlDatabase,
+  nodeId: string,
+): Promise<{ id: string; token: string }> {
+  const { token, hash } = await issueNodeToken();
+  const res = await db.run("UPDATE nodes SET token_hash = ?1 WHERE id = ?2", [
+    hash,
+    nodeId,
+  ]);
+  if (res.changes === 0) {
+    throw httpError(404, `Node "${nodeId}" not found`);
+  }
+
+  return { id: nodeId, token };
+}
+
 function buildManagedMonitorStatements(
   nodeId: string,
   specs: readonly NodeMonitorSpec[],
-  existing: readonly ManagedMonitorRow[],
+  existing: readonly MonitorConfigFields[],
   now: number,
 ): SqlStatement[] {
   const statements: SqlStatement[] = [];
@@ -127,85 +138,27 @@ function buildManagedMonitorStatements(
   const nextIds = new Set<string>();
 
   for (const spec of specs) {
-    const id = `${nodeId}:${spec.key}`.slice(0, 64);
-    nextIds.add(id);
-    const enabled = (spec.enabled ?? true) ? 1 : 0;
-    const isPublic = (spec.is_public ?? true) ? 1 : 0;
-    const method = spec.method ?? "GET";
     const minStatus = spec.expected_status_min ?? 200;
-    const maxStatus = spec.expected_status_max ?? Math.max(299, minStatus);
-    const publicUrl = spec.public_url ?? null;
-    const body = spec.expected_body ?? null;
-    const timeoutMs = spec.timeout_ms ?? 8000;
-    const intervalSecs = spec.interval_secs ?? 60;
-
-    const prev = existingById.get(id);
-    const unchanged =
-      prev?.name === spec.name &&
-      prev.url === spec.url &&
-      prev.public_url === publicUrl &&
-      prev.method === method &&
-      prev.expected_status_min === minStatus &&
-      prev.expected_status_max === maxStatus &&
-      prev.expected_body === body &&
-      prev.timeout_ms === timeoutMs &&
-      prev.interval_secs === intervalSecs &&
-      prev.enabled === enabled &&
-      prev.is_public === isPublic;
-
-    if (unchanged) {
+    const next: MonitorConfigFields = {
+      id: `${nodeId}:${spec.key}`.slice(0, 64),
+      name: spec.name,
+      url: spec.url,
+      public_url: spec.public_url ?? null,
+      method: spec.method ?? "GET",
+      expected_status_min: minStatus,
+      expected_status_max: spec.expected_status_max ?? Math.max(299, minStatus),
+      expected_body: spec.expected_body ?? null,
+      timeout_ms: spec.timeout_ms ?? 8000,
+      interval_secs: spec.interval_secs ?? 60,
+      enabled: (spec.enabled ?? true) ? 1 : 0,
+      is_public: (spec.is_public ?? true) ? 1 : 0,
+    };
+    nextIds.add(next.id);
+    const prev = existingById.get(next.id);
+    if (prev && MONITOR_DIFF_KEYS.every((k) => prev[k] === next[k])) {
       continue;
     }
-
-    statements.push({
-      sql: `INSERT INTO monitors
-            (id, name, url, public_url, method, expected_status_min, expected_status_max, expected_body, timeout_ms, interval_secs, enabled, is_public, managed_by_node_id, sort_order, created_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, COALESCE((SELECT MAX(sort_order) + 1 FROM monitors), 0), ?14)
-            ON CONFLICT(id) DO UPDATE SET
-              last_checked_at = CASE
-                WHEN monitors.url != excluded.url
-                  OR monitors.method != excluded.method
-                  OR monitors.expected_status_min != excluded.expected_status_min
-                  OR monitors.expected_status_max != excluded.expected_status_max
-                  OR monitors.expected_body IS NOT excluded.expected_body
-                THEN NULL
-                ELSE monitors.last_checked_at
-              END,
-              name = excluded.name,
-              url = excluded.url,
-              public_url = excluded.public_url,
-              method = excluded.method,
-              expected_status_min = excluded.expected_status_min,
-              expected_status_max = excluded.expected_status_max,
-              expected_body = excluded.expected_body,
-              timeout_ms = excluded.timeout_ms,
-              interval_secs = excluded.interval_secs,
-              enabled = excluded.enabled,
-              is_public = excluded.is_public,
-              managed_by_node_id = excluded.managed_by_node_id`,
-      params: [
-        id,
-        spec.name,
-        spec.url,
-        publicUrl,
-        method,
-        minStatus,
-        maxStatus,
-        body,
-        timeoutMs,
-        intervalSecs,
-        enabled,
-        isPublic,
-        nodeId,
-        now,
-      ],
-    });
-    if (enabled === 0) {
-      statements.push({
-        sql: "DELETE FROM alert_states WHERE target_type = 'monitor' AND target_id = ?1",
-        params: [id],
-      });
-    }
+    statements.push(...buildMonitorUpsertStatements(next, now, nodeId));
   }
 
   for (const prev of existing) {
@@ -224,22 +177,6 @@ function buildManagedMonitorStatements(
   }
 
   return statements;
-}
-
-export async function rotateNodeToken(
-  db: SqlDatabase,
-  nodeId: string,
-): Promise<{ id: string; token: string }> {
-  const { token, hash } = await issueNodeToken();
-  const res = await db.run("UPDATE nodes SET token_hash = ?1 WHERE id = ?2", [
-    hash,
-    nodeId,
-  ]);
-  if (res.changes === 0) {
-    throw httpError(404, `Node "${nodeId}" not found`);
-  }
-
-  return { id: nodeId, token };
 }
 
 function computeNetworkRates(
@@ -299,6 +236,7 @@ export async function ingestNodeReport(
       params: [payload.node_id],
     });
   }
+
   const [incomingHash, batchResults] = await Promise.all([
     sha256Hex(bearerToken),
     db.allBatch(batchQueries),
@@ -308,7 +246,7 @@ export async function ingestNodeReport(
       SettingRow[],
       NodeIngestRow[],
       AlertStateRow[],
-      ManagedMonitorRow[]?,
+      MonitorConfigFields[]?,
     ];
 
   const settings = parseRuntimeSettings(settingRows, config);
@@ -352,7 +290,6 @@ export async function ingestNodeReport(
   const checks = payload.checks ?? [];
   const series = payload.series ?? [];
   const info = payload.info ?? [];
-
   const publicManaged = payload.is_public === undefined ? 0 : 1;
   const isPublic =
     payload.is_public === undefined
@@ -372,10 +309,7 @@ export async function ingestNodeReport(
               label = excluded.label,
               interval_secs = excluded.interval_secs,
               grace_secs = excluded.grace_secs,
-              is_public = CASE
-                WHEN excluded.public_managed = 1 THEN excluded.is_public
-                ELSE nodes.is_public
-              END,
+              is_public = CASE WHEN excluded.public_managed = 1 THEN excluded.is_public ELSE nodes.is_public END,
               public_managed = excluded.public_managed,
               last_seen_at = excluded.last_seen_at,
               prev_rx_bytes = excluded.prev_rx_bytes,
@@ -424,36 +358,29 @@ export async function ingestNodeReport(
     );
   }
 
-  const sampleBucketTs = Math.floor(now / 60) * 60;
   const sampleValues: Record<string, number | [number, number]> = {};
   if (payload.system?.cpu_pct !== undefined) {
-    sampleValues._cpu = Math.round(payload.system.cpu_pct * 10) / 10;
+    sampleValues._cpu = round1(payload.system.cpu_pct);
   }
-  if (
-    payload.system?.mem_used_bytes !== undefined &&
-    payload.system.mem_total_bytes !== undefined &&
-    payload.system.mem_total_bytes > 0
-  ) {
-    sampleValues._mem =
-      Math.round(
-        (payload.system.mem_used_bytes / payload.system.mem_total_bytes) * 1000,
-      ) / 10;
+  const memPct = memPercent(payload.system ?? null);
+  if (memPct !== null) {
+    sampleValues._mem = round1(memPct);
   }
   if (rxBps !== null) {
-    sampleValues._rx_bps = Math.round(rxBps * 10) / 10;
+    sampleValues._rx_bps = round1(rxBps);
   }
   if (txBps !== null) {
-    sampleValues._tx_bps = Math.round(txBps * 10) / 10;
+    sampleValues._tx_bps = round1(txBps);
   }
   for (const item of series) {
+    const val = round1(item.value);
     sampleValues[item.key] =
-      item.loss_pct === undefined ? item.value : [item.value, item.loss_pct];
+      item.loss_pct === undefined ? val : [val, round1(item.loss_pct)];
   }
   if (Object.keys(sampleValues).length > 0) {
     statements.push({
-      sql: `INSERT OR REPLACE INTO node_samples (node_id, ts, values_json)
-            VALUES (?1, ?2, ?3)`,
-      params: [nodeId, sampleBucketTs, JSON.stringify(sampleValues)],
+      sql: "INSERT OR REPLACE INTO node_samples (node_id, ts, values_json) VALUES (?1, ?2, ?3)",
+      params: [nodeId, Math.floor(now / 60) * 60, JSON.stringify(sampleValues)],
     });
   }
 
@@ -476,20 +403,15 @@ export async function ingestNodeReport(
 
   const observations: AlertObservation[] = [
     nodeObs("offline", "Connectivity", false, "Node online", 1),
-    ...mounts.map((m) => {
-      const pct =
-        m.total_bytes > 0
-          ? `${((m.used_bytes / m.total_bytes) * 100).toFixed(1)}%`
-          : "0%";
-
-      return nodeObs(
+    ...mounts.map((m) =>
+      nodeObs(
         `mount:${m.path}`,
         m.label ?? m.path,
         m.status === "fail",
         m.summary ??
-          `${formatBytes(m.used_bytes)} / ${formatBytes(m.total_bytes)} (${pct})`,
-      );
-    }),
+          `${formatBytes(m.used_bytes)} / ${formatBytes(m.total_bytes)} (${m.total_bytes > 0 ? `${((m.used_bytes / m.total_bytes) * 100).toFixed(1)}%` : "0%"})`,
+      ),
+    ),
     ...checks.map((c) =>
       nodeObs(
         `check:${c.key}`,
@@ -500,17 +422,15 @@ export async function ingestNodeReport(
     ),
     ...series
       .filter((s) => s.status !== undefined)
-      .map((s) => {
-        const lossNote =
-          s.loss_pct === undefined ? "" : `, ${s.loss_pct.toFixed(0)}% loss`;
-
-        return nodeObs(
+      .map((s) =>
+        nodeObs(
           `series:${s.key}`,
           s.label,
           s.status === "fail",
-          s.summary ?? `${formatSeriesValue(s.value, s.unit)}${lossNote}`,
-        );
-      }),
+          s.summary ??
+            `${formatSeriesValue(s.value, s.unit)}${s.loss_pct === undefined ? "" : `, ${s.loss_pct.toFixed(0)}% loss`}`,
+        ),
+      ),
   ];
 
   statements.push(

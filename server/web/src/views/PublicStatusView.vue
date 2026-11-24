@@ -24,17 +24,24 @@ const { loadState } = useUptarnStore();
 const signInOpen = ref(false);
 
 document.title = "Status - Uptarn";
-
 useLiveRefresh("public", 10_000, 3000);
 
+const BANNER_STYLES = {
+  fail: { bg: "bg-red-500/10", text: "text-red-600 dark:text-red-400" },
+  warn: { bg: "bg-amber-500/10", text: "text-amber-600 dark:text-amber-400" },
+  ok: {
+    bg: "bg-emerald-500/10",
+    text: "text-emerald-700 dark:text-emerald-400",
+  },
+} as const;
+
 const banner = computed(() => {
-  const downMonitors = props.status.monitors.filter(
-    (m) => m.enabled && m.last_status === "fail",
-  ).length;
-  const downNodes = props.status.nodes.filter(
-    (n) => n.overall_status === "fail" || n.overall_status === "offline",
-  ).length;
-  const failing = downMonitors + downNodes;
+  const failing =
+    props.status.monitors.filter((m) => m.enabled && m.last_status === "fail")
+      .length +
+    props.status.nodes.filter(
+      (n) => n.overall_status === "fail" || n.overall_status === "offline",
+    ).length;
   if (failing > 0) {
     return {
       tone: "fail" as const,
@@ -73,32 +80,16 @@ async function onSignedIn() {
     <div class="space-y-8">
       <div
         class="flex items-center gap-2.5 rounded-xl px-4 py-3 text-sm"
-        :class="
-          banner.tone === 'fail'
-            ? 'bg-red-500/10'
-            : banner.tone === 'warn'
-              ? 'bg-amber-500/10'
-              : 'bg-emerald-500/10'
-        "
+        :class="BANNER_STYLES[banner.tone].bg"
       >
         <StatusDot size-class="size-2.5" :status="banner.tone" />
-        <span
-          class="font-semibold"
-          :class="
-            banner.tone === 'fail'
-              ? 'text-red-600 dark:text-red-400'
-              : banner.tone === 'warn'
-                ? 'text-amber-600 dark:text-amber-400'
-                : 'text-emerald-700 dark:text-emerald-400'
-          "
-        >
+        <span class="font-semibold" :class="BANNER_STYLES[banner.tone].text">
           {{ banner.text }}
         </span>
       </div>
 
       <section v-if="status.monitors.length > 0" class="space-y-3">
         <h2 class="text-base font-semibold tracking-tight">Services</h2>
-
         <div class="divide-y divide-default border-y border-default">
           <MonitorRow
             v-for="mon in status.monitors"
@@ -111,7 +102,6 @@ async function onSignedIn() {
 
       <section v-if="status.nodes.length > 0" class="space-y-3">
         <h2 class="text-base font-semibold tracking-tight">Nodes</h2>
-
         <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           <div
             v-for="node in status.nodes"

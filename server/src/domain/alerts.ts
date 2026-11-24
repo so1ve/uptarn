@@ -41,18 +41,20 @@ export interface AlertStateRow {
 export const ALERT_STATE_COLUMNS =
   "incident_key, target_type, target_id, label, state, consecutive_failures, opened_at, notified_open, last_changed_at, last_summary";
 
+const HTML_ESCAPES: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+};
 const escapeHtml = (text: string): string =>
-  text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+  text.replace(/[&<>"]/g, (ch) => HTML_ESCAPES[ch]);
 
 // Prevent Telegram from turning domain names inside alert titles into blue links.
 const defangDomain = (text: string): string =>
   text.replace(/([a-z0-9])\.(?=[a-z0-9])/gi, "$1.\u200B");
 
-function formatAlertTitle(alert: AlertPayload): {
+function splitAlertTitle(alert: AlertPayload): {
   scope: string | null;
   subject: string;
 } {
@@ -63,14 +65,10 @@ function formatAlertTitle(alert: AlertPayload): {
     return { scope: "Job", subject: alert.label.replace(/^Job:\s*/i, "") };
   }
   const sep = alert.label.indexOf(": ");
-  if (sep > 0) {
-    return {
-      scope: alert.label.slice(0, sep),
-      subject: alert.label.slice(sep + 2),
-    };
-  }
 
-  return { scope: null, subject: alert.label };
+  return sep > 0
+    ? { scope: alert.label.slice(0, sep), subject: alert.label.slice(sep + 2) }
+    : { scope: null, subject: alert.label };
 }
 
 function resolveActionLink(alerts: readonly AlertPayload[]): {
@@ -80,11 +78,12 @@ function resolveActionLink(alerts: readonly AlertPayload[]): {
   const first = alerts[0];
   const base = first.dashboardUrl.replace(/\/+$/, "");
   const allSameType = alerts.every((a) => a.targetType === first.targetType);
-  const allSameTarget =
-    allSameType && alerts.every((a) => a.targetId === first.targetId);
-
-  if (allSameTarget && first.targetType === "node") {
-    const nodeName = formatAlertTitle(first).scope ?? first.targetId;
+  if (
+    allSameType &&
+    first.targetType === "node" &&
+    alerts.every((a) => a.targetId === first.targetId)
+  ) {
+    const nodeName = splitAlertTitle(first).scope ?? first.targetId;
 
     return {
       label: `Open ${nodeName}`,
@@ -101,70 +100,64 @@ function resolveActionLink(alerts: readonly AlertPayload[]): {
   return { label: "Open dashboard", url: `${base}/` };
 }
 
-function formatBatchBodies(alerts: readonly AlertPayload[]): {
-  plain: string;
-  telegramHtml: string;
-  matrixHtml: string;
-  action: { label: string; url: string };
-} {
+function formatBatchBodies(alerts: readonly AlertPayload[]) {
   const first = alerts[0];
   const icon = first.kind === "firing" ? "🔴" : "🟢";
   const action = resolveActionLink(alerts);
 
+  let heading: string;
+  let suffix = "";
+  let plainBody: string;
+  let telegramBody: string;
+  let matrixBody: string;
+
   if (alerts.length === 1) {
-    const { scope, subject } = formatAlertTitle(first);
-    const title = scope ? `${scope} / ${subject}` : subject;
-    const dur =
-      first.kind === "resolved" && first.durationSecs !== undefined
-        ? ` (recovered after ${formatDuration(first.durationSecs)})`
-        : "";
-    const safeTitle = escapeHtml(defangDomain(title));
-    const safeSummary = escapeHtml(first.summary);
-    const safeUrl = escapeHtml(action.url);
+    const { scope, subject } = splitAlertTitle(first);
+    heading = scope ? `${scope} / ${subject}` : subject;
+    if (first.kind === "resolved" && first.durationSecs !== undefined) {
+      suffix = ` (recovered after ${formatDuration(first.durationSecs)})`;
+    }
+    plainBody = first.summary;
+    telegramBody = escapeHtml(first.summary);
+    matrixBody = telegramBody;
+  } else {
+    const sameNode =
+      first.targetType === "node" &&
+      alerts.every(
+        (a) => a.targetType === "node" && a.targetId === first.targetId,
+      );
+    const sharedScope = sameNode ? splitAlertTitle(first).scope : null;
+    heading = sharedScope
+      ? `${sharedScope} (${alerts.length} ${first.kind === "firing" ? "alerts" : "recovered"})`
+      : `${alerts.length} alerts ${first.kind === "firing" ? "firing" : "recovered"}`;
 
-    return {
-      plain: `${icon} ${title}${dur}\n${first.summary}\n${action.url}`,
-      telegramHtml: `${icon} <b>${safeTitle}</b>${escapeHtml(dur)}\n<blockquote>${safeSummary}</blockquote>`,
-      matrixHtml: `${icon} <b>${escapeHtml(title)}</b>${escapeHtml(dur)}<br/><blockquote>${safeSummary}</blockquote><a href="${safeUrl}">${escapeHtml(action.label)}</a>`,
-      action,
-    };
+    const plainLines: string[] = [];
+    const htmlLines: string[] = [];
+    for (const alert of alerts) {
+      const { scope, subject } = splitAlertTitle(alert);
+      const name = sharedScope
+        ? subject
+        : scope
+          ? `${scope} / ${subject}`
+          : subject;
+      const dur =
+        alert.kind === "resolved" && alert.durationSecs !== undefined
+          ? ` (${formatDuration(alert.durationSecs)})`
+          : "";
+      plainLines.push(`• ${name}${dur}: ${alert.summary}`);
+      htmlLines.push(
+        `• <b>${escapeHtml(defangDomain(name))}</b>${escapeHtml(dur)}: ${escapeHtml(alert.summary)}`,
+      );
+    }
+    plainBody = plainLines.join("\n");
+    telegramBody = htmlLines.join("\n");
+    matrixBody = htmlLines.join("<br/>");
   }
-
-  const sameNode =
-    first.targetType === "node" &&
-    alerts.every(
-      (a) => a.targetType === "node" && a.targetId === first.targetId,
-    );
-  const sharedScope = sameNode ? formatAlertTitle(first).scope : null;
-  const heading = sharedScope
-    ? `${sharedScope} (${alerts.length} ${first.kind === "firing" ? "alerts" : "recovered"})`
-    : `${alerts.length} alerts ${first.kind === "firing" ? "firing" : "recovered"}`;
-
-  const plainLines: string[] = [];
-  const htmlLines: string[] = [];
-  for (const alert of alerts) {
-    const { scope, subject } = formatAlertTitle(alert);
-    const itemName = sharedScope
-      ? subject
-      : scope
-        ? `${scope} / ${subject}`
-        : subject;
-    const dur =
-      alert.kind === "resolved" && alert.durationSecs !== undefined
-        ? ` (${formatDuration(alert.durationSecs)})`
-        : "";
-    plainLines.push(`• ${itemName}${dur}: ${alert.summary}`);
-    htmlLines.push(
-      `• <b>${escapeHtml(defangDomain(itemName))}</b>${escapeHtml(dur)}: ${escapeHtml(alert.summary)}`,
-    );
-  }
-
-  const safeUrl = escapeHtml(action.url);
 
   return {
-    plain: `${icon} ${heading}\n${plainLines.join("\n")}\n${action.url}`,
-    telegramHtml: `${icon} <b>${escapeHtml(defangDomain(heading))}</b>\n<blockquote>${htmlLines.join("\n")}</blockquote>`,
-    matrixHtml: `${icon} <b>${escapeHtml(heading)}</b><br/><blockquote>${htmlLines.join("<br/>")}</blockquote><a href="${safeUrl}">${escapeHtml(action.label)}</a>`,
+    plain: `${icon} ${heading}${suffix}\n${plainBody}\n${action.url}`,
+    telegramHtml: `${icon} <b>${escapeHtml(defangDomain(heading))}</b>${escapeHtml(suffix)}\n<blockquote>${telegramBody}</blockquote>`,
+    matrixHtml: `${icon} <b>${escapeHtml(heading)}</b>${escapeHtml(suffix)}<br/><blockquote>${matrixBody}</blockquote><a href="${escapeHtml(action.url)}">${escapeHtml(action.label)}</a>`,
     action,
   };
 }
@@ -209,7 +202,6 @@ export async function dispatchNotificationBatch(
         inline_keyboard: [[{ text: `${action.label} ↗`, url: action.url }]],
       };
     }
-
     tasks.push([
       "telegram",
       sendJson(
@@ -263,12 +255,6 @@ export async function dispatchNotificationBatch(
   return Object.fromEntries(entries) as Record<string, string>;
 }
 
-export const dispatchNotifications = (
-  config: LoadedConfig,
-  alert: AlertPayload,
-): Promise<Record<string, string>> =>
-  dispatchNotificationBatch(config, [alert]);
-
 export const sendTestNotification = (
   config: LoadedConfig,
 ): Promise<Record<string, string>> =>
@@ -282,6 +268,21 @@ export const sendTestNotification = (
       dashboardUrl: config.publicBaseUrl,
     },
   ]);
+
+const toAlertPayload = (
+  obs: AlertObservation,
+  kind: "firing" | "resolved",
+  dashboardUrl: string,
+  durationSecs?: number,
+): AlertPayload => ({
+  kind,
+  targetType: obs.targetType,
+  targetId: obs.targetId,
+  label: obs.label,
+  summary: obs.summary,
+  durationSecs,
+  dashboardUrl,
+});
 
 export async function buildAlertStatements(
   config: LoadedConfig,
@@ -307,7 +308,6 @@ export async function buildAlertStatements(
   }
 
   const notifications: { obs: AlertObservation; payload: AlertPayload }[] = [];
-
   for (const obs of deduped.values()) {
     const prev = byKey.get(obs.incidentKey);
     const isMuted = now < globalMutedUntil || now < obs.targetMutedUntil;
@@ -326,14 +326,7 @@ export async function buildAlertStatements(
         notifiedOpen = 1;
         notifications.push({
           obs,
-          payload: {
-            kind: "firing",
-            targetType: obs.targetType,
-            targetId: obs.targetId,
-            label: obs.label,
-            summary: obs.summary,
-            dashboardUrl: config.publicBaseUrl,
-          },
+          payload: toAlertPayload(obs, "firing", config.publicBaseUrl),
         });
       }
 
@@ -342,13 +335,9 @@ export async function buildAlertStatements(
               (incident_key, target_type, target_id, label, state, consecutive_failures, opened_at, notified_open, last_changed_at, last_summary)
               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
               ON CONFLICT(incident_key) DO UPDATE SET
-                label = excluded.label,
-                state = excluded.state,
-                consecutive_failures = excluded.consecutive_failures,
-                opened_at = excluded.opened_at,
-                notified_open = excluded.notified_open,
-                last_changed_at = excluded.last_changed_at,
-                last_summary = excluded.last_summary`,
+                label = excluded.label, state = excluded.state, consecutive_failures = excluded.consecutive_failures,
+                opened_at = excluded.opened_at, notified_open = excluded.notified_open,
+                last_changed_at = excluded.last_changed_at, last_summary = excluded.last_summary`,
         params: [
           obs.incidentKey,
           obs.targetType,
@@ -364,23 +353,15 @@ export async function buildAlertStatements(
       });
     } else if (prev) {
       if (prev.notified_open === 1 && !isMuted) {
+        const dur =
+          prev.opened_at === null
+            ? undefined
+            : Math.max(0, now - prev.opened_at);
         notifications.push({
           obs,
-          payload: {
-            kind: "resolved",
-            targetType: obs.targetType,
-            targetId: obs.targetId,
-            label: obs.label,
-            summary: obs.summary,
-            durationSecs:
-              prev.opened_at === null
-                ? undefined
-                : Math.max(0, now - prev.opened_at),
-            dashboardUrl: config.publicBaseUrl,
-          },
+          payload: toAlertPayload(obs, "resolved", config.publicBaseUrl, dur),
         });
       }
-
       statements.push({
         sql: "DELETE FROM alert_states WHERE incident_key = ?1",
         params: [obs.incidentKey],
@@ -392,7 +373,6 @@ export async function buildAlertStatements(
     const batches = (["firing", "resolved"] as const)
       .map((kind) => notifications.filter((n) => n.payload.kind === kind))
       .filter((group) => group.length > 0);
-
     const deliveries = await Promise.all(
       batches.map((group) =>
         dispatchNotificationBatch(
@@ -401,7 +381,6 @@ export async function buildAlertStatements(
         ),
       ),
     );
-
     for (const [idx, group] of batches.entries()) {
       const deliveryJson = JSON.stringify(deliveries[idx]);
       for (const { obs, payload } of group) {

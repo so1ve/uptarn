@@ -37,20 +37,12 @@ const rows = computed(() =>
 
 const canReorder = computed(() => snap.value.monitors.length > 1);
 
-const {
-  draggingId,
-  dragOverId,
-  onDragStart,
-  onDragOver,
-  onDrop,
-  onDragEnd,
-  moveBy,
-} = useReorder(
+const { dragAttrs, moveBy } = useReorder(
   () => snap.value.monitors.map((m) => m.id),
   (ids) => {
-    void run("reorder", "Failed to save monitor order", async () => {
-      await persistOrder("monitors", ids);
-    });
+    void run("reorder", "Failed to save monitor order", () =>
+      persistOrder("monitors", ids),
+    );
   },
 );
 
@@ -99,15 +91,7 @@ const onToggleMute = (mon: MonitorSummary) =>
       <div
         v-for="{ mon, stats, chartOption } in rows"
         :key="mon.id"
-        :class="[
-          draggingId === mon.id ? 'opacity-45' : '',
-          dragOverId === mon.id ? 'bg-elevated/80 ring-1 ring-primary/50' : '',
-        ]"
-        :draggable="canReorder"
-        @dragend="onDragEnd"
-        @dragover="canReorder && onDragOver(mon.id, $event)"
-        @dragstart="canReorder && onDragStart(mon.id, $event)"
-        @drop="canReorder && onDrop(mon.id, $event)"
+        v-bind="dragAttrs(mon.id, canReorder)"
       >
         <MonitorRow
           :expanded="expandedIds.has(mon.id)"

@@ -23,8 +23,7 @@ import {
   getPublicStatusSnapshot,
   ingestJobReport,
   ingestNodeReport,
-  reorderMonitors,
-  reorderNodes,
+  reorderTargets,
   rotateNodeToken,
   runTick,
   sendTestNotification,
@@ -164,7 +163,7 @@ export function createApp(db: SqlDatabase, config: LoadedConfig): Hono {
   );
 
   app.put("/api/v1/admin/nodes/order", async (c) => {
-    await reorderNodes(db, parseOrderInput(await readJson(c)));
+    await reorderTargets(db, "node", parseOrderInput(await readJson(c)));
 
     return c.json({ ok: true });
   });
@@ -191,7 +190,7 @@ export function createApp(db: SqlDatabase, config: LoadedConfig): Hono {
   );
 
   app.put("/api/v1/admin/monitors/order", async (c) => {
-    await reorderMonitors(db, parseOrderInput(await readJson(c)));
+    await reorderTargets(db, "monitor", parseOrderInput(await readJson(c)));
 
     return c.json({ ok: true });
   });

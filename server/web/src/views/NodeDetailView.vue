@@ -24,6 +24,12 @@ import {
   useUptarnStore,
 } from "../lib/index.ts";
 
+const DEFAULT_WINDOW_SECS = 21_600;
+const MUTE_OPTIONS = [
+  { label: "Mute 1h", secs: 3600 },
+  { label: "Mute 1d", secs: 86_400 },
+] as const;
+
 const route = useRoute();
 const router = useRouter();
 const snap = useSnapshot();
@@ -40,11 +46,17 @@ const isMuted = computed(
 const memPct = computed(() =>
   node.value ? memPercent(node.value.system) : null,
 );
+const swapUsage = computed(() => {
+  const sys = node.value?.system;
+
+  return sys?.swap_total_bytes && sys.swap_used_bytes !== undefined
+    ? formatUsage(sys.swap_used_bytes, sys.swap_total_bytes)
+    : null;
+});
 const topMount = computed(() =>
   node.value ? peakMount(node.value.mounts) : null,
 );
 
-const DEFAULT_WINDOW_SECS = 21_600;
 const windowSecs = ref(DEFAULT_WINDOW_SECS);
 const customHistory = ref<Record<string, SeriesPoint[]> | null>(null);
 const loadingWindow = ref(false);
@@ -109,6 +121,9 @@ const scalarSeries = computed(() => {
   return node.value.series.filter((s) => !charted.has(s.key));
 });
 
+const nodeUrl = (suffix = "") =>
+  `/api/v1/admin/nodes/${encodeURIComponent(node.value!.id)}${suffix}`;
+
 const onMute = (secs: number) =>
   node.value &&
   mute(`mute:${secs}`, "node", node.value.id, node.value.label, secs);
@@ -120,11 +135,7 @@ const onTogglePublic = () =>
     "Failed to update visibility",
     async () => {
       const next = !node.value!.is_public;
-      await apiFetch(
-        `/api/v1/admin/nodes/${encodeURIComponent(node.value!.id)}`,
-        "PATCH",
-        { is_public: next },
-      );
+      await apiFetch(nodeUrl(), "PATCH", { is_public: next });
 
       return next ? "Shown on status page" : "Hidden from status page";
     },
@@ -134,11 +145,12 @@ const onTogglePublic = () =>
 const onRotateToken = () =>
   node.value &&
   run("rotate", "Token rotation failed", async () => {
-    const res = await apiFetch<{ id: string; token: string }>(
-      `/api/v1/admin/nodes/${encodeURIComponent(node.value!.id)}/rotate-token`,
-      "POST",
+    showIssuedToken(
+      await apiFetch<{ id: string; token: string }>(
+        nodeUrl("/rotate-token"),
+        "POST",
+      ),
     );
-    showIssuedToken(res);
   });
 
 async function onDelete() {
@@ -150,10 +162,7 @@ async function onDelete() {
     "delete",
     "Delete failed",
     async () => {
-      await apiFetch(
-        `/api/v1/admin/nodes/${encodeURIComponent(n.id)}`,
-        "DELETE",
-      );
+      await apiFetch(nodeUrl(), "DELETE");
 
       return `Deleted ${n.label}`;
     },
@@ -255,22 +264,15 @@ async function onDelete() {
           </UButton>
           <template v-else>
             <UButton
+              v-for="m in MUTE_OPTIONS"
+              :key="m.secs"
               color="neutral"
-              :loading="busy === 'mute:3600'"
+              :loading="busy === `mute:${m.secs}`"
               size="xs"
               variant="soft"
-              @click="onMute(3600)"
+              @click="onMute(m.secs)"
             >
-              Mute 1h
-            </UButton>
-            <UButton
-              color="neutral"
-              :loading="busy === 'mute:86400'"
-              size="xs"
-              variant="soft"
-              @click="onMute(86400)"
-            >
-              Mute 1d
+              {{ m.label }}
             </UButton>
           </template>
 
@@ -319,38 +321,24 @@ async function onDelete() {
         </div>
       </div>
 
-      <div
-        v-if="
-          memPct !== null &&
-          node.system?.mem_used_bytes !== undefined &&
-          node.system.mem_total_bytes !== undefined
-        "
-        class="space-y-1"
-      >
+      <div v-if="memPct !== null && node.system" class="space-y-1">
         <div class="text-xs text-muted">Memory</div>
         <div class="text-2xl font-semibold tracking-tight tabular-nums">
           {{ Math.round(memPct) }}%
         </div>
         <div class="font-mono text-xs text-dimmed tabular-nums">
           {{
-            formatUsage(node.system.mem_used_bytes, node.system.mem_total_bytes)
+            formatUsage(
+              node.system.mem_used_bytes!,
+              node.system.mem_total_bytes!,
+            )
           }}
         </div>
         <div
-          v-if="
-            node.system.swap_total_bytes !== undefined &&
-            node.system.swap_total_bytes > 0 &&
-            node.system.swap_used_bytes !== undefined
-          "
+          v-if="swapUsage"
           class="font-mono text-[11px] text-dimmed tabular-nums"
         >
-          Swap
-          {{
-            formatUsage(
-              node.system.swap_used_bytes,
-              node.system.swap_total_bytes,
-            )
-          }}
+          Swap {{ swapUsage }}
         </div>
       </div>
 

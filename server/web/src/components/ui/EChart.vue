@@ -1,10 +1,7 @@
 <script setup lang="ts">
 import { useResizeObserver } from "@vueuse/core";
-import { BarChart, LineChart } from "echarts/charts";
-import { GridComponent, TooltipComponent } from "echarts/components";
 import type { EChartsCoreOption } from "echarts/core";
-import { init, use } from "echarts/core";
-import { CanvasRenderer } from "echarts/renderers";
+import { init } from "echarts/core";
 import {
   onBeforeUnmount,
   onMounted,
@@ -17,8 +14,6 @@ const props = defineProps<{
   option: EChartsCoreOption;
   height?: string;
 }>();
-
-use([BarChart, LineChart, GridComponent, TooltipComponent, CanvasRenderer]);
 
 const rootEl = useTemplateRef<HTMLDivElement>("root");
 const chart = shallowRef<ReturnType<typeof init> | null>(null);

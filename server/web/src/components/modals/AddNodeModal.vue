@@ -8,7 +8,7 @@ const open = defineModel<boolean>("open", { default: false });
 const { busy, run } = useAction();
 const { showIssuedToken } = useUptarnStore();
 
-const form = reactive({
+const initialForm = () => ({
   id: "",
   label: "",
   interval_secs: 60,
@@ -16,15 +16,11 @@ const form = reactive({
   is_public: false,
 });
 
+const form = reactive(initialForm());
+
 watch(open, (isOpen) => {
   if (isOpen) {
-    Object.assign(form, {
-      id: "",
-      label: "",
-      interval_secs: 60,
-      grace_secs: 120,
-      is_public: false,
-    });
+    Object.assign(form, initialForm());
   }
 });
 

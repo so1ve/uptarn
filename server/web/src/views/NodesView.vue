@@ -5,6 +5,7 @@ import { computed, ref } from "vue";
 import AddNodeModal from "../components/modals/AddNodeModal.vue";
 import NodeCard from "../components/nodes/NodeCard.vue";
 import NodeTable from "../components/nodes/NodeTable.vue";
+import DragHandle from "../components/ui/DragHandle.vue";
 import EmptyState from "../components/ui/EmptyState.vue";
 import PageHeader from "../components/ui/PageHeader.vue";
 import StatusDot from "../components/ui/StatusDot.vue";
@@ -15,6 +16,11 @@ import {
   useSnapshot,
   useUptarnStore,
 } from "../lib/index.ts";
+
+const VIEW_MODES = [
+  { id: "cards", label: "Cards", icon: "i-lucide-layout-grid" },
+  { id: "table", label: "Table", icon: "i-lucide-list" },
+] as const;
 
 const snap = useSnapshot();
 const { run } = useAction();
@@ -43,27 +49,26 @@ const canReorder = computed(
 );
 
 function onReorderNodes(ids: string[]) {
-  void run("reorder-nodes", "Failed to save node order", async () => {
-    await persistOrder("nodes", ids);
-  });
+  void run("reorder-nodes", "Failed to save node order", () =>
+    persistOrder("nodes", ids),
+  );
 }
 
-const {
-  draggingId,
-  dragOverId,
-  onDragStart,
-  onDragOver,
-  onDrop,
-  onDragEnd,
-  moveBy,
-} = useReorder(() => snap.value.nodes.map((n) => n.id), onReorderNodes);
+const { dragAttrs, moveBy } = useReorder(
+  () => snap.value.nodes.map((n) => n.id),
+  onReorderNodes,
+  "ring-2 ring-primary/50",
+);
 
-const incidentHeadline = computed(() =>
-  snap.value.incidents
+const incidentHeadline = computed(() => {
+  const titles = snap.value.incidents
     .slice(0, 3)
     .map((inc) => splitIncident(inc).title)
-    .join(", "),
-);
+    .join(", ");
+  const extra = snap.value.incidents.length - 3;
+
+  return extra > 0 ? `${titles} +${extra} more` : titles;
+});
 </script>
 
 <template>
@@ -87,11 +92,7 @@ const incidentHeadline = computed(() =>
           {{ snap.incidents.length }}
           {{ snap.incidents.length === 1 ? "active issue" : "active issues" }}
         </span>
-        <span class="truncate text-xs text-muted">
-          {{
-            `${incidentHeadline}${snap.incidents.length > 3 ? ` +${snap.incidents.length - 3} more` : ""}`
-          }}
-        </span>
+        <span class="truncate text-xs text-muted">{{ incidentHeadline }}</span>
       </div>
       <span
         class="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-muted"
@@ -117,22 +118,15 @@ const incidentHeadline = computed(() =>
         role="group"
       >
         <UButton
+          v-for="m in VIEW_MODES"
+          :key="m.id"
           color="neutral"
-          icon="i-lucide-layout-grid"
+          :icon="m.icon"
           size="xs"
-          :variant="nodesView === 'cards' ? 'solid' : 'ghost'"
-          @click="nodesView = 'cards'"
+          :variant="nodesView === m.id ? 'solid' : 'ghost'"
+          @click="nodesView = m.id"
         >
-          Cards
-        </UButton>
-        <UButton
-          color="neutral"
-          icon="i-lucide-list"
-          size="xs"
-          :variant="nodesView === 'table' ? 'solid' : 'ghost'"
-          @click="nodesView = 'table'"
-        >
-          Table
+          {{ m.label }}
         </UButton>
       </div>
       <UButton
@@ -159,28 +153,15 @@ const incidentHeadline = computed(() =>
         v-for="node in filteredNodes"
         :key="node.id"
         class="group/card relative flex flex-col rounded-xl transition-opacity"
-        :class="[
-          draggingId === node.id ? 'opacity-45' : '',
-          dragOverId === node.id ? 'ring-2 ring-primary/50' : '',
-        ]"
-        :draggable="canReorder"
-        @dragend="onDragEnd"
-        @dragover="canReorder && onDragOver(node.id, $event)"
-        @dragstart="canReorder && onDragStart(node.id, $event)"
-        @drop="canReorder && onDrop(node.id, $event)"
+        v-bind="dragAttrs(node.id, canReorder)"
       >
-        <button
+        <DragHandle
           v-if="canReorder"
-          aria-label="Drag to reorder node (Alt+ArrowUp or Alt+ArrowDown)"
-          class="absolute top-3.5 left-1.5 z-10 inline-flex size-5 cursor-grab items-center justify-center rounded text-dimmed/50 opacity-0 transition-opacity group-hover/card:opacity-100 hover:text-default focus-visible:opacity-100 active:cursor-grabbing"
-          title="Drag to reorder"
-          type="button"
-          @click.stop
-          @keydown.alt.down.prevent.stop="moveBy(node.id, 1)"
-          @keydown.alt.up.prevent.stop="moveBy(node.id, -1)"
-        >
-          <UIcon class="size-3.5" name="i-lucide-grip-vertical" />
-        </button>
+          class="absolute top-3.5 left-1.5 z-10 text-dimmed/50 opacity-0 transition-opacity group-hover/card:opacity-100 focus-visible:opacity-100"
+          label="node"
+          @move-down="moveBy(node.id, 1)"
+          @move-up="moveBy(node.id, -1)"
+        />
         <NodeCard class="flex-1" draggable="false" :node :now="snap.now" />
       </div>
     </div>

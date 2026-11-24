@@ -53,19 +53,8 @@ export interface InfoSnapshot {
   value: string;
 }
 
-export interface NodeMonitorSpec {
+export interface NodeMonitorSpec extends Omit<MonitorInput, "id"> {
   key: string;
-  name: string;
-  url: string;
-  public_url?: string | null;
-  method?: string;
-  expected_status_min?: number;
-  expected_status_max?: number;
-  expected_body?: string | null;
-  timeout_ms?: number;
-  interval_secs?: number;
-  enabled?: boolean;
-  is_public?: boolean;
 }
 
 export interface NodeReportPayload {

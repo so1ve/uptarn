@@ -144,6 +144,24 @@ const reqOneOf = <T extends string>(
   allowed: readonly T[],
 ): T => oneOf(val, field, allowed) ?? bad(`${field} is required`);
 
+function httpUrl(val: unknown, field: string): string | null {
+  const raw = str(val, field, 512);
+  if (!raw) {
+    return null;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    bad(`${field} must be a valid HTTP(S) URL`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    bad(`${field} protocol must be http: or https:`);
+  }
+
+  return parsed.toString();
+}
+
 function list<T>(
   raw: unknown,
   field: string,
@@ -189,22 +207,9 @@ export function parseNodeReportPayload(raw: unknown): NodeReportPayload {
         bad(`${p}.key duplicate "${key}"`);
       }
       seenKeys.add(key);
-      const parsed = parseMonitorInput({ ...m, id: key });
+      const { id: _id, ...spec } = parseMonitorInput({ ...m, id: key });
 
-      return {
-        key,
-        name: parsed.name,
-        url: parsed.url,
-        public_url: parsed.public_url,
-        method: parsed.method,
-        expected_status_min: parsed.expected_status_min,
-        expected_status_max: parsed.expected_status_max,
-        expected_body: parsed.expected_body,
-        timeout_ms: parsed.timeout_ms,
-        interval_secs: parsed.interval_secs,
-        enabled: parsed.enabled,
-        is_public: parsed.is_public,
-      };
+      return { key, ...spec };
     });
   }
 
@@ -287,35 +292,8 @@ export function parseMonitorInput(raw: MonitorInput | unknown) {
   const name = reqStr(obj.name, "name", 80);
   const rawId = str(obj.id, "id", 64);
   const id = rawId ? slug(rawId, "id") : generateMonitorId(name);
-
-  let parsedUrl: URL;
-  try {
-    parsedUrl = new URL(reqStr(obj.url, "url", 512));
-  } catch {
-    bad("url must be a valid HTTP(S) URL");
-  }
-  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
-    bad("url protocol must be http: or https:");
-  }
-
-  const rawPublicUrl = str(obj.public_url, "public_url", 512);
-  let publicUrl: string | null = null;
-  if (rawPublicUrl) {
-    let parsedPublic: URL;
-    try {
-      parsedPublic = new URL(rawPublicUrl);
-    } catch {
-      bad("public_url must be a valid HTTP(S) URL");
-    }
-    if (
-      parsedPublic.protocol !== "http:" &&
-      parsedPublic.protocol !== "https:"
-    ) {
-      bad("public_url protocol must be http: or https:");
-    }
-    publicUrl = parsedPublic.toString();
-  }
-
+  const url = httpUrl(obj.url, "url") ?? bad("url is required");
+  const publicUrl = httpUrl(obj.public_url, "public_url");
   const expectedStatusMin =
     int(obj.expected_status_min, "expected_status_min", 100, 599) ?? 200;
   const expectedStatusMax =
@@ -329,7 +307,7 @@ export function parseMonitorInput(raw: MonitorInput | unknown) {
   return {
     id,
     name,
-    url: parsedUrl.toString(),
+    url,
     public_url: publicUrl,
     method: reqOneOf(
       (str(obj.method, "method", 10) ?? "GET").toUpperCase(),
@@ -359,8 +337,7 @@ export function parseCreateNodeInput(raw: unknown) {
 }
 
 export function parseOrderInput(raw: unknown): string[] {
-  const obj = asObj(raw, "order input");
-  const ids = obj.ids;
+  const { ids } = asObj(raw, "order input");
   if (!Array.isArray(ids) || ids.length === 0 || ids.length > 500) {
     bad("ids must be a non-empty array of at most 500 items");
   }
@@ -378,8 +355,7 @@ export function parseOrderInput(raw: unknown): string[] {
 }
 
 export function parseNodePatch(raw: unknown) {
-  const obj = asObj(raw, "node patch");
-  const isPublic = bool(obj.is_public, "is_public");
+  const isPublic = bool(asObj(raw, "node patch").is_public, "is_public");
   if (isPublic === undefined) {
     bad("is_public is required");
   }

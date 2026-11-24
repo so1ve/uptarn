@@ -26,22 +26,25 @@ import { parseMonitorSamples } from "./monitors.ts";
 import type { SettingRow } from "./settings.ts";
 import { SELECT_SETTINGS_SQL, parseRuntimeSettings } from "./settings.ts";
 
-interface SnapshotNodeRow {
+interface NodeCoreRow {
   id: string;
   label: string;
-  is_public: number;
-  public_managed: number;
   interval_secs: number;
   grace_secs: number;
-  muted_until: number;
-  created_at: number;
   last_seen_at: number | null;
-  rx_bps: number | null;
-  tx_bps: number | null;
   system_json: string | null;
   mounts_json: string;
   checks_json: string;
   series_json: string;
+}
+
+interface SnapshotNodeRow extends NodeCoreRow {
+  is_public: number;
+  public_managed: number;
+  muted_until: number;
+  created_at: number;
+  rx_bps: number | null;
+  tx_bps: number | null;
   info_json: string;
   agent_version: string | null;
 }
@@ -57,29 +60,33 @@ const MAX_SERIES_POINTS = 48;
 const MAX_DETAIL_POINTS = 72;
 const BUILTIN_SERIES_KEYS = ["_cpu", "_mem", "_rx_bps", "_tx_bps"] as const;
 
-function deriveNodeStatus(
-  row: Pick<SnapshotNodeRow, "last_seen_at" | "interval_secs" | "grace_secs">,
-  mounts: readonly MountSnapshot[],
-  checks: readonly CheckSnapshot[],
-  series: readonly SeriesSnapshot[],
-  now: number,
-): NodeSummary["overall_status"] {
+function parseNodeCore(row: NodeCoreRow, now: number) {
+  const system = row.system_json
+    ? (JSON.parse(row.system_json) as SystemSnapshot)
+    : null;
+  const mounts = JSON.parse(row.mounts_json) as MountSnapshot[];
+  const checks = JSON.parse(row.checks_json) as CheckSnapshot[];
+  const series = JSON.parse(row.series_json) as SeriesSnapshot[];
+
+  let overallStatus: NodeSummary["overall_status"];
   if (row.last_seen_at === null) {
-    return "pending";
-  }
-  if (now > row.last_seen_at + row.interval_secs + row.grace_secs) {
-    return "offline";
-  }
-  const statuses = [
-    ...mounts.map((m) => m.status),
-    ...checks.map((c) => c.status),
-    ...series.flatMap((s) => (s.status ? [s.status] : [])),
-  ];
-  if (statuses.includes("fail")) {
-    return "fail";
+    overallStatus = "pending";
+  } else if (now > row.last_seen_at + row.interval_secs + row.grace_secs) {
+    overallStatus = "offline";
+  } else {
+    const statuses = [
+      ...mounts.map((m) => m.status),
+      ...checks.map((c) => c.status),
+      ...series.flatMap((s) => (s.status ? [s.status] : [])),
+    ];
+    overallStatus = statuses.includes("fail")
+      ? "fail"
+      : statuses.includes("warn")
+        ? "warn"
+        : "ok";
   }
 
-  return statuses.includes("warn") ? "warn" : "ok";
+  return { system, mounts, checks, series, overallStatus };
 }
 
 function downsampleSeries(
@@ -90,9 +97,10 @@ function downsampleSeries(
     return pts;
   }
   const last = pts.at(-1)!;
-  const span = Math.max(1, last.ts - pts[0].ts);
-  const step = Math.max(60, Math.ceil(span / maxPoints / 60) * 60);
-
+  const step = Math.max(
+    60,
+    Math.ceil(Math.max(1, last.ts - pts[0].ts) / maxPoints / 60) * 60,
+  );
   const buckets: SeriesPoint[] = [];
   let bucketTs = Math.floor(pts[0].ts / step) * step;
   let sum = 0;
@@ -148,13 +156,13 @@ function groupNodeSamples(
       byNode.set(row.node_id, hist);
     }
     for (const [key, entry] of Object.entries(parsed)) {
-      if (!allowed.has(key)) {
-        continue;
+      if (allowed.has(key)) {
+        (hist[key] ??= []).push(
+          Array.isArray(entry)
+            ? { ts: row.ts, value: entry[0], aux: entry[1] }
+            : { ts: row.ts, value: entry, aux: null },
+        );
       }
-      const pt: SeriesPoint = Array.isArray(entry)
-        ? { ts: row.ts, value: entry[0], aux: entry[1] }
-        : { ts: row.ts, value: entry, aux: null };
-      (hist[key] ??= []).push(pt);
     }
   }
   for (const hist of byNode.values()) {
@@ -180,13 +188,14 @@ function peakStoragePct(mounts: readonly MountSnapshot[]): number | null {
     return 100;
   }
   const sized = mounts.filter((m) => m.total_bytes > 0);
-  if (sized.length === 0) {
-    return null;
-  }
 
-  return Math.max(
-    ...sized.map((m) => Math.round((m.used_bytes / m.total_bytes) * 1000) / 10),
-  );
+  return sized.length === 0
+    ? null
+    : Math.max(
+        ...sized.map(
+          (m) => Math.round((m.used_bytes / m.total_bytes) * 1000) / 10,
+        ),
+      );
 }
 
 export async function getDashboardSnapshot(
@@ -194,7 +203,6 @@ export async function getDashboardSnapshot(
   config: LoadedConfig,
 ): Promise<DashboardSnapshot> {
   const now = unixNow();
-  const sparkCutoff = now - SPARK_WINDOW_SECS;
   const [
     settingRows,
     passkeyRows,
@@ -211,29 +219,22 @@ export async function getDashboardSnapshot(
     },
     {
       sql: `SELECT id, label, is_public, public_managed, interval_secs, grace_secs, muted_until, created_at,
-                   last_seen_at, rx_bps, tx_bps, system_json, mounts_json, checks_json,
-                   series_json, info_json, agent_version
+                   last_seen_at, rx_bps, tx_bps, system_json, mounts_json, checks_json, series_json, info_json, agent_version
             FROM nodes ORDER BY sort_order ASC, id ASC`,
     },
     { sql: "SELECT * FROM monitors ORDER BY sort_order ASC, name ASC" },
     { sql: "SELECT * FROM jobs ORDER BY key ASC" },
     {
-      sql: `SELECT incident_key, target_type, target_id, label, state,
-                   consecutive_failures, opened_at, last_changed_at, last_summary
-            FROM alert_states
-            ORDER BY state DESC, last_changed_at DESC`,
+      sql: `SELECT incident_key, target_type, target_id, label, state, consecutive_failures, opened_at, last_changed_at, last_summary
+            FROM alert_states ORDER BY state DESC, last_changed_at DESC`,
     },
     {
-      sql: `SELECT id, incident_key, target_type, target_id, label, kind,
-                   summary, created_at, delivery_json
+      sql: `SELECT id, incident_key, target_type, target_id, label, kind, summary, created_at, delivery_json
             FROM alert_events ORDER BY created_at DESC LIMIT 40`,
     },
     {
-      sql: `SELECT s.node_id, s.ts, s.values_json
-            FROM nodes n
-            CROSS JOIN node_samples s
-              ON s.node_id = n.id AND s.ts >= ?1`,
-      params: [sparkCutoff],
+      sql: "SELECT s.node_id, s.ts, s.values_json FROM nodes n CROSS JOIN node_samples s ON s.node_id = n.id AND s.ts >= ?1",
+      params: [now - SPARK_WINDOW_SECS],
     },
   ])) as [
     SettingRow[],
@@ -256,49 +257,41 @@ export async function getDashboardSnapshot(
 
   const parsedNodes = nodeRows.map((row) => ({
     row,
-    system: row.system_json
-      ? (JSON.parse(row.system_json) as SystemSnapshot)
-      : null,
-    mounts: JSON.parse(row.mounts_json) as MountSnapshot[],
-    checks: JSON.parse(row.checks_json) as CheckSnapshot[],
-    series: JSON.parse(row.series_json) as SeriesSnapshot[],
+    ...parseNodeCore(row, now),
     info: JSON.parse(row.info_json) as InfoSnapshot[],
   }));
-
-  const allowedKeysByNode = new Map(
-    parsedNodes.map(({ row, series }) => [
-      row.id,
-      buildAllowedSeriesKeys(series),
-    ]),
+  const historyByNode = groupNodeSamples(
+    nodeSampleRows,
+    new Map(
+      parsedNodes.map(({ row, series }) => [
+        row.id,
+        buildAllowedSeriesKeys(series),
+      ]),
+    ),
   );
-  const historyByNode = groupNodeSamples(nodeSampleRows, allowedKeysByNode);
 
   const nodes: NodeSummary[] = parsedNodes.map(
-    ({ row, system, mounts, checks, series, info }) => {
-      const {
-        is_public,
-        public_managed,
-        system_json: _s,
-        mounts_json: _m,
-        checks_json: _c,
-        series_json: _se,
-        info_json: _i,
-        ...rest
-      } = row;
-
-      return {
-        ...rest,
-        is_public: is_public === 1,
-        public_managed: public_managed === 1,
-        overall_status: deriveNodeStatus(row, mounts, checks, series, now),
-        system,
-        mounts,
-        checks,
-        series,
-        info,
-        history: historyByNode.get(row.id) ?? {},
-      };
-    },
+    ({ row, system, mounts, checks, series, info, overallStatus }) => ({
+      id: row.id,
+      label: row.label,
+      overall_status: overallStatus,
+      is_public: row.is_public === 1,
+      public_managed: row.public_managed === 1,
+      interval_secs: row.interval_secs,
+      grace_secs: row.grace_secs,
+      muted_until: row.muted_until,
+      created_at: row.created_at,
+      last_seen_at: row.last_seen_at,
+      rx_bps: row.rx_bps,
+      tx_bps: row.tx_bps,
+      agent_version: row.agent_version,
+      system,
+      mounts,
+      checks,
+      series,
+      info,
+      history: historyByNode.get(row.id) ?? {},
+    }),
   );
 
   const monitors: MonitorSummary[] = monitorRows.map(
@@ -336,13 +329,6 @@ export async function getDashboardSnapshot(
     };
   });
 
-  const events: AlertEventSummary[] = eventRows.map(
-    ({ delivery_json, ...rest }) => ({
-      ...rest,
-      delivery: JSON.parse(delivery_json) as Record<string, string>,
-    }),
-  );
-
   return {
     now,
     version: manifest.version,
@@ -365,7 +351,10 @@ export async function getDashboardSnapshot(
     nodes,
     monitors,
     jobs,
-    events,
+    events: eventRows.map(({ delivery_json, ...rest }) => ({
+      ...rest,
+      delivery: JSON.parse(delivery_json) as Record<string, string>,
+    })),
     passkeys,
   };
 }
@@ -375,19 +364,14 @@ export async function getNodeHistory(
   nodeId: string,
   windowSecs: number,
 ): Promise<NodeHistoryResponse | null> {
-  const now = unixNow();
-  const cutoff = now - windowSecs;
   const [nodeRows, nodeSampleRows] = (await db.allBatch([
     {
       sql: "SELECT id, series_json FROM nodes WHERE id = ?1",
       params: [nodeId],
     },
     {
-      sql: `SELECT node_id, ts, values_json
-            FROM node_samples
-            WHERE node_id = ?1 AND ts >= ?2
-            ORDER BY ts ASC`,
-      params: [nodeId, cutoff],
+      sql: "SELECT node_id, ts, values_json FROM node_samples WHERE node_id = ?1 AND ts >= ?2",
+      params: [nodeId, unixNow() - windowSecs],
     },
   ])) as [{ id: string; series_json: string }[], RawNodeSample[]];
 
@@ -395,19 +379,17 @@ export async function getNodeHistory(
   if (!nodeRow) {
     return null;
   }
-
-  const series = JSON.parse(nodeRow.series_json) as SeriesSnapshot[];
-  const allowedKeysByNode = new Map([[nodeId, buildAllowedSeriesKeys(series)]]);
+  const allowed = buildAllowedSeriesKeys(
+    JSON.parse(nodeRow.series_json) as SeriesSnapshot[],
+  );
   const history =
-    groupNodeSamples(nodeSampleRows, allowedKeysByNode, MAX_DETAIL_POINTS).get(
-      nodeId,
-    ) ?? {};
+    groupNodeSamples(
+      nodeSampleRows,
+      new Map([[nodeId, allowed]]),
+      MAX_DETAIL_POINTS,
+    ).get(nodeId) ?? {};
 
-  return {
-    node_id: nodeId,
-    window_secs: windowSecs,
-    history,
-  };
+  return { node_id: nodeId, window_secs: windowSecs, history };
 }
 
 export async function getPublicStatusSnapshot(
@@ -415,61 +397,30 @@ export async function getPublicStatusSnapshot(
   config: LoadedConfig,
 ): Promise<PublicStatusSnapshot> {
   const now = unixNow();
-  const sparkCutoff = now - SPARK_WINDOW_SECS;
   const [passkeyCountRows, monitorRows, nodeRows, nodeSampleRows] =
     (await db.allBatch([
       { sql: "SELECT COUNT(*) AS count FROM admin_passkeys" },
       {
         sql: `SELECT id, name, public_url, enabled, last_checked_at, last_status, last_http_status, last_latency_ms, samples_json
-              FROM monitors WHERE is_public = 1 ORDER BY sort_order ASC, name ASC`,
+            FROM monitors WHERE is_public = 1 ORDER BY sort_order ASC, name ASC`,
       },
       {
-        sql: `SELECT id, label, interval_secs, grace_secs, last_seen_at,
-                     system_json, mounts_json, checks_json, series_json
-              FROM nodes WHERE is_public = 1 ORDER BY sort_order ASC, label ASC`,
+        sql: `SELECT id, label, interval_secs, grace_secs, last_seen_at, system_json, mounts_json, checks_json, series_json
+            FROM nodes WHERE is_public = 1 ORDER BY sort_order ASC, label ASC`,
       },
       {
-        sql: `SELECT s.node_id, s.ts, s.values_json
-              FROM nodes n
-              CROSS JOIN node_samples s
-                ON s.node_id = n.id AND s.ts >= ?1
-              WHERE n.is_public = 1`,
-        params: [sparkCutoff],
+        sql: `SELECT s.node_id, s.ts, s.values_json FROM nodes n
+            CROSS JOIN node_samples s ON s.node_id = n.id AND s.ts >= ?1
+            WHERE n.is_public = 1`,
+        params: [now - SPARK_WINDOW_SECS],
       },
-    ])) as [
-      { count: number }[],
-      Pick<
-        MonitorRow,
-        | "id"
-        | "name"
-        | "public_url"
-        | "enabled"
-        | "last_checked_at"
-        | "last_status"
-        | "last_http_status"
-        | "last_latency_ms"
-        | "samples_json"
-      >[],
-      Pick<
-        SnapshotNodeRow,
-        | "id"
-        | "label"
-        | "interval_secs"
-        | "grace_secs"
-        | "last_seen_at"
-        | "system_json"
-        | "mounts_json"
-        | "checks_json"
-        | "series_json"
-      >[],
-      RawNodeSample[],
-    ];
+    ])) as [{ count: number }[], MonitorRow[], NodeCoreRow[], RawNodeSample[]];
 
-  const publicKeys = new Set(["_cpu", "_mem"]);
-  const allowedKeysByNode = new Map(
-    nodeRows.map((row) => [row.id, publicKeys]),
+  const publicKeys = new Set<string>(["_cpu", "_mem"]);
+  const historyByNode = groupNodeSamples(
+    nodeSampleRows,
+    new Map(nodeRows.map((row) => [row.id, publicKeys])),
   );
-  const historyByNode = groupNodeSamples(nodeSampleRows, allowedKeysByNode);
 
   return {
     now,
@@ -504,15 +455,8 @@ export async function getPublicStatusSnapshot(
       };
     }),
     nodes: nodeRows.map((row, idx) => {
-      const system = row.system_json
-        ? (JSON.parse(row.system_json) as SystemSnapshot)
-        : null;
-      const mounts = JSON.parse(row.mounts_json) as MountSnapshot[];
-      const checks = JSON.parse(row.checks_json) as CheckSnapshot[];
-      const series = JSON.parse(row.series_json) as SeriesSnapshot[];
-      const overallStatus = deriveNodeStatus(row, mounts, checks, series, now);
+      const { system, mounts, overallStatus } = parseNodeCore(row, now);
       const hist = historyByNode.get(row.id) ?? {};
-
       const memPct =
         system?.mem_used_bytes !== undefined &&
         system.mem_total_bytes !== undefined &&

@@ -9,9 +9,10 @@ import type {
 import {
   formatAge,
   formatRemaining,
-  monitorTarget,
   sampleUptime,
+  stripUrlScheme,
 } from "../../lib/index.ts";
+import DragHandle from "../ui/DragHandle.vue";
 import StatusDot from "../ui/StatusDot.vue";
 import MonitorBars from "./MonitorBars.vue";
 
@@ -29,9 +30,9 @@ const props = defineProps<{
   reorderable?: boolean;
 }>();
 
-const isAdminMonitor = (
-  m: MonitorSummary | PublicMonitorSummary,
-): m is MonitorSummary => "url" in m;
+const adminMon = computed<MonitorSummary | null>(() =>
+  "url" in props.monitor ? props.monitor : null,
+);
 
 const dotStatus = computed<DotStatus>(() =>
   !props.monitor.enabled || props.monitor.last_status === "pending"
@@ -42,63 +43,62 @@ const dotStatus = computed<DotStatus>(() =>
 const uptime = computed(() => sampleUptime(props.monitor.samples));
 
 const displayLink = computed(() => {
-  if (isAdminMonitor(props.monitor)) {
-    return { href: props.monitor.url, text: monitorTarget(props.monitor) };
-  }
-  if (!props.monitor.public_url) {
-    return null;
-  }
+  if (adminMon.value) {
+    const hostPath = stripUrlScheme(adminMon.value.url);
 
-  return {
-    href: props.monitor.public_url,
-    text: props.monitor.public_url
-      .replace(/^https?:\/\//, "")
-      .replace(/\/$/, ""),
-  };
+    return {
+      href: adminMon.value.url,
+      text:
+        adminMon.value.method === "GET"
+          ? hostPath
+          : `${adminMon.value.method} ${hostPath}`,
+    };
+  }
+  const url = (props.monitor as PublicMonitorSummary).public_url;
+
+  return url ? { href: url, text: stripUrlScheme(url) } : null;
 });
 
-const uptimeClass = computed(() => {
-  if (uptime.value === null) {
-    return "text-dimmed";
-  }
-  if (uptime.value >= 99) {
-    return "text-emerald-600 dark:text-emerald-400";
-  }
+const uptimeClass = computed(() =>
+  uptime.value === null
+    ? "text-dimmed"
+    : uptime.value >= 99
+      ? "text-emerald-600 dark:text-emerald-400"
+      : uptime.value >= 90
+        ? "text-amber-600 dark:text-amber-400"
+        : "text-red-500 dark:text-red-400",
+);
 
-  return uptime.value >= 90
-    ? "text-amber-600 dark:text-amber-400"
-    : "text-red-500 dark:text-red-400";
-});
+const errorText = computed(() =>
+  adminMon.value
+    ? adminMon.value.last_error
+    : (props.monitor as PublicMonitorSummary).status_detail,
+);
 </script>
 
 <template>
   <div
-    :aria-expanded="isAdminMonitor(monitor) ? Boolean(expanded) : undefined"
+    :aria-expanded="adminMon ? Boolean(expanded) : undefined"
     class="grid grid-cols-1 items-center gap-x-5 gap-y-2.5 py-3.5"
     :class="[
-      isAdminMonitor(monitor)
+      adminMon
         ? 'cursor-pointer px-2 transition-colors hover:bg-elevated/60 lg:grid-cols-[minmax(13rem,1.2fr)_minmax(13rem,1.65fr)_4.5rem_minmax(9rem,0.9fr)_auto]'
         : 'px-1 lg:grid-cols-[minmax(12rem,1.1fr)_minmax(14rem,1.8fr)_4.5rem_minmax(7rem,0.8fr)]',
       !monitor.enabled ? 'opacity-60' : '',
     ]"
-    @click="isAdminMonitor(monitor) && emit('toggle')"
+    @click="adminMon && emit('toggle')"
   >
     <div class="min-w-0 space-y-0.5">
       <div class="flex items-center gap-2">
-        <button
-          v-if="reorderable && isAdminMonitor(monitor)"
-          aria-label="Drag to reorder monitor (Alt+ArrowUp or Alt+ArrowDown)"
-          class="-ml-1 inline-flex size-5 shrink-0 cursor-grab items-center justify-center rounded text-dimmed/60 transition-colors hover:text-default active:cursor-grabbing"
-          title="Drag to reorder"
-          type="button"
-          @click.stop
-          @keydown.alt.down.prevent.stop="emit('moveDown')"
-          @keydown.alt.up.prevent.stop="emit('moveUp')"
-        >
-          <UIcon class="size-3.5" name="i-lucide-grip-vertical" />
-        </button>
+        <DragHandle
+          v-if="reorderable && adminMon"
+          class="-ml-1"
+          label="monitor"
+          @move-down="emit('moveDown')"
+          @move-up="emit('moveUp')"
+        />
         <UIcon
-          v-if="isAdminMonitor(monitor)"
+          v-if="adminMon"
           class="size-3.5 shrink-0 text-dimmed transition-transform duration-150"
           :class="expanded ? 'rotate-90 text-default' : ''"
           name="i-lucide-chevron-right"
@@ -115,32 +115,28 @@ const uptimeClass = computed(() => {
         >
           Paused
         </UBadge>
-        <template v-if="isAdminMonitor(monitor)">
-          <UBadge
-            v-if="!monitor.is_public"
-            color="neutral"
-            size="xs"
-            variant="subtle"
-          >
-            Private
-          </UBadge>
-          <UBadge
-            v-if="monitor.muted_until > now"
-            color="warning"
-            size="xs"
-            variant="subtle"
-          >
-            Muted {{ formatRemaining(monitor.muted_until, now) }}
-          </UBadge>
-        </template>
+        <UBadge
+          v-if="adminMon && !adminMon.is_public"
+          color="neutral"
+          size="xs"
+          variant="subtle"
+        >
+          Private
+        </UBadge>
+        <UBadge
+          v-if="adminMon && adminMon.muted_until > now"
+          color="warning"
+          size="xs"
+          variant="subtle"
+        >
+          Muted {{ formatRemaining(adminMon.muted_until, now) }}
+        </UBadge>
       </div>
 
       <a
         v-if="displayLink"
         class="inline-flex max-w-full items-center gap-1 font-mono text-[11.5px] text-dimmed transition-colors hover:text-primary"
-        :class="
-          isAdminMonitor(monitor) ? (reorderable ? 'pl-15' : 'pl-9') : 'pl-4'
-        "
+        :class="adminMon ? (reorderable ? 'pl-15' : 'pl-9') : 'pl-4'"
         :href="displayLink.href"
         rel="noreferrer"
         target="_blank"
@@ -170,34 +166,22 @@ const uptimeClass = computed(() => {
     <div
       class="flex items-baseline justify-between gap-2 font-mono text-xs tabular-nums lg:flex-col lg:items-end lg:gap-0.5"
     >
-      <template v-if="isAdminMonitor(monitor)">
-        <span
-          v-if="monitor.last_error"
-          class="truncate text-red-500 dark:text-red-400"
-          :title="monitor.last_error"
-        >
-          {{ monitor.last_error }}
+      <span
+        v-if="errorText"
+        class="truncate text-red-500 dark:text-red-400"
+        :title="errorText"
+      >
+        {{ errorText }}
+      </span>
+      <span v-else-if="monitor.last_latency_ms === null" class="text-dimmed">
+        -
+      </span>
+      <span v-else class="inline-flex items-baseline gap-2">
+        <span v-if="adminMon" class="text-muted">
+          {{ adminMon.last_http_status }}
         </span>
-        <span v-else-if="monitor.last_latency_ms === null" class="text-dimmed">
-          -
-        </span>
-        <span v-else class="inline-flex items-baseline gap-2">
-          <span class="text-muted">{{ monitor.last_http_status }}</span>
-          <span>{{ Math.round(monitor.last_latency_ms) }} ms</span>
-        </span>
-      </template>
-      <template v-else>
-        <span
-          v-if="monitor.status_detail"
-          class="text-red-500 dark:text-red-400"
-        >
-          {{ monitor.status_detail }}
-        </span>
-        <span v-else-if="monitor.last_latency_ms === null" class="text-dimmed">
-          -
-        </span>
-        <span v-else>{{ Math.round(monitor.last_latency_ms) }} ms</span>
-      </template>
+        <span>{{ Math.round(monitor.last_latency_ms) }} ms</span>
+      </span>
 
       <span class="text-[11px] text-dimmed">
         {{ formatAge(monitor.last_checked_at, now) }}
@@ -205,26 +189,26 @@ const uptimeClass = computed(() => {
     </div>
 
     <UTooltip
-      v-if="isAdminMonitor(monitor)"
-      :disabled="!monitor.managed_by_node_id"
+      v-if="adminMon"
+      :disabled="!adminMon.managed_by_node_id"
       :text="
-        monitor.managed_by_node_id
-          ? `Managed by ${monitor.managed_by_node_id}`
+        adminMon.managed_by_node_id
+          ? `Managed by ${adminMon.managed_by_node_id}`
           : undefined
       "
     >
       <UButton
         :aria-label="
-          monitor.managed_by_node_id
-            ? `Managed by ${monitor.managed_by_node_id}`
+          adminMon.managed_by_node_id
+            ? `Managed by ${adminMon.managed_by_node_id}`
             : 'Edit monitor'
         "
         color="neutral"
-        :disabled="Boolean(monitor.managed_by_node_id)"
+        :disabled="Boolean(adminMon.managed_by_node_id)"
         icon="i-lucide-pencil"
         size="xs"
         variant="ghost"
-        @click.stop="!monitor.managed_by_node_id && emit('edit')"
+        @click.stop="!adminMon.managed_by_node_id && emit('edit')"
       />
     </UTooltip>
   </div>

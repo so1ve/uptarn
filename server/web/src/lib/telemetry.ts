@@ -6,7 +6,6 @@ import type {
   MonitorSummary,
   MountSnapshot,
   NodeSummary,
-  SystemSnapshot,
   TargetType,
 } from "../../../src/shared/index.ts";
 import {
@@ -14,21 +13,10 @@ import {
   formatSeriesValue,
   formatUsage,
   percent,
-} from "./format.ts";
+} from "../../../src/shared/index.ts";
 
 export type DotStatus =
   HealthStatus | NodeSummary["overall_status"] | "pending" | "overdue";
-
-export function memPercent(system: SystemSnapshot | null): number | null {
-  if (
-    system?.mem_used_bytes === undefined ||
-    system.mem_total_bytes === undefined
-  ) {
-    return null;
-  }
-
-  return percent(system.mem_used_bytes, system.mem_total_bytes);
-}
 
 export const mountPercent = (mount: MountSnapshot): number =>
   Math.min(100, Math.max(0, percent(mount.used_bytes, mount.total_bytes) ?? 0));
@@ -40,41 +28,33 @@ export function formatMountText(
   if (mount.total_bytes <= 0) {
     return mount.summary ?? mount.status;
   }
-  const pct = Math.round(mountPercent(mount));
   const free = includeFree
     ? `, ${formatBytes(Math.max(0, mount.total_bytes - mount.used_bytes))} free`
     : "";
 
-  return `${formatUsage(mount.used_bytes, mount.total_bytes)} (${pct}%${free})`;
+  return `${formatUsage(mount.used_bytes, mount.total_bytes)} (${Math.round(mountPercent(mount))}%${free})`;
 }
 
-export function usageTextClass(
+export const usageTextClass = (
   pct: number,
   warn: number,
   fail: number,
-): string {
-  if (pct >= fail) {
-    return "text-red-500 dark:text-red-400";
-  }
-
-  return pct >= warn ? "text-amber-600 dark:text-amber-400" : "";
-}
-
-export const sparkLineColor = (
-  pct: number,
-  warn: number,
-  fail: number,
-  isDark: boolean,
-  darkHex: string,
-  lightHex: string,
 ): string =>
   pct >= fail
-    ? "#ef4444"
+    ? "text-red-500 dark:text-red-400"
     : pct >= warn
-      ? "#f59e0b"
-      : isDark
-        ? darkHex
-        : lightHex;
+      ? "text-amber-600 dark:text-amber-400"
+      : "";
+
+export const statusTextClass = (
+  status: HealthStatus | "ok" | "warn" | "fail",
+  okClass = "text-muted",
+): string =>
+  status === "fail"
+    ? "text-red-500 dark:text-red-400"
+    : status === "warn"
+      ? "text-amber-600 dark:text-amber-400"
+      : okClass;
 
 export function peakMount(
   mounts: readonly MountSnapshot[],
@@ -129,11 +109,10 @@ export function nodeIssueSummary(
       })),
   ].sort((a, b) => Number(b.fail) - Number(a.fail));
 
-  if (problems.length === 0) {
+  const first = problems[0];
+  if (!first) {
     return null;
   }
-
-  const first = problems[0];
   const more = problems.length - 1;
 
   return {
@@ -151,11 +130,8 @@ export function sampleUptime(samples: readonly MonitorSample[]): number | null {
     : (recent.filter((s) => s.ok).length / recent.length) * 100;
 }
 
-export function monitorTarget(mon: MonitorSummary): string {
-  const hostPath = mon.url.replace(/^https?:\/\//, "").replace(/\/$/, "");
-
-  return mon.method === "GET" ? hostPath : `${mon.method} ${hostPath}`;
-}
+export const stripUrlScheme = (url: string): string =>
+  url.replace(/^https?:\/\//, "").replace(/\/$/, "");
 
 export function monitorLatencyStats(mon: MonitorSummary): string | null {
   const latencies = mon.samples
@@ -164,28 +140,19 @@ export function monitorLatencyStats(mon: MonitorSummary): string | null {
   if (latencies.length === 0) {
     return null;
   }
-  const min = Math.round(Math.min(...latencies));
-  const max = Math.round(Math.max(...latencies));
-  const avg = Math.round(
-    latencies.reduce((a, b) => a + b, 0) / latencies.length,
-  );
+  const avg = latencies.reduce((a, b) => a + b, 0) / latencies.length;
 
-  return `Min ${min} ms, avg ${avg} ms, max ${max} ms`;
+  return `Min ${Math.round(Math.min(...latencies))} ms, avg ${Math.round(avg)} ms, max ${Math.round(Math.max(...latencies))} ms`;
 }
 
-export function splitIncident(inc: IncidentSummary): {
-  kind: string;
-  title: string;
-} {
-  if (inc.target_type === "monitor") {
-    return { kind: "HTTP", title: inc.label.replace(/^HTTP:\s*/i, "") };
-  }
-  if (inc.target_type === "job") {
-    return { kind: "Job", title: inc.label.replace(/^Job:\s*/i, "") };
-  }
-
-  return { kind: "Node", title: inc.label };
-}
+export const splitIncident = (
+  inc: IncidentSummary,
+): { kind: string; title: string } =>
+  inc.target_type === "monitor"
+    ? { kind: "HTTP", title: inc.label.replace(/^HTTP:\s*/i, "") }
+    : inc.target_type === "job"
+      ? { kind: "Job", title: inc.label.replace(/^Job:\s*/i, "") }
+      : { kind: "Node", title: inc.label };
 
 export const incidentRoute = (inc: IncidentSummary): string =>
   inc.target_type === "node"
@@ -194,20 +161,16 @@ export const incidentRoute = (inc: IncidentSummary): string =>
       ? "/monitors"
       : "/jobs";
 
-export function targetMutedUntil(
+export const targetMutedUntil = (
   snap: DashboardSnapshot,
   targetType: TargetType,
   targetId: string,
-): number {
-  if (targetType === "node") {
-    return snap.nodes.find((n) => n.id === targetId)?.muted_until ?? 0;
-  }
-  if (targetType === "monitor") {
-    return snap.monitors.find((m) => m.id === targetId)?.muted_until ?? 0;
-  }
-
-  return snap.jobs.find((j) => j.key === targetId)?.muted_until ?? 0;
-}
+): number =>
+  (targetType === "node"
+    ? snap.nodes.find((n) => n.id === targetId)?.muted_until
+    : targetType === "monitor"
+      ? snap.monitors.find((m) => m.id === targetId)?.muted_until
+      : snap.jobs.find((j) => j.key === targetId)?.muted_until) ?? 0;
 
 export function deliveryStatus(delivery: Record<string, string>): {
   text: string;
@@ -221,34 +184,4 @@ export function deliveryStatus(delivery: Record<string, string>): {
   return failed.length === 0
     ? { text: "Delivered", warn: false }
     : { text: `${failed.map(([k]) => k).join(", ")} failed`, warn: true };
-}
-
-export function statusDotClass(status: DotStatus): string {
-  if (status === "ok") {
-    return "bg-emerald-500";
-  }
-  if (status === "warn") {
-    return "bg-amber-500";
-  }
-
-  return status === "pending" ? "bg-zinc-400 dark:bg-zinc-600" : "bg-red-500";
-}
-
-export function statusTextClass(
-  status: HealthStatus | "ok" | "warn" | "fail",
-  okClass = "text-muted",
-): string {
-  if (status === "fail") {
-    return "text-red-500 dark:text-red-400";
-  }
-
-  return status === "warn" ? "text-amber-600 dark:text-amber-400" : okClass;
-}
-
-export function mountBarClass(status: HealthStatus): string {
-  if (status === "fail") {
-    return "bg-red-500";
-  }
-
-  return status === "warn" ? "bg-amber-500" : "bg-zinc-500 dark:bg-zinc-400";
 }

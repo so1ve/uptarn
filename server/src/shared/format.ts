@@ -1,6 +1,24 @@
-import type { SeriesUnit } from "./protocol.ts";
+import type { SeriesUnit, SystemSnapshot } from "./protocol.ts";
 
 export const unixNow = (): number => Math.floor(Date.now() / 1000);
+
+export const round1 = (n: number): number => Math.round(n * 10) / 10;
+
+export const percent = (used: number, total: number): number | null =>
+  total > 0 ? (used / total) * 100 : null;
+
+export const memPercent = (system: SystemSnapshot | null): number | null =>
+  system?.mem_used_bytes !== undefined && system.mem_total_bytes !== undefined
+    ? percent(system.mem_used_bytes, system.mem_total_bytes)
+    : null;
+
+export function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
 
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) {
@@ -22,6 +40,14 @@ export function formatBytes(bytes: number): string {
 export const formatBps = (bps: number): string =>
   !Number.isFinite(bps) || bps <= 0 ? "0 B/s" : `${formatBytes(bps)}/s`;
 
+export function formatUsage(used: number, total: number): string {
+  const u = formatBytes(used);
+  const t = formatBytes(total);
+  const [uVal, uUnit] = u.split(" ");
+
+  return uUnit === t.split(" ")[1] ? `${uVal} / ${t}` : `${u} / ${t}`;
+}
+
 export function formatDuration(totalSecs: number): string {
   const secs = Math.max(0, Math.floor(totalSecs));
   if (secs < 60) {
@@ -40,6 +66,15 @@ export function formatDuration(totalSecs: number): string {
   return `${mins}m`;
 }
 
+export function formatMs(ms: number): string {
+  if (ms < 1000) {
+    return `${Math.round(ms)} ms`;
+  }
+  const secs = ms / 1000;
+
+  return secs < 60 ? `${secs.toFixed(1)} s` : formatDuration(secs);
+}
+
 export function formatAge(ts: number | null | undefined, now: number): string {
   if (ts === null || ts === undefined) {
     return "never";
@@ -49,10 +84,24 @@ export function formatAge(ts: number | null | undefined, now: number): string {
   return delta < 5 ? "just now" : `${formatDuration(delta)} ago`;
 }
 
-export function formatRemaining(untilTs: number, now: number): string {
-  const rem = untilTs - now;
+export const formatRemaining = (untilTs: number, now: number): string =>
+  untilTs <= now ? "expired" : formatDuration(untilTs - now);
 
-  return rem <= 0 ? "expired" : formatDuration(rem);
+export const formatClock = (ts: number): string =>
+  new Date(ts * 1000).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+export function formatTimestamp(ts: number, showDate = false): string {
+  if (!showDate) {
+    return formatClock(ts);
+  }
+  const d = new Date(ts * 1000);
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+
+  return `${mm}/${dd} ${formatClock(ts)}`;
 }
 
 export function formatSeriesValue(value: number, unit: SeriesUnit): string {

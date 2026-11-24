@@ -4,7 +4,6 @@ import { computed } from "vue";
 import type { SeriesPoint } from "../../lib/index.ts";
 import {
   buildSparkOption,
-  sparkLineColor,
   usageTextClass,
   useUptarnStore,
 } from "../../lib/index.ts";
@@ -19,14 +18,13 @@ const props = defineProps<{
 
 const { isDark } = useUptarnStore();
 
-const thresholds = computed(() =>
+const cfg = computed(() =>
   props.kind === "cpu"
     ? {
         label: "CPU",
         warn: 75,
         fail: 90,
-        darkHex: "#60a5fa",
-        lightHex: "#2563eb",
+        hex: isDark.value ? "#60a5fa" : "#2563eb",
         barClass: "bg-blue-500",
         display: `${props.pct.toFixed(props.pct < 10 ? 1 : 0)}%`,
       }
@@ -34,40 +32,36 @@ const thresholds = computed(() =>
         label: "Memory",
         warn: 80,
         fail: 92,
-        darkHex: "#a78bfa",
-        lightHex: "#7c3aed",
+        hex: isDark.value ? "#a78bfa" : "#7c3aed",
         barClass: "bg-violet-500",
         display: `${Math.round(props.pct)}%`,
       },
 );
 
-const option = computed(() =>
-  props.history.length >= 2
-    ? buildSparkOption(
-        props.history,
-        sparkLineColor(
-          props.pct,
-          thresholds.value.warn,
-          thresholds.value.fail,
-          isDark.value,
-          thresholds.value.darkHex,
-          thresholds.value.lightHex,
-        ),
-        isDark.value,
-      )
-    : null,
-);
+const option = computed(() => {
+  if (props.history.length < 2) {
+    return null;
+  }
+  const color =
+    props.pct >= cfg.value.fail
+      ? "#ef4444"
+      : props.pct >= cfg.value.warn
+        ? "#f59e0b"
+        : cfg.value.hex;
+
+  return buildSparkOption(props.history, color, isDark.value);
+});
 </script>
 
 <template>
   <div class="space-y-1">
     <div class="flex items-baseline justify-between gap-2">
-      <span class="text-xs text-muted">{{ thresholds.label }}</span>
+      <span class="text-xs text-muted">{{ cfg.label }}</span>
       <span
         class="text-base font-semibold tracking-tight tabular-nums"
-        :class="usageTextClass(pct, thresholds.warn, thresholds.fail)"
+        :class="usageTextClass(pct, cfg.warn, cfg.fail)"
       >
-        {{ thresholds.display }}
+        {{ cfg.display }}
       </span>
     </div>
     <EChart v-if="option" height="32px" :option />
@@ -77,7 +71,7 @@ const option = computed(() =>
     >
       <div
         class="h-full rounded-full"
-        :class="thresholds.barClass"
+        :class="cfg.barClass"
         :style="{ width: `${Math.min(100, Math.max(0, pct))}%` }"
       />
     </div>

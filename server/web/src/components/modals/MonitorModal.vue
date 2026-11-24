@@ -14,42 +14,28 @@ const open = defineModel<boolean>("open", { default: false });
 const { busy, run } = useAction();
 const methods = ["GET", "HEAD", "POST"];
 
-const form = reactive({
-  id: "",
-  name: "",
-  url: "",
-  public_url: "",
-  method: "GET",
-  expected_status_min: 200,
-  expected_status_max: 299,
-  expected_body: "",
-  interval_secs: 60,
-  timeout_ms: 8000,
-  enabled: true,
-  is_public: true,
+const initialForm = (m: MonitorSummary | null) => ({
+  id: m?.id ?? "",
+  name: m?.name ?? "",
+  url: m?.url ?? "",
+  public_url: m?.public_url ?? "",
+  method: m?.method ?? "GET",
+  expected_status_min: m?.expected_status_min ?? 200,
+  expected_status_max: m?.expected_status_max ?? 299,
+  expected_body: m?.expected_body ?? "",
+  interval_secs: m?.interval_secs ?? 60,
+  timeout_ms: m?.timeout_ms ?? 8000,
+  enabled: m ? Boolean(m.enabled) : true,
+  is_public: m ? Boolean(m.is_public) : true,
 });
 
+const form = reactive(initialForm(null));
 const isEdit = computed(() => props.monitor !== null);
 
 watch(open, (isOpen) => {
-  if (!isOpen) {
-    return;
+  if (isOpen) {
+    Object.assign(form, initialForm(props.monitor));
   }
-  const m = props.monitor;
-  Object.assign(form, {
-    id: m?.id ?? "",
-    name: m?.name ?? "",
-    url: m?.url ?? "",
-    public_url: m?.public_url ?? "",
-    method: m?.method ?? "GET",
-    expected_status_min: m?.expected_status_min ?? 200,
-    expected_status_max: m?.expected_status_max ?? 299,
-    expected_body: m?.expected_body ?? "",
-    interval_secs: m?.interval_secs ?? 60,
-    timeout_ms: m?.timeout_ms ?? 8000,
-    enabled: m ? Boolean(m.enabled) : true,
-    is_public: m ? Boolean(m.is_public) : true,
-  });
 });
 
 async function onSubmit() {

@@ -20,34 +20,24 @@ const globalMuted = computed(
   () => settings.value.global_muted_until > snap.value.now,
 );
 
-const onToggleAutoRegister = (next: boolean) =>
+const GLOBAL_MUTES = [
+  { label: "1h", secs: 3600 },
+  { label: "6h", secs: 21_600 },
+] as const;
+
+const patchSettings = (
+  key: string,
+  failTitle: string,
+  body: Record<string, unknown>,
+  okMessage: string,
+) =>
   run(
-    "enroll",
-    "Failed to update registration",
+    key,
+    failTitle,
     async () => {
-      const res = await apiFetch<{ auto_register: boolean }>(
-        "/api/v1/admin/settings",
-        "PATCH",
-        { auto_register: next },
-      );
+      await apiFetch("/api/v1/admin/settings", "PATCH", body);
 
-      return res.auto_register
-        ? "Node registration opened"
-        : "Node registration closed";
-    },
-    true,
-  );
-
-const onRotateEnrollment = () =>
-  run(
-    "rotate",
-    "Rotation failed",
-    async () => {
-      await apiFetch("/api/v1/admin/settings", "PATCH", {
-        rotate_enrollment_token: true,
-      });
-
-      return "Enrollment token rotated";
+      return okMessage;
     },
     true,
   );
@@ -69,20 +59,6 @@ const onSendTestAlert = () =>
 
     return "Test alert sent";
   });
-
-const onGlobalMute = (secs: number) =>
-  run(
-    `mute:${secs}`,
-    "Failed to update mute",
-    async () => {
-      await apiFetch("/api/v1/admin/settings", "PATCH", {
-        global_mute_secs: secs,
-      });
-
-      return secs > 0 ? "All alerts muted" : "All alerts resumed";
-    },
-    true,
-  );
 </script>
 
 <template>
@@ -95,7 +71,16 @@ const onGlobalMute = (secs: number) =>
             :disabled="busy === 'enroll'"
             label="Auto-register with enrollment token"
             :model-value="settings.auto_register"
-            @update:model-value="onToggleAutoRegister"
+            @update:model-value="
+              patchSettings(
+                'enroll',
+                'Failed to update registration',
+                { auto_register: $event },
+                $event
+                  ? 'Node registration opened'
+                  : 'Node registration closed',
+              )
+            "
           />
           <UFormField label="Enrollment token">
             <div class="flex items-center gap-2">
@@ -118,7 +103,14 @@ const onGlobalMute = (secs: number) =>
                 :loading="busy === 'rotate'"
                 size="sm"
                 variant="soft"
-                @click="onRotateEnrollment"
+                @click="
+                  patchSettings(
+                    'rotate',
+                    'Rotation failed',
+                    { rotate_enrollment_token: true },
+                    'Enrollment token rotated',
+                  )
+                "
               >
                 Rotate
               </UButton>
@@ -136,18 +128,16 @@ const onGlobalMute = (secs: number) =>
             <div class="flex items-center gap-3">
               <span class="text-muted">Channels</span>
               <UBadge
-                :color="settings.channels.telegram ? 'success' : 'neutral'"
+                v-for="[name, on] in [
+                  ['Telegram', settings.channels.telegram],
+                  ['Matrix', settings.channels.matrix],
+                ] as const"
+                :key="name"
+                :color="on ? 'success' : 'neutral'"
                 size="sm"
                 variant="subtle"
               >
-                Telegram {{ settings.channels.telegram ? "on" : "off" }}
-              </UBadge>
-              <UBadge
-                :color="settings.channels.matrix ? 'success' : 'neutral'"
-                size="sm"
-                variant="subtle"
-              >
-                Matrix {{ settings.channels.matrix ? "on" : "off" }}
+                {{ name }} {{ on ? "on" : "off" }}
               </UBadge>
             </div>
             <UButton
@@ -182,22 +172,22 @@ const onGlobalMute = (secs: number) =>
             </div>
             <div class="flex items-center gap-1.5">
               <UButton
+                v-for="m in GLOBAL_MUTES"
+                :key="m.secs"
                 color="neutral"
-                :loading="busy === 'mute:3600'"
+                :loading="busy === `mute:${m.secs}`"
                 size="xs"
                 variant="soft"
-                @click="onGlobalMute(3600)"
+                @click="
+                  patchSettings(
+                    `mute:${m.secs}`,
+                    'Failed to update mute',
+                    { global_mute_secs: m.secs },
+                    'All alerts muted',
+                  )
+                "
               >
-                1h
-              </UButton>
-              <UButton
-                color="neutral"
-                :loading="busy === 'mute:21600'"
-                size="xs"
-                variant="soft"
-                @click="onGlobalMute(21600)"
-              >
-                6h
+                {{ m.label }}
               </UButton>
               <UButton
                 v-if="globalMuted"
@@ -205,7 +195,14 @@ const onGlobalMute = (secs: number) =>
                 :loading="busy === 'mute:0'"
                 size="xs"
                 variant="soft"
-                @click="onGlobalMute(0)"
+                @click="
+                  patchSettings(
+                    'mute:0',
+                    'Failed to update mute',
+                    { global_mute_secs: 0 },
+                    'All alerts resumed',
+                  )
+                "
               >
                 Resume
               </UButton>

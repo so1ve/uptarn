@@ -5,6 +5,26 @@ use std::time::Duration;
 use crate::config::SystemCollectConfig;
 use crate::protocol::{HealthStatus, InfoSnapshot, SeriesSnapshot, SeriesUnit, SystemSnapshot};
 
+const VIRTUAL_IFACE_PREFIXES: &[&str] = &[
+    "veth",
+    "docker",
+    "podman",
+    "br-",
+    "cni",
+    "virbr",
+    "tailscale",
+    "wg",
+    "tun",
+    "tap",
+    "utun",
+    "zt",
+    "nebula",
+    "flannel",
+    "cali",
+];
+
+const CPU_THERMAL_KEYWORDS: &[&str] = &["x86_pkg_temp", "coretemp", "k10temp", "cpu", "soc"];
+
 #[derive(Debug, Default)]
 pub struct CpuTracker {
     prev: Option<(u64, u64)>,
@@ -33,8 +53,7 @@ fn compute_cpu_pct(prev_idle: u64, prev_total: u64, idle: u64, total: u64) -> Op
     if total_delta == 0 {
         return Some(0.0);
     }
-    let busy = total_delta.saturating_sub(idle_delta);
-    let pct = (busy as f64 / total_delta as f64) * 100.0;
+    let pct = (total_delta.saturating_sub(idle_delta) as f64 / total_delta as f64) * 100.0;
 
     Some((pct * 10.0).round() / 10.0)
 }
@@ -42,37 +61,26 @@ fn compute_cpu_pct(prev_idle: u64, prev_total: u64, idle: u64, total: u64) -> Op
 fn read_cpu_jiffies() -> Option<(u64, u64)> {
     let stat = fs::read_to_string("/proc/stat").ok()?;
     let line = stat.lines().find(|l| l.starts_with("cpu "))?;
-    let mut idle = 0u64;
-    let mut total = 0u64;
-    let mut count = 0usize;
-    for part in line.split_whitespace().skip(1) {
-        let Ok(v) = part.parse::<u64>() else {
-            continue;
-        };
-        if count == 3 || count == 4 {
-            idle += v;
-        }
-        total += v;
-        count += 1;
-    }
-    if count < 4 {
+    let vals: Vec<u64> = line
+        .split_whitespace()
+        .skip(1)
+        .filter_map(|p| p.parse().ok())
+        .collect();
+    if vals.len() < 4 {
         return None;
     }
+    let idle = vals[3] + vals.get(4).copied().unwrap_or(0);
 
-    Some((idle, total))
+    Some((idle, vals.iter().sum()))
 }
 
-fn read_uptime_secs() -> Option<u64> {
-    let raw = fs::read_to_string("/proc/uptime").ok()?;
-    let secs: f64 = raw.split_whitespace().next()?.parse().ok()?;
-
-    Some(secs as u64)
-}
-
-fn read_load_1m() -> Option<f64> {
-    let raw = fs::read_to_string("/proc/loadavg").ok()?;
-
-    raw.split_whitespace().next()?.parse().ok()
+fn read_first_f64(path: &str) -> Option<f64> {
+    fs::read_to_string(path)
+        .ok()?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -83,41 +91,38 @@ struct MemInfo {
     swap_total_bytes: Option<u64>,
 }
 
-fn parse_meminfo(raw: &str) -> MemInfo {
-    let mut mem_total_kib: Option<u64> = None;
-    let mut mem_avail_kib: Option<u64> = None;
-    let mut swap_total_kib: Option<u64> = None;
-    let mut swap_free_kib: Option<u64> = None;
+const fn used_and_total(
+    total_kib: Option<u64>,
+    free_kib: Option<u64>,
+    nonzero_only: bool,
+) -> (Option<u64>, Option<u64>) {
+    match (total_kib, free_kib) {
+        (Some(total), Some(free)) if !nonzero_only || total > 0 => {
+            let total_b = total * 1024;
+            (Some(total_b.saturating_sub(free * 1024)), Some(total_b))
+        }
+        _ => (None, None),
+    }
+}
 
+fn parse_meminfo(raw: &str) -> MemInfo {
+    let (mut mem_total, mut mem_avail, mut swap_total, mut swap_free) = (None, None, None, None);
     for line in raw.lines() {
-        let parse_field = |prefix: &str, slot: &mut Option<u64>| {
-            if let Some(rest) = line.strip_prefix(prefix) {
-                *slot = rest.split_whitespace().next().and_then(|v| v.parse().ok());
-            }
+        let Some((key, rest)) = line.split_once(':') else {
+            continue;
         };
-        parse_field("MemTotal:", &mut mem_total_kib);
-        parse_field("MemAvailable:", &mut mem_avail_kib);
-        parse_field("SwapTotal:", &mut swap_total_kib);
-        parse_field("SwapFree:", &mut swap_free_kib);
+        let val = rest.split_whitespace().next().and_then(|v| v.parse().ok());
+        match key {
+            "MemTotal" => mem_total = val,
+            "MemAvailable" => mem_avail = val,
+            "SwapTotal" => swap_total = val,
+            "SwapFree" => swap_free = val,
+            _ => {}
+        }
     }
 
-    let (mem_used_bytes, mem_total_bytes) = match (mem_total_kib, mem_avail_kib) {
-        (Some(total), Some(avail)) => {
-            let total_b = total * 1024;
-            let avail_b = avail * 1024;
-            (Some(total_b.saturating_sub(avail_b)), Some(total_b))
-        }
-        _ => (None, None),
-    };
-
-    let (swap_used_bytes, swap_total_bytes) = match (swap_total_kib, swap_free_kib) {
-        (Some(total), Some(free)) if total > 0 => {
-            let total_b = total * 1024;
-            let free_b = free * 1024;
-            (Some(total_b.saturating_sub(free_b)), Some(total_b))
-        }
-        _ => (None, None),
-    };
+    let (mem_used_bytes, mem_total_bytes) = used_and_total(mem_total, mem_avail, false);
+    let (swap_used_bytes, swap_total_bytes) = used_and_total(swap_total, swap_free, true);
 
     MemInfo {
         mem_used_bytes,
@@ -127,29 +132,11 @@ fn parse_meminfo(raw: &str) -> MemInfo {
     }
 }
 
-fn read_memory_info() -> MemInfo {
-    fs::read_to_string("/proc/meminfo")
-        .map(|raw| parse_meminfo(&raw))
-        .unwrap_or_default()
-}
-
 fn is_virtual_interface_name(name: &str) -> bool {
     name == "lo"
-        || name.starts_with("veth")
-        || name.starts_with("docker")
-        || name.starts_with("podman")
-        || name.starts_with("br-")
-        || name.starts_with("cni")
-        || name.starts_with("virbr")
-        || name.starts_with("tailscale")
-        || name.starts_with("wg")
-        || name.starts_with("tun")
-        || name.starts_with("tap")
-        || name.starts_with("utun")
-        || name.starts_with("zt")
-        || name.starts_with("nebula")
-        || name.starts_with("flannel")
-        || name.starts_with("cali")
+        || VIRTUAL_IFACE_PREFIXES
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
 }
 
 fn is_physical_interface(name: &str) -> bool {
@@ -157,17 +144,13 @@ fn is_physical_interface(name: &str) -> bool {
         return false;
     }
     let sysfs = Path::new("/sys/class/net").join(name);
-    if sysfs.exists() {
-        return sysfs.join("device").exists();
-    }
 
-    true
+    !sysfs.exists() || sysfs.join("device").exists()
 }
 
 fn read_network_bytes(allowlist: &[String]) -> Option<(u64, u64)> {
     let raw = fs::read_to_string("/proc/net/dev").ok()?;
-    let mut rx_total = 0u64;
-    let mut tx_total = 0u64;
+    let (mut rx_total, mut tx_total) = (0u64, 0u64);
     for line in raw.lines().skip(2) {
         let Some((iface_raw, stats_raw)) = line.split_once(':') else {
             continue;
@@ -194,33 +177,33 @@ fn read_network_bytes(allowlist: &[String]) -> Option<(u64, u64)> {
 }
 
 fn parse_os_pretty_name(raw: &str) -> Option<String> {
-    for line in raw.lines() {
-        if let Some(rest) = line.strip_prefix("PRETTY_NAME=") {
-            let trimmed = rest.trim().trim_matches(['"', '\'']).trim();
-            if !trimmed.is_empty() {
-                return Some(trimmed.to_string());
-            }
-        }
-    }
-
-    None
+    raw.lines()
+        .find_map(|line| line.strip_prefix("PRETTY_NAME="))
+        .map(|rest| rest.trim().trim_matches(['"', '\'']).trim())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 pub fn collect_temperature() -> Option<SeriesSnapshot> {
     let entries = fs::read_dir("/sys/class/thermal").ok()?;
-    let mut preferred: Option<f64> = None;
-    let mut fallback: Option<f64> = None;
+    let (mut preferred, mut fallback) = (None::<f64>, None::<f64>);
 
     for entry in entries.filter_map(Result::ok) {
-        let name = entry.file_name();
-        if !name.to_string_lossy().starts_with("thermal_zone") {
+        if !entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with("thermal_zone")
+        {
             continue;
         }
         let path = entry.path();
-        let Ok(raw_temp) = fs::read_to_string(path.join("temp")) else {
-            continue;
-        };
-        let Ok(millideg) = raw_temp.trim().parse::<i64>() else {
+        let Ok(millideg) = fs::read_to_string(path.join("temp"))
+            .ok()
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .parse::<i64>()
+        else {
             continue;
         };
         let celsius = millideg as f64 / 1000.0;
@@ -232,21 +215,15 @@ pub fn collect_temperature() -> Option<SeriesSnapshot> {
             .unwrap_or_default()
             .trim()
             .to_ascii_lowercase();
-        let is_cpu_zone = zone_type.contains("x86_pkg_temp")
-            || zone_type.contains("coretemp")
-            || zone_type.contains("k10temp")
-            || zone_type.contains("cpu")
-            || zone_type.contains("soc");
-
-        if is_cpu_zone {
-            preferred = Some(preferred.map(|cur| cur.max(celsius)).unwrap_or(celsius));
+        let slot = if CPU_THERMAL_KEYWORDS.iter().any(|kw| zone_type.contains(kw)) {
+            &mut preferred
         } else {
-            fallback = Some(fallback.map(|cur| cur.max(celsius)).unwrap_or(celsius));
-        }
+            &mut fallback
+        };
+        *slot = Some(slot.map(|cur| cur.max(celsius)).unwrap_or(celsius));
     }
 
-    let raw_c = preferred.or(fallback)?;
-    let value = (raw_c * 10.0).round() / 10.0;
+    let value = (preferred.or(fallback)? * 10.0).round() / 10.0;
     let status = if value >= 95.0 {
         HealthStatus::Fail
     } else if value >= 80.0 {
@@ -281,7 +258,9 @@ pub async fn collect_system(
         None
     };
     let mem = if cfg.memory {
-        read_memory_info()
+        fs::read_to_string("/proc/meminfo")
+            .map(|raw| parse_meminfo(&raw))
+            .unwrap_or_default()
     } else {
         MemInfo::default()
     };
@@ -292,9 +271,9 @@ pub async fn collect_system(
         .unzip();
 
     Some(SystemSnapshot {
-        uptime_secs: read_uptime_secs().unwrap_or(0),
+        uptime_secs: read_first_f64("/proc/uptime").unwrap_or(0.0) as u64,
         cpu_pct,
-        load_1m: cfg.load.then(read_load_1m).flatten(),
+        load_1m: cfg.load.then(|| read_first_f64("/proc/loadavg")).flatten(),
         mem_used_bytes: mem.mem_used_bytes,
         mem_total_bytes: mem.mem_total_bytes,
         swap_used_bytes: mem.swap_used_bytes,
@@ -306,44 +285,37 @@ pub async fn collect_system(
 
 pub fn collect_os_info() -> Vec<InfoSnapshot> {
     let mut info = Vec::new();
+    let mut push = |key: &str, label: &str, value: String| {
+        info.push(InfoSnapshot {
+            key: key.to_string(),
+            label: label.to_string(),
+            group: Some("system".to_string()),
+            value,
+        });
+    };
+
     if let Ok(raw) = fs::read_to_string("/etc/os-release")
         && let Some(os) = parse_os_pretty_name(&raw)
     {
-        info.push(InfoSnapshot {
-            key: "os".to_string(),
-            label: "OS".to_string(),
-            group: Some("system".to_string()),
-            value: os,
-        });
+        push("os", "OS", os);
     }
     let uname = rustix::system::uname();
     let release = uname.release().to_string_lossy();
     if !release.is_empty() {
-        info.push(InfoSnapshot {
-            key: "kernel".to_string(),
-            label: "Kernel".to_string(),
-            group: Some("system".to_string()),
-            value: release.into_owned(),
-        });
+        push("kernel", "Kernel", release.into_owned());
     }
-    info.push(InfoSnapshot {
-        key: "arch".to_string(),
-        label: "Arch".to_string(),
-        group: Some("system".to_string()),
-        value: std::env::consts::ARCH.to_string(),
-    });
+    push("arch", "Arch", std::env::consts::ARCH.to_string());
     if let Ok(cores) = std::thread::available_parallelism() {
-        let count = cores.get();
-        info.push(InfoSnapshot {
-            key: "cpu_cores".to_string(),
-            label: "CPU".to_string(),
-            group: Some("system".to_string()),
-            value: if count == 1 {
+        let n = cores.get();
+        push(
+            "cpu_cores",
+            "CPU",
+            if n == 1 {
                 "1 core".to_string()
             } else {
-                format!("{count} cores")
+                format!("{n} cores")
             },
-        });
+        );
     }
 
     info

@@ -1,14 +1,22 @@
 <script setup lang="ts">
 import type { HealthStatus } from "../../lib/index.ts";
-import { mountBarClass } from "../../lib/index.ts";
 
 const props = defineProps<{
   pct: number;
   status?: HealthStatus;
 }>();
 
-const resolvedStatus = (): HealthStatus =>
-  props.status ?? (props.pct >= 92 ? "fail" : props.pct >= 85 ? "warn" : "ok");
+function barClass() {
+  const s =
+    props.status ??
+    (props.pct >= 92 ? "fail" : props.pct >= 85 ? "warn" : "ok");
+
+  return s === "fail"
+    ? "bg-red-500"
+    : s === "warn"
+      ? "bg-amber-500"
+      : "bg-zinc-500 dark:bg-zinc-400";
+}
 </script>
 
 <template>
@@ -17,7 +25,7 @@ const resolvedStatus = (): HealthStatus =>
   >
     <div
       class="h-full rounded-full"
-      :class="mountBarClass(resolvedStatus())"
+      :class="barClass()"
       :style="{ width: `${Math.min(100, Math.max(0, pct))}%` }"
     />
   </div>

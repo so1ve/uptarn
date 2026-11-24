@@ -4,7 +4,7 @@ import type { MonitorInput, MonitorSample } from "../shared/index.ts";
 import { unixNow } from "../shared/index.ts";
 import { parseMonitorInput } from "../validation.ts";
 
-export interface MonitorRow {
+export interface MonitorConfigFields {
   id: string;
   name: string;
   url: string;
@@ -17,6 +17,9 @@ export interface MonitorRow {
   interval_secs: number;
   enabled: number;
   is_public: number;
+}
+
+export interface MonitorRow extends MonitorConfigFields {
   managed_by_node_id: string | null;
   muted_until: number;
   created_at: number;
@@ -38,15 +41,10 @@ export function parseMonitorSamples(
   if (!raw) {
     return [];
   }
-  const parsed = JSON.parse(raw) as CompactMonitorSample[];
-  const samples: MonitorSample[] = parsed.map(([ts, ok, latencyMs]) => ({
-    ts,
-    ok: ok === 1,
-    latency_ms: latencyMs,
-  }));
-  samples.sort((a, b) => a.ts - b.ts);
 
-  return samples;
+  return (JSON.parse(raw) as CompactMonitorSample[])
+    .map(([ts, ok, latency_ms]) => ({ ts, ok: ok === 1, latency_ms }))
+    .sort((a, b) => a.ts - b.ts);
 }
 
 export function appendMonitorSample(
@@ -54,15 +52,12 @@ export function appendMonitorSample(
   sample: MonitorSample,
   limit = MAX_MONITOR_SAMPLES,
 ): string {
-  const existing = parseMonitorSamples(raw).filter((s) => s.ts !== sample.ts);
-  existing.push(sample);
-  existing.sort((a, b) => a.ts - b.ts);
-  const trimmed = existing.slice(-limit);
-  const compact: CompactMonitorSample[] = trimmed.map((s) => [
-    s.ts,
-    s.ok ? 1 : 0,
-    s.latency_ms,
-  ]);
+  const next = parseMonitorSamples(raw).filter((s) => s.ts !== sample.ts);
+  next.push(sample);
+  next.sort((a, b) => a.ts - b.ts);
+  const compact: CompactMonitorSample[] = next
+    .slice(-limit)
+    .map((s) => [s.ts, s.ok ? 1 : 0, s.latency_ms]);
 
   return JSON.stringify(compact);
 }
@@ -74,26 +69,16 @@ export interface ProbeResult {
   error: string | null;
 }
 
-export async function upsertMonitor(
-  db: SqlDatabase,
-  raw: MonitorInput | unknown,
-): Promise<string> {
-  const parsed = parseMonitorInput(raw);
-  const existing = await db.first<{ managed_by_node_id: string | null }>(
-    "SELECT managed_by_node_id FROM monitors WHERE id = ?1",
-    [parsed.id],
-  );
-  if (existing?.managed_by_node_id) {
-    throw httpError(
-      409,
-      `Monitor "${parsed.id}" is managed by node "${existing.managed_by_node_id}"`,
-    );
-  }
+export function buildMonitorUpsertStatements(
+  mon: MonitorConfigFields,
+  now: number,
+  managedByNodeId: string | null = null,
+): SqlStatement[] {
   const statements: SqlStatement[] = [
     {
       sql: `INSERT INTO monitors
-            (id, name, url, public_url, method, expected_status_min, expected_status_max, expected_body, timeout_ms, interval_secs, enabled, is_public, sort_order, created_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, COALESCE((SELECT MAX(sort_order) + 1 FROM monitors), 0), ?13)
+            (id, name, url, public_url, method, expected_status_min, expected_status_max, expected_body, timeout_ms, interval_secs, enabled, is_public, managed_by_node_id, sort_order, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, COALESCE((SELECT MAX(sort_order) + 1 FROM monitors), 0), ?14)
             ON CONFLICT(id) DO UPDATE SET
               last_checked_at = CASE
                 WHEN monitors.url != excluded.url
@@ -114,47 +99,63 @@ export async function upsertMonitor(
               timeout_ms = excluded.timeout_ms,
               interval_secs = excluded.interval_secs,
               enabled = excluded.enabled,
-              is_public = excluded.is_public`,
+              is_public = excluded.is_public,
+              managed_by_node_id = excluded.managed_by_node_id`,
       params: [
-        parsed.id,
-        parsed.name,
-        parsed.url,
-        parsed.public_url,
-        parsed.method,
-        parsed.expected_status_min,
-        parsed.expected_status_max,
-        parsed.expected_body,
-        parsed.timeout_ms,
-        parsed.interval_secs,
-        parsed.enabled ? 1 : 0,
-        parsed.is_public ? 1 : 0,
-        unixNow(),
+        mon.id,
+        mon.name,
+        mon.url,
+        mon.public_url,
+        mon.method,
+        mon.expected_status_min,
+        mon.expected_status_max,
+        mon.expected_body,
+        mon.timeout_ms,
+        mon.interval_secs,
+        mon.enabled,
+        mon.is_public,
+        managedByNodeId,
+        now,
       ],
     },
   ];
-
-  if (!parsed.enabled) {
+  if (mon.enabled === 0) {
     statements.push({
       sql: "DELETE FROM alert_states WHERE target_type = 'monitor' AND target_id = ?1",
-      params: [parsed.id],
+      params: [mon.id],
     });
   }
 
-  await db.batch(statements);
-
-  return parsed.id;
+  return statements;
 }
 
-export async function reorderMonitors(
+export async function upsertMonitor(
   db: SqlDatabase,
-  ids: readonly string[],
-): Promise<void> {
-  await db.batch(
-    ids.map((id, index) => ({
-      sql: "UPDATE monitors SET sort_order = ?1 WHERE id = ?2",
-      params: [index, id],
-    })),
+  raw: MonitorInput | unknown,
+): Promise<string> {
+  const parsed = parseMonitorInput(raw);
+  const existing = await db.first<{ managed_by_node_id: string | null }>(
+    "SELECT managed_by_node_id FROM monitors WHERE id = ?1",
+    [parsed.id],
   );
+  if (existing?.managed_by_node_id) {
+    throw httpError(
+      409,
+      `Monitor "${parsed.id}" is managed by node "${existing.managed_by_node_id}"`,
+    );
+  }
+  await db.batch(
+    buildMonitorUpsertStatements(
+      {
+        ...parsed,
+        enabled: parsed.enabled ? 1 : 0,
+        is_public: parsed.is_public ? 1 : 0,
+      },
+      unixNow(),
+    ),
+  );
+
+  return parsed.id;
 }
 
 export async function probeMonitor(
@@ -177,11 +178,10 @@ export async function probeMonitor(
       signal: AbortSignal.timeout(monitor.timeout_ms),
     });
     const latencyMs = Math.round((performance.now() - started) * 10) / 10;
-    const statusOk =
-      response.status >= monitor.expected_status_min &&
-      response.status <= monitor.expected_status_max;
-
-    if (!statusOk) {
+    if (
+      response.status < monitor.expected_status_min ||
+      response.status > monitor.expected_status_max
+    ) {
       await response.body?.cancel();
 
       return {
@@ -191,7 +191,6 @@ export async function probeMonitor(
         error: `HTTP ${response.status}`,
       };
     }
-
     if (monitor.expected_body) {
       const bodyText = await readBoundedText(response, 65_536);
       if (!bodyText.includes(monitor.expected_body)) {
@@ -206,12 +205,7 @@ export async function probeMonitor(
       await response.body?.cancel();
     }
 
-    return {
-      ok: true,
-      httpStatus: response.status,
-      latencyMs,
-      error: null,
-    };
+    return { ok: true, httpStatus: response.status, latencyMs, error: null };
   } catch (error) {
     const rawError = errorMessage(error);
     const isTimeout =

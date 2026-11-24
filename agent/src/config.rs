@@ -8,60 +8,52 @@ use crate::protocol::{InfoSnapshot, MonitorSpec};
 
 const EXEC_TIMEOUT_MS: u64 = 5000;
 
-const fn default_exec_timeout_ms() -> u64 {
-    EXEC_TIMEOUT_MS
+const fn default_u32<const V: u32>() -> u32 {
+    V
 }
-
+const fn default_u64<const V: u64>() -> u64 {
+    V
+}
+const fn default_i64<const V: i64>() -> i64 {
+    V
+}
+const fn default_f64<const V: u32>() -> f64 {
+    V as f64
+}
 const fn default_auto_format() -> ExecOutputFormat {
     ExecOutputFormat::Auto
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
 pub struct AgentConfig {
+    #[serde(default)]
     pub hub_url: String,
+    #[serde(default)]
     pub node_id: String,
     pub label: Option<String>,
     pub token: Option<String>,
     pub token_file: Option<String>,
     pub enroll_token: Option<String>,
     pub enroll_token_file: Option<String>,
+    #[serde(default = "default_u64::<60>")]
     pub interval_secs: u64,
     pub grace_secs: Option<u64>,
     pub is_public: Option<bool>,
+    #[serde(default)]
     pub system: SystemCollectConfig,
+    #[serde(default)]
     pub mounts: Vec<MountConfig>,
+    #[serde(default)]
     pub tcp_probes: Vec<TcpProbeConfig>,
+    #[serde(default)]
     pub tls_certs: Vec<TlsCertConfig>,
+    #[serde(default)]
     pub exec: Vec<ExecCheckConfig>,
+    #[serde(default)]
     pub exec_dirs: Vec<ExecDirConfig>,
+    #[serde(default)]
     pub info: Vec<InfoSnapshot>,
     pub monitors: Option<Vec<MonitorSpec>>,
-}
-
-impl Default for AgentConfig {
-    fn default() -> Self {
-        Self {
-            hub_url: String::new(),
-            node_id: String::new(),
-            label: None,
-            token: None,
-            token_file: None,
-            enroll_token: None,
-            enroll_token_file: None,
-            interval_secs: 60,
-            grace_secs: None,
-            is_public: None,
-            system: SystemCollectConfig::default(),
-            mounts: Vec::new(),
-            tcp_probes: Vec::new(),
-            tls_certs: Vec::new(),
-            exec: Vec::new(),
-            exec_dirs: Vec::new(),
-            info: Vec::new(),
-            monitors: None,
-        }
-    }
 }
 
 #[expect(
@@ -97,87 +89,57 @@ impl Default for SystemCollectConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
 pub struct MountConfig {
+    #[serde(default)]
     pub path: String,
     pub label: Option<String>,
+    #[serde(default = "default_f64::<85>")]
     pub warn_pct: f64,
+    #[serde(default = "default_f64::<92>")]
     pub fail_pct: f64,
+    #[serde(default = "default_u64::<3000>")]
     pub timeout_ms: u64,
-}
-
-impl Default for MountConfig {
-    fn default() -> Self {
-        Self {
-            path: String::new(),
-            label: None,
-            warn_pct: 85.0,
-            fail_pct: 92.0,
-            timeout_ms: 3000,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
 pub struct TcpProbeConfig {
+    #[serde(default)]
     pub key: String,
+    #[serde(default)]
     pub label: String,
     pub group: Option<String>,
+    #[serde(default)]
     pub target: String,
+    #[serde(default = "default_u32::<4>")]
     pub count: u32,
+    #[serde(default = "default_u64::<2000>")]
     pub timeout_ms: u64,
+    #[serde(default = "default_f64::<250>")]
     pub warn_ms: f64,
+    #[serde(default = "default_f64::<800>")]
     pub fail_ms: f64,
+    #[serde(default = "default_f64::<20>")]
     pub warn_loss_pct: f64,
+    #[serde(default = "default_f64::<50>")]
     pub fail_loss_pct: f64,
 }
 
-impl Default for TcpProbeConfig {
-    fn default() -> Self {
-        Self {
-            key: String::new(),
-            label: String::new(),
-            group: None,
-            target: String::new(),
-            count: 4,
-            timeout_ms: 2000,
-            warn_ms: 250.0,
-            fail_ms: 800.0,
-            warn_loss_pct: 20.0,
-            fail_loss_pct: 50.0,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
 pub struct TlsCertConfig {
+    #[serde(default)]
     pub key: String,
+    #[serde(default)]
     pub label: String,
     pub group: Option<String>,
     pub path: Option<String>,
     pub connect: Option<String>,
     pub server_name: Option<String>,
+    #[serde(default = "default_i64::<14>")]
     pub warn_days: i64,
+    #[serde(default = "default_i64::<5>")]
     pub fail_days: i64,
+    #[serde(default = "default_u64::<2000>")]
     pub timeout_ms: u64,
-}
-
-impl Default for TlsCertConfig {
-    fn default() -> Self {
-        Self {
-            key: String::new(),
-            label: String::new(),
-            group: None,
-            path: None,
-            connect: None,
-            server_name: None,
-            warn_days: 14,
-            fail_days: 5,
-            timeout_ms: 2000,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
@@ -198,7 +160,7 @@ pub enum ExecDirConfig {
         group: Option<String>,
         #[serde(default = "default_auto_format")]
         format: ExecOutputFormat,
-        #[serde(default = "default_exec_timeout_ms")]
+        #[serde(default = "default_u64::<EXEC_TIMEOUT_MS>")]
         timeout_ms: u64,
     },
 }
@@ -218,29 +180,19 @@ impl ExecDirConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
 pub struct ExecCheckConfig {
+    #[serde(default)]
     pub key: String,
+    #[serde(default)]
     pub label: String,
     pub group: Option<String>,
+    #[serde(default)]
     pub command: Vec<String>,
+    #[serde(default)]
     pub format: ExecOutputFormat,
     pub warn_exit_code: Option<i32>,
+    #[serde(default = "default_u64::<EXEC_TIMEOUT_MS>")]
     pub timeout_ms: u64,
-}
-
-impl Default for ExecCheckConfig {
-    fn default() -> Self {
-        Self {
-            key: String::new(),
-            label: String::new(),
-            group: None,
-            command: Vec::new(),
-            format: ExecOutputFormat::Exit,
-            warn_exit_code: None,
-            timeout_ms: EXEC_TIMEOUT_MS,
-        }
-    }
 }
 
 fn non_empty(value: &str) -> Option<String> {
@@ -301,15 +253,11 @@ impl AgentConfig {
                 "exec[] requires key and command"
             );
         }
-        if let Some(monitors) = &cfg.monitors {
-            for m in monitors {
-                ensure!(
-                    !m.key.trim().is_empty()
-                        && !m.name.trim().is_empty()
-                        && !m.url.trim().is_empty(),
-                    "monitors[] requires key, name, and url"
-                );
-            }
+        for m in cfg.monitors.iter().flatten() {
+            ensure!(
+                !m.key.trim().is_empty() && !m.name.trim().is_empty() && !m.url.trim().is_empty(),
+                "monitors[] requires key, name, and url"
+            );
         }
 
         cfg.node_id = non_empty(&cfg.node_id)

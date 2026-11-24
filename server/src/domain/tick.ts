@@ -42,20 +42,7 @@ export async function runTick(
   options: TickOptions = {},
 ): Promise<TickReport> {
   const probeStart = unixNow();
-  const candidates = await db.all<
-    Pick<
-      MonitorRow,
-      | "id"
-      | "url"
-      | "method"
-      | "expected_status_min"
-      | "expected_status_max"
-      | "expected_body"
-      | "timeout_ms"
-      | "interval_secs"
-      | "last_checked_at"
-    >
-  >(
+  const candidates = await db.all<MonitorRow>(
     `SELECT id, url, method, expected_status_min, expected_status_max,
             expected_body, timeout_ms, interval_secs, last_checked_at
      FROM monitors WHERE enabled = 1`,
@@ -72,8 +59,7 @@ export async function runTick(
         .sort((a, b) => (a.last_checked_at ?? 0) - (b.last_checked_at ?? 0))
         .slice(0, MAX_PROBES_PER_TICK);
 
-  // Execute external HTTP probes before reading mutable alert/node/job state
-  // so slow network I/O never causes stale state overwrites.
+  // Execute external HTTP probes before reading mutable state so slow I/O cannot cause stale overwrites.
   const probeResults = new Map<string, ProbeResult>();
   for (let i = 0; i < dueMonitors.length; i += 6) {
     const slice = dueMonitors.slice(i, i + 6);
@@ -91,53 +77,32 @@ export async function runTick(
         sql: "SELECT id, name, enabled, muted_until, samples_json FROM monitors",
       },
       {
-        sql: `SELECT id, label, interval_secs, grace_secs, muted_until, last_seen_at
-              FROM nodes WHERE last_seen_at IS NOT NULL`,
+        sql: "SELECT id, label, interval_secs, grace_secs, muted_until, last_seen_at FROM nodes WHERE last_seen_at IS NOT NULL",
       },
       {
-        sql: `SELECT key, label, interval_secs, grace_secs, muted_until, last_run_at
-              FROM jobs WHERE last_status = 'ok'`,
+        sql: "SELECT key, label, interval_secs, grace_secs, muted_until, last_run_at FROM jobs WHERE last_status = 'ok'",
       },
       { sql: `SELECT ${ALERT_STATE_COLUMNS} FROM alert_states` },
     ])) as [
       SettingRow[],
-      Pick<
-        MonitorRow,
-        "id" | "name" | "enabled" | "muted_until" | "samples_json"
-      >[],
+      MonitorRow[],
       TickNodeRow[],
-      Pick<
-        JobRow,
-        | "key"
-        | "label"
-        | "interval_secs"
-        | "grace_secs"
-        | "muted_until"
-        | "last_run_at"
-      >[],
+      JobRow[],
       AlertStateRow[],
     ];
 
   const settings = parseRuntimeSettings(settingRows, config);
   const observations: AlertObservation[] = [];
   const writeStatements: SqlStatement[] = [];
-
   const sampleBucketTs = Math.floor(now / 30) * 30;
   let appliedProbes = 0;
+
   for (const m of allMonitors) {
-    if (m.enabled !== 1) {
-      continue;
-    }
-    const res = probeResults.get(m.id);
+    const res = m.enabled === 1 ? probeResults.get(m.id) : undefined;
     if (!res) {
       continue;
     }
     appliedProbes += 1;
-    const nextSamplesJson = appendMonitorSample(m.samples_json, {
-      ts: sampleBucketTs,
-      ok: res.ok,
-      latency_ms: res.latencyMs,
-    });
     writeStatements.push({
       sql: `UPDATE monitors SET
               last_checked_at = ?1, last_status = ?2, last_http_status = ?3,
@@ -149,11 +114,14 @@ export async function runTick(
         res.httpStatus,
         res.latencyMs,
         res.error,
-        nextSamplesJson,
+        appendMonitorSample(m.samples_json, {
+          ts: sampleBucketTs,
+          ok: res.ok,
+          latency_ms: res.latencyMs,
+        }),
         m.id,
       ],
     });
-
     observations.push({
       incidentKey: `monitor:${m.id}`,
       targetType: "monitor",
@@ -210,12 +178,12 @@ export async function runTick(
 
   let pruned = false;
   if (now - settings.lastPruneAt >= 3600) {
-    const seriesRetentionSecs =
-      Math.min(config.retentionDays, MAX_SERIES_RETENTION_DAYS) * 86_400;
+    const seriesCutoff =
+      now - Math.min(config.retentionDays, MAX_SERIES_RETENTION_DAYS) * 86_400;
     for (const node of nodes) {
       writeStatements.push({
         sql: "DELETE FROM node_samples WHERE node_id = ?1 AND ts < ?2",
-        params: [node.id, now - seriesRetentionSecs],
+        params: [node.id, seriesCutoff],
       });
     }
     writeStatements.push(

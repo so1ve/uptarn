@@ -1,4 +1,8 @@
+import { BarChart, LineChart } from "echarts/charts";
+import { GridComponent, TooltipComponent } from "echarts/components";
 import type { EChartsCoreOption } from "echarts/core";
+import { use } from "echarts/core";
+import { CanvasRenderer } from "echarts/renderers";
 
 import type {
   MonitorSummary,
@@ -6,7 +10,13 @@ import type {
   SeriesPoint,
   SeriesSnapshot,
 } from "../../../src/shared/index.ts";
-import { formatBps, formatSeriesValue, formatTimestamp } from "./format.ts";
+import {
+  formatBps,
+  formatSeriesValue,
+  formatTimestamp,
+} from "../../../src/shared/index.ts";
+
+use([BarChart, LineChart, GridComponent, TooltipComponent, CanvasRenderer]);
 
 const AXIS_LABEL = {
   color: "#71717a",
@@ -35,12 +45,14 @@ interface AxisTooltipItem {
   value?: unknown;
 }
 
+const HTML_ESCAPES: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+};
 const escapeHtml = (input: string) =>
-  input
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+  input.replace(/[&<>"]/g, (ch) => HTML_ESCAPES[ch]);
 
 function baseTooltip(
   isDark: boolean,
@@ -145,63 +157,65 @@ export const buildSparkOption = (
   ],
 });
 
+function buildDualAreaOption(
+  channels: readonly [string, string, readonly SeriesPoint[]][],
+  isDark: boolean,
+  showDate: boolean,
+  gridLeft: number,
+  yAxisExtra: Record<string, unknown>,
+  yAxisFmt: string | ((v: number) => string),
+  tooltipFmt: (v: number) => string,
+): EChartsCoreOption | null {
+  const active = channels.filter(([, , pts]) => pts.length >= 2);
+  if (active.length === 0) {
+    return null;
+  }
+  const timestamps = [
+    ...new Set(active.flatMap(([, , pts]) => pts.map((pt) => pt.ts))),
+  ].sort((a, b) => a - b);
+
+  return {
+    animationDuration: 220,
+    grid: { left: gridLeft, right: 14, top: 14, bottom: 24 },
+    tooltip: baseTooltip(isDark, (v) =>
+      typeof v === "number" ? tooltipFmt(v) : "-",
+    ),
+    xAxis: timeAxis(timestamps, showDate),
+    yAxis: valueAxis(chartPalette(isDark).gridColor, yAxisExtra, yAxisFmt),
+    series: active.map(([name, color, pts]) => {
+      const byTs = new Map(pts.map((pt) => [pt.ts, pt.value]));
+
+      return areaLine(
+        name,
+        color,
+        timestamps.map((ts) => byTs.get(ts) ?? null),
+        isDark,
+        true,
+      );
+    }),
+  };
+}
+
 export function buildComputeChartOption(
   node: NodeSummary,
   isDark: boolean,
   history: Record<string, SeriesPoint[]> = node.history,
   showDate = false,
 ): EChartsCoreOption | null {
-  const cpuPts = history._cpu ?? [];
-  const memPts = history._mem ?? [];
-  if (cpuPts.length < 2 && memPts.length < 2) {
-    return null;
-  }
-
-  const timestamps = [
-    ...new Set([...cpuPts.map((p) => p.ts), ...memPts.map((p) => p.ts)]),
-  ].sort((a, b) => a - b);
-  const cpuMap = new Map(cpuPts.map((p) => [p.ts, p.value]));
-  const memMap = new Map(memPts.map((p) => [p.ts, p.value]));
   const p = chartPalette(isDark);
 
-  const series: unknown[] = [];
-  if (cpuPts.length >= 2) {
-    series.push(
-      areaLine(
-        "CPU",
-        p.cpu,
-        timestamps.map((ts) => cpuMap.get(ts) ?? null),
-        isDark,
-        true,
-      ),
-    );
-  }
-  if (memPts.length >= 2) {
-    series.push(
-      areaLine(
-        "Memory",
-        p.mem,
-        timestamps.map((ts) => memMap.get(ts) ?? null),
-        isDark,
-        true,
-      ),
-    );
-  }
-
-  return {
-    animationDuration: 220,
-    grid: { left: 40, right: 14, top: 14, bottom: 24 },
-    tooltip: baseTooltip(isDark, (v) =>
-      typeof v === "number" ? `${v.toFixed(1)}%` : "-",
-    ),
-    xAxis: timeAxis(timestamps, showDate),
-    yAxis: valueAxis(
-      p.gridColor,
-      { min: 0, max: 100, interval: 25 },
-      "{value}%",
-    ),
-    series,
-  };
+  return buildDualAreaOption(
+    [
+      ["CPU", p.cpu, history._cpu ?? []],
+      ["Memory", p.mem, history._mem ?? []],
+    ],
+    isDark,
+    showDate,
+    40,
+    { min: 0, max: 100, interval: 25 },
+    "{value}%",
+    (v) => `${v.toFixed(1)}%`,
+  );
 }
 
 export function buildNetworkChartOption(
@@ -210,55 +224,20 @@ export function buildNetworkChartOption(
   history: Record<string, SeriesPoint[]> = node.history,
   showDate = false,
 ): EChartsCoreOption | null {
-  const rxPts = history._rx_bps ?? [];
-  const txPts = history._tx_bps ?? [];
-  if (rxPts.length < 2 && txPts.length < 2) {
-    return null;
-  }
-
-  const timestamps = [
-    ...new Set([...rxPts.map((p) => p.ts), ...txPts.map((p) => p.ts)]),
-  ].sort((a, b) => a - b);
-  const rxMap = new Map(rxPts.map((p) => [p.ts, p.value]));
-  const txMap = new Map(txPts.map((p) => [p.ts, p.value]));
   const p = chartPalette(isDark);
 
-  const series: unknown[] = [];
-  if (rxPts.length >= 2) {
-    series.push(
-      areaLine(
-        "RX",
-        p.cpu,
-        timestamps.map((ts) => rxMap.get(ts) ?? null),
-        isDark,
-        true,
-      ),
-    );
-  }
-  if (txPts.length >= 2) {
-    series.push(
-      areaLine(
-        "TX",
-        p.mem,
-        timestamps.map((ts) => txMap.get(ts) ?? null),
-        isDark,
-        true,
-      ),
-    );
-  }
-
-  return {
-    animationDuration: 220,
-    grid: { left: 66, right: 14, top: 14, bottom: 24 },
-    tooltip: baseTooltip(isDark, (v) =>
-      typeof v === "number" ? formatBps(v) : "-",
-    ),
-    xAxis: timeAxis(timestamps, showDate),
-    yAxis: valueAxis(p.gridColor, { min: 0, splitNumber: 3 }, (v: number) =>
-      formatBps(v),
-    ),
-    series,
-  };
+  return buildDualAreaOption(
+    [
+      ["RX", p.cpu, history._rx_bps ?? []],
+      ["TX", p.mem, history._tx_bps ?? []],
+    ],
+    isDark,
+    showDate,
+    66,
+    { min: 0, splitNumber: 3 },
+    formatBps,
+    formatBps,
+  );
 }
 
 export interface ProbeChartItem {

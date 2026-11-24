@@ -1,14 +1,11 @@
 import { ref } from "vue";
 
-export function reorderIds(
+function reorderIds(
   ids: readonly string[],
   fromId: string,
   toId: string,
 ): string[] | null {
-  if (fromId === toId) {
-    return null;
-  }
-  const fromIdx = ids.indexOf(fromId);
+  const fromIdx = fromId === toId ? -1 : ids.indexOf(fromId);
   const toIdx = ids.indexOf(toId);
   if (fromIdx === -1 || toIdx === -1) {
     return null;
@@ -23,9 +20,15 @@ export function reorderIds(
 export function useReorder(
   getIds: () => readonly string[],
   onCommit: (ids: string[]) => void,
+  overClass = "bg-elevated/80 ring-1 ring-primary/50",
 ) {
   const draggingId = ref<string | null>(null);
   const dragOverId = ref<string | null>(null);
+
+  function onDragEnd() {
+    draggingId.value = null;
+    dragOverId.value = null;
+  }
 
   function onDragStart(id: string, event: DragEvent) {
     draggingId.value = id;
@@ -51,42 +54,33 @@ export function useReorder(
     event.preventDefault();
     const sourceId =
       draggingId.value ?? event.dataTransfer?.getData("text/plain") ?? null;
-    draggingId.value = null;
-    dragOverId.value = null;
-    if (!sourceId) {
-      return;
-    }
-    const next = reorderIds(getIds(), sourceId, targetId);
+    onDragEnd();
+    const next = sourceId ? reorderIds(getIds(), sourceId, targetId) : null;
     if (next) {
       onCommit(next);
     }
-  }
-
-  function onDragEnd() {
-    draggingId.value = null;
-    dragOverId.value = null;
   }
 
   function moveBy(id: string, delta: -1 | 1) {
     const ids = getIds();
-    const idx = ids.indexOf(id);
-    const targetIdx = idx + delta;
-    if (idx === -1 || targetIdx < 0 || targetIdx >= ids.length) {
-      return;
-    }
-    const next = reorderIds(ids, id, ids[targetIdx]);
+    const targetId = ids[ids.indexOf(id) + delta];
+    const next = targetId ? reorderIds(ids, id, targetId) : null;
     if (next) {
       onCommit(next);
     }
   }
 
-  return {
-    draggingId,
-    dragOverId,
-    onDragStart,
-    onDragOver,
-    onDrop,
-    onDragEnd,
-    moveBy,
-  };
+  const dragAttrs = (id: string, enabled: boolean) => ({
+    draggable: enabled,
+    class: [
+      draggingId.value === id ? "opacity-45" : "",
+      dragOverId.value === id ? overClass : "",
+    ],
+    onDragend: onDragEnd,
+    onDragstart: (e: DragEvent) => enabled && onDragStart(id, e),
+    onDragover: (e: DragEvent) => enabled && onDragOver(id, e),
+    onDrop: (e: DragEvent) => enabled && onDrop(id, e),
+  });
+
+  return { dragAttrs, moveBy };
 }
