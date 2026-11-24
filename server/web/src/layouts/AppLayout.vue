@@ -53,7 +53,7 @@ const { isDark, toggleTheme } = useUptarnStore();
           rel="noopener noreferrer"
           target="_blank"
         >
-          uptarn
+          Uptarn
         </a>
         <span>v{{ version }}</span>
       </div>

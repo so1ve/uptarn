@@ -24,7 +24,7 @@ const { isDark } = useUptarnStore();
       :src="isDark ? '/logo-dark.svg' : '/logo-light.svg'"
       width="22"
     />
-    <span class="text-[15px] font-semibold tracking-tight">uptarn</span>
+    <span class="text-[15px] font-semibold tracking-tight">Uptarn</span>
     <template v-if="host">
       <span class="text-dimmed">/</span>
       <span class="truncate font-mono text-xs text-muted">{{ host }}</span>
