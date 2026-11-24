@@ -241,6 +241,118 @@ describe("uptarn portable server", () => {
       "dsm",
     ]);
 
+    const managedReport = await app.request("/api/v1/ingest/report", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${createdDsm.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        node_id: "dsm",
+        is_public: true,
+        monitors: [
+          {
+            key: "nas_web",
+            name: "NAS Web",
+            url: "https://nas.example.com/healthz",
+            public_url: "https://nas.example.com",
+            is_public: true,
+          },
+        ],
+      }),
+    });
+
+    expect(managedReport.status).toBe(200);
+
+    const lockedNodePatch = await app.request("/api/v1/admin/nodes/dsm", {
+      method: "PATCH",
+      headers: {
+        "Authorization": "Bearer admin-tok",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ is_public: false }),
+    });
+
+    expect(lockedNodePatch.status).toBe(409);
+
+    const lockedMonEdit = await app.request("/api/v1/admin/monitors", {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer admin-tok",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        id: "dsm:nas_web",
+        name: "Tampered",
+        url: "https://nas.example.com",
+      }),
+    });
+
+    expect(lockedMonEdit.status).toBe(409);
+
+    const lockedMonDel = await app.request(
+      "/api/v1/admin/monitors/dsm%3Anas_web",
+      {
+        method: "DELETE",
+        headers: { Authorization: "Bearer admin-tok" },
+      },
+    );
+
+    expect(lockedMonDel.status).toBe(409);
+
+    const pubSnap = await app.request("/api/v1/public/status");
+    const pubBody = await pubSnap.json<{
+      monitors: { name: string; public_url: string | null }[];
+    }>();
+
+    expect(pubBody.monitors.find((m) => m.name === "NAS Web")?.public_url).toBe(
+      "https://nas.example.com/",
+    );
+
+    const badPublicUrl = await app.request("/api/v1/admin/monitors", {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer admin-tok",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Bad",
+        url: "https://example.com",
+        public_url: "javascript:alert(1)",
+      }),
+    });
+
+    expect(badPublicUrl.status).toBe(400);
+
+    const clearedReport = await app.request("/api/v1/ingest/report", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${createdDsm.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        node_id: "dsm",
+        monitors: [],
+      }),
+    });
+
+    expect(clearedReport.status).toBe(200);
+
+    const unlockedSnap = await app.request("/api/v1/admin/snapshot", {
+      headers: { Authorization: "Bearer admin-tok" },
+    });
+    const unlockedBody = await unlockedSnap.json<{
+      nodes: { id: string; is_public: boolean; public_managed: boolean }[];
+      monitors: { id: string }[];
+    }>();
+    const dsmAfter = unlockedBody.nodes.find((n) => n.id === "dsm")!;
+
+    expect(dsmAfter.is_public).toBeTruthy();
+    expect(dsmAfter.public_managed).toBeFalsy();
+    expect(
+      unlockedBody.monitors.some((m) => m.id === "dsm:nas_web"),
+    ).toBeFalsy();
+
     const enableRes = await app.request("/api/v1/admin/settings", {
       method: "PATCH",
       headers: {

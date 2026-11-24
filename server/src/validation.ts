@@ -4,6 +4,7 @@ import type {
   HealthStatus,
   JobReportPayload,
   MonitorInput,
+  NodeMonitorSpec,
   NodeReportPayload,
   SeriesUnit,
   SystemSnapshot,
@@ -179,12 +180,41 @@ export function parseNodeReportPayload(raw: unknown): NodeReportPayload {
     };
   }
 
+  let monitors: NodeMonitorSpec[] | undefined;
+  if (obj.monitors !== undefined && obj.monitors !== null) {
+    const seenKeys = new Set<string>();
+    monitors = list(obj.monitors, "monitors", 32, (m, p) => {
+      const key = slug(m.key, `${p}.key`);
+      if (seenKeys.has(key)) {
+        bad(`${p}.key duplicate "${key}"`);
+      }
+      seenKeys.add(key);
+      const parsed = parseMonitorInput({ ...m, id: key });
+
+      return {
+        key,
+        name: parsed.name,
+        url: parsed.url,
+        public_url: parsed.public_url,
+        method: parsed.method,
+        expected_status_min: parsed.expected_status_min,
+        expected_status_max: parsed.expected_status_max,
+        expected_body: parsed.expected_body,
+        timeout_ms: parsed.timeout_ms,
+        interval_secs: parsed.interval_secs,
+        enabled: parsed.enabled,
+        is_public: parsed.is_public,
+      };
+    });
+  }
+
   return {
     node_id: slug(obj.node_id, "node_id"),
     label: str(obj.label, "label", 80),
     agent_version: str(obj.agent_version, "agent_version", 40),
     interval_secs: int(obj.interval_secs, "interval_secs", 10, 86_400),
     grace_secs: int(obj.grace_secs, "grace_secs", 10, 604_800),
+    is_public: bool(obj.is_public, "is_public"),
     system,
     mounts: list(obj.mounts, "mounts", 64, (m, p) => ({
       path: reqStr(m.path, `${p}.path`, 128),
@@ -218,6 +248,7 @@ export function parseNodeReportPayload(raw: unknown): NodeReportPayload {
       group: str(inf.group, `${p}.group`, 40),
       value: reqStr(inf.value, `${p}.value`, 512),
     })),
+    monitors,
   };
 }
 
@@ -267,6 +298,24 @@ export function parseMonitorInput(raw: MonitorInput | unknown) {
     bad("url protocol must be http: or https:");
   }
 
+  const rawPublicUrl = str(obj.public_url, "public_url", 512);
+  let publicUrl: string | null = null;
+  if (rawPublicUrl) {
+    let parsedPublic: URL;
+    try {
+      parsedPublic = new URL(rawPublicUrl);
+    } catch {
+      bad("public_url must be a valid HTTP(S) URL");
+    }
+    if (
+      parsedPublic.protocol !== "http:" &&
+      parsedPublic.protocol !== "https:"
+    ) {
+      bad("public_url protocol must be http: or https:");
+    }
+    publicUrl = parsedPublic.toString();
+  }
+
   const expectedStatusMin =
     int(obj.expected_status_min, "expected_status_min", 100, 599) ?? 200;
   const expectedStatusMax =
@@ -281,6 +330,7 @@ export function parseMonitorInput(raw: MonitorInput | unknown) {
     id,
     name,
     url: parsedUrl.toString(),
+    public_url: publicUrl,
     method: reqOneOf(
       (str(obj.method, "method", 10) ?? "GET").toUpperCase(),
       "method",

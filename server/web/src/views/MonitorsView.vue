@@ -63,6 +63,9 @@ function toggleExpand(id: string) {
 }
 
 function openMonitorModal(mon: MonitorSummary | null) {
+  if (mon?.managed_by_node_id) {
+    return;
+  }
   editingMonitor.value = mon;
   monitorModalOpen.value = true;
 }

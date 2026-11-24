@@ -1,5 +1,5 @@
 import type { SqlDatabase, SqlStatement } from "../db/index.ts";
-import { errorMessage, readBoundedText } from "../http.ts";
+import { errorMessage, httpError, readBoundedText } from "../http.ts";
 import type { MonitorInput, MonitorSample } from "../shared/index.ts";
 import { unixNow } from "../shared/index.ts";
 import { parseMonitorInput } from "../validation.ts";
@@ -8,6 +8,7 @@ export interface MonitorRow {
   id: string;
   name: string;
   url: string;
+  public_url: string | null;
   method: string;
   expected_status_min: number;
   expected_status_max: number;
@@ -16,6 +17,7 @@ export interface MonitorRow {
   interval_secs: number;
   enabled: number;
   is_public: number;
+  managed_by_node_id: string | null;
   muted_until: number;
   created_at: number;
   last_checked_at: number | null;
@@ -77,11 +79,21 @@ export async function upsertMonitor(
   raw: MonitorInput | unknown,
 ): Promise<string> {
   const parsed = parseMonitorInput(raw);
+  const existing = await db.first<{ managed_by_node_id: string | null }>(
+    "SELECT managed_by_node_id FROM monitors WHERE id = ?1",
+    [parsed.id],
+  );
+  if (existing?.managed_by_node_id) {
+    throw httpError(
+      409,
+      `Monitor "${parsed.id}" is managed by node "${existing.managed_by_node_id}"`,
+    );
+  }
   const statements: SqlStatement[] = [
     {
       sql: `INSERT INTO monitors
-            (id, name, url, method, expected_status_min, expected_status_max, expected_body, timeout_ms, interval_secs, enabled, is_public, sort_order, created_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, COALESCE((SELECT MAX(sort_order) + 1 FROM monitors), 0), ?12)
+            (id, name, url, public_url, method, expected_status_min, expected_status_max, expected_body, timeout_ms, interval_secs, enabled, is_public, sort_order, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, COALESCE((SELECT MAX(sort_order) + 1 FROM monitors), 0), ?13)
             ON CONFLICT(id) DO UPDATE SET
               last_checked_at = CASE
                 WHEN monitors.url != excluded.url
@@ -94,6 +106,7 @@ export async function upsertMonitor(
               END,
               name = excluded.name,
               url = excluded.url,
+              public_url = excluded.public_url,
               method = excluded.method,
               expected_status_min = excluded.expected_status_min,
               expected_status_max = excluded.expected_status_max,
@@ -106,6 +119,7 @@ export async function upsertMonitor(
         parsed.id,
         parsed.name,
         parsed.url,
+        parsed.public_url,
         parsed.method,
         parsed.expected_status_min,
         parsed.expected_status_max,

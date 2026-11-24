@@ -18,6 +18,7 @@ const form = reactive({
   id: "",
   name: "",
   url: "",
+  public_url: "",
   method: "GET",
   expected_status_min: 200,
   expected_status_max: 299,
@@ -39,6 +40,7 @@ watch(open, (isOpen) => {
     id: m?.id ?? "",
     name: m?.name ?? "",
     url: m?.url ?? "",
+    public_url: m?.public_url ?? "",
     method: m?.method ?? "GET",
     expected_status_min: m?.expected_status_min ?? 200,
     expected_status_max: m?.expected_status_max ?? 299,
@@ -59,6 +61,7 @@ async function onSubmit() {
         id: form.id.trim() || undefined,
         name: form.name.trim(),
         url: form.url.trim(),
+        public_url: form.is_public ? form.public_url.trim() || null : null,
         method: form.method,
         expected_status_min: Number(form.expected_status_min || 200),
         expected_status_max: Number(form.expected_status_max || 299),
@@ -180,6 +183,30 @@ async function onDelete() {
           <USwitch v-model="form.enabled" label="Enabled" />
           <USwitch v-model="form.is_public" label="Show on status page" />
         </div>
+
+        <UFormField
+          v-if="form.is_public"
+          label="Public link (optional)"
+          name="public_url"
+        >
+          <div class="flex items-center gap-2">
+            <UInput
+              v-model="form.public_url"
+              class="flex-1 font-mono"
+              placeholder="Leave empty to hide URL"
+              type="url"
+            />
+            <UButton
+              v-if="form.url.trim() && !form.public_url.trim()"
+              color="neutral"
+              size="xs"
+              variant="soft"
+              @click="form.public_url = form.url.trim()"
+            >
+              Use URL
+            </UButton>
+          </div>
+        </UFormField>
       </form>
     </template>
 

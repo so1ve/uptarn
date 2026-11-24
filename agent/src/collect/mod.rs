@@ -88,10 +88,12 @@ pub async fn collect_report(cfg: &AgentConfig, cpu_tracker: &mut CpuTracker) -> 
         agent_version: Some(env!("CARGO_PKG_VERSION").to_string()),
         interval_secs: Some(cfg.interval_secs),
         grace_secs: cfg.grace_secs,
+        is_public: cfg.is_public,
         system,
         mounts,
         checks,
         series,
         info,
+        monitors: cfg.monitors.clone(),
     }
 }

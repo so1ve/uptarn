@@ -6,7 +6,7 @@ import {
 import type { LoadedConfig } from "../config.ts";
 import type { SqlDatabase, SqlStatement } from "../db/index.ts";
 import { httpError } from "../http.ts";
-import type { NodeReportPayload } from "../shared/index.ts";
+import type { NodeMonitorSpec, NodeReportPayload } from "../shared/index.ts";
 import { formatBytes, formatSeriesValue, unixNow } from "../shared/index.ts";
 import type { AlertObservation, AlertStateRow } from "./alerts.ts";
 import { ALERT_STATE_COLUMNS, buildAlertStatements } from "./alerts.ts";
@@ -23,8 +23,24 @@ interface NodeIngestRow {
   prev_rx_bytes: number | null;
   prev_tx_bytes: number | null;
   prev_net_at: number | null;
+  is_public: number;
   rx_bps: number | null;
   tx_bps: number | null;
+}
+
+interface ManagedMonitorRow {
+  id: string;
+  name: string;
+  url: string;
+  public_url: string | null;
+  method: string;
+  expected_status_min: number;
+  expected_status_max: number;
+  expected_body: string | null;
+  timeout_ms: number;
+  interval_secs: number;
+  enabled: number;
+  is_public: number;
 }
 
 async function issueNodeToken() {
@@ -82,12 +98,132 @@ export async function setNodePublic(
   nodeId: string,
   isPublic: boolean,
 ): Promise<boolean> {
+  const existing = await db.first<{ public_managed: number }>(
+    "SELECT public_managed FROM nodes WHERE id = ?1",
+    [nodeId],
+  );
+  if (!existing) {
+    return false;
+  }
+  if (existing.public_managed === 1) {
+    throw httpError(409, `Node "${nodeId}" visibility is managed by its agent`);
+  }
   const res = await db.run("UPDATE nodes SET is_public = ?1 WHERE id = ?2", [
     isPublic ? 1 : 0,
     nodeId,
   ]);
 
   return res.changes > 0;
+}
+
+function buildManagedMonitorStatements(
+  nodeId: string,
+  specs: readonly NodeMonitorSpec[],
+  existing: readonly ManagedMonitorRow[],
+  now: number,
+): SqlStatement[] {
+  const statements: SqlStatement[] = [];
+  const existingById = new Map(existing.map((row) => [row.id, row]));
+  const nextIds = new Set<string>();
+
+  for (const spec of specs) {
+    const id = `${nodeId}:${spec.key}`.slice(0, 64);
+    nextIds.add(id);
+    const enabled = (spec.enabled ?? true) ? 1 : 0;
+    const isPublic = (spec.is_public ?? true) ? 1 : 0;
+    const method = spec.method ?? "GET";
+    const minStatus = spec.expected_status_min ?? 200;
+    const maxStatus = spec.expected_status_max ?? Math.max(299, minStatus);
+    const publicUrl = spec.public_url ?? null;
+    const body = spec.expected_body ?? null;
+    const timeoutMs = spec.timeout_ms ?? 8000;
+    const intervalSecs = spec.interval_secs ?? 60;
+
+    const prev = existingById.get(id);
+    const unchanged =
+      prev?.name === spec.name &&
+      prev.url === spec.url &&
+      prev.public_url === publicUrl &&
+      prev.method === method &&
+      prev.expected_status_min === minStatus &&
+      prev.expected_status_max === maxStatus &&
+      prev.expected_body === body &&
+      prev.timeout_ms === timeoutMs &&
+      prev.interval_secs === intervalSecs &&
+      prev.enabled === enabled &&
+      prev.is_public === isPublic;
+
+    if (unchanged) {
+      continue;
+    }
+
+    statements.push({
+      sql: `INSERT INTO monitors
+            (id, name, url, public_url, method, expected_status_min, expected_status_max, expected_body, timeout_ms, interval_secs, enabled, is_public, managed_by_node_id, sort_order, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, COALESCE((SELECT MAX(sort_order) + 1 FROM monitors), 0), ?14)
+            ON CONFLICT(id) DO UPDATE SET
+              last_checked_at = CASE
+                WHEN monitors.url != excluded.url
+                  OR monitors.method != excluded.method
+                  OR monitors.expected_status_min != excluded.expected_status_min
+                  OR monitors.expected_status_max != excluded.expected_status_max
+                  OR monitors.expected_body IS NOT excluded.expected_body
+                THEN NULL
+                ELSE monitors.last_checked_at
+              END,
+              name = excluded.name,
+              url = excluded.url,
+              public_url = excluded.public_url,
+              method = excluded.method,
+              expected_status_min = excluded.expected_status_min,
+              expected_status_max = excluded.expected_status_max,
+              expected_body = excluded.expected_body,
+              timeout_ms = excluded.timeout_ms,
+              interval_secs = excluded.interval_secs,
+              enabled = excluded.enabled,
+              is_public = excluded.is_public,
+              managed_by_node_id = excluded.managed_by_node_id`,
+      params: [
+        id,
+        spec.name,
+        spec.url,
+        publicUrl,
+        method,
+        minStatus,
+        maxStatus,
+        body,
+        timeoutMs,
+        intervalSecs,
+        enabled,
+        isPublic,
+        nodeId,
+        now,
+      ],
+    });
+    if (enabled === 0) {
+      statements.push({
+        sql: "DELETE FROM alert_states WHERE target_type = 'monitor' AND target_id = ?1",
+        params: [id],
+      });
+    }
+  }
+
+  for (const prev of existing) {
+    if (!nextIds.has(prev.id)) {
+      statements.push(
+        {
+          sql: "DELETE FROM alert_states WHERE target_type = 'monitor' AND target_id = ?1",
+          params: [prev.id],
+        },
+        {
+          sql: "DELETE FROM monitors WHERE id = ?1 AND managed_by_node_id = ?2",
+          params: [prev.id, nodeId],
+        },
+      );
+    }
+  }
+
+  return statements;
 }
 
 export async function rotateNodeToken(
@@ -142,23 +278,38 @@ export async function ingestNodeReport(
   enrollHeader?: string,
 ): Promise<{ registered: boolean }> {
   const now = unixNow();
-  const [incomingHash, [settingRows, nodeRows, existingAlertStates]] =
-    await Promise.all([
-      sha256Hex(bearerToken),
-      db.allBatch([
-        { sql: SELECT_SETTINGS_SQL },
-        {
-          sql: `SELECT id, label, token_hash, interval_secs, grace_secs, muted_until,
-                       prev_rx_bytes, prev_tx_bytes, prev_net_at, rx_bps, tx_bps
-                FROM nodes WHERE id = ?1`,
-          params: [payload.node_id],
-        },
-        {
-          sql: `SELECT ${ALERT_STATE_COLUMNS} FROM alert_states WHERE target_type = 'node' AND target_id = ?1`,
-          params: [payload.node_id],
-        },
-      ]) as Promise<[SettingRow[], NodeIngestRow[], AlertStateRow[]]>,
-    ]);
+  const batchQueries: SqlStatement[] = [
+    { sql: SELECT_SETTINGS_SQL },
+    {
+      sql: `SELECT id, label, token_hash, interval_secs, grace_secs, muted_until, is_public,
+                   prev_rx_bytes, prev_tx_bytes, prev_net_at, rx_bps, tx_bps
+            FROM nodes WHERE id = ?1`,
+      params: [payload.node_id],
+    },
+    {
+      sql: `SELECT ${ALERT_STATE_COLUMNS} FROM alert_states WHERE target_type = 'node' AND target_id = ?1`,
+      params: [payload.node_id],
+    },
+  ];
+  if (payload.monitors !== undefined) {
+    batchQueries.push({
+      sql: `SELECT id, name, url, public_url, method, expected_status_min, expected_status_max,
+                   expected_body, timeout_ms, interval_secs, enabled, is_public
+            FROM monitors WHERE managed_by_node_id = ?1`,
+      params: [payload.node_id],
+    });
+  }
+  const [incomingHash, batchResults] = await Promise.all([
+    sha256Hex(bearerToken),
+    db.allBatch(batchQueries),
+  ]);
+  const [settingRows, nodeRows, existingAlertStates, managedMonitorRows = []] =
+    batchResults as [
+      SettingRow[],
+      NodeIngestRow[],
+      AlertStateRow[],
+      ManagedMonitorRow[]?,
+    ];
 
   const settings = parseRuntimeSettings(settingRows, config);
   const existing = nodeRows[0] ?? null;
@@ -202,17 +353,30 @@ export async function ingestNodeReport(
   const series = payload.series ?? [];
   const info = payload.info ?? [];
 
+  const publicManaged = payload.is_public === undefined ? 0 : 1;
+  const isPublic =
+    payload.is_public === undefined
+      ? (existing?.is_public ?? 0)
+      : payload.is_public
+        ? 1
+        : 0;
+
   const statements: SqlStatement[] = [
     {
       sql: `INSERT INTO nodes (
-              id, label, token_hash, interval_secs, grace_secs, sort_order, created_at,
+              id, label, token_hash, interval_secs, grace_secs, is_public, public_managed, sort_order, created_at,
               last_seen_at, prev_rx_bytes, prev_tx_bytes, prev_net_at,
               rx_bps, tx_bps, system_json, mounts_json, checks_json, series_json, info_json, agent_version
-            ) VALUES (?1, ?2, ?3, ?4, ?5, COALESCE((SELECT MAX(sort_order) + 1 FROM nodes), 0), ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, COALESCE((SELECT MAX(sort_order) + 1 FROM nodes), 0), ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
             ON CONFLICT(id) DO UPDATE SET
               label = excluded.label,
               interval_secs = excluded.interval_secs,
               grace_secs = excluded.grace_secs,
+              is_public = CASE
+                WHEN excluded.public_managed = 1 THEN excluded.is_public
+                ELSE nodes.is_public
+              END,
+              public_managed = excluded.public_managed,
               last_seen_at = excluded.last_seen_at,
               prev_rx_bytes = excluded.prev_rx_bytes,
               prev_tx_bytes = excluded.prev_tx_bytes,
@@ -231,6 +395,8 @@ export async function ingestNodeReport(
         incomingHash,
         intervalSecs,
         graceSecs,
+        isPublic,
+        publicManaged,
         now,
         now,
         rxBytes,
@@ -247,6 +413,16 @@ export async function ingestNodeReport(
       ],
     },
   ];
+  if (payload.monitors !== undefined) {
+    statements.push(
+      ...buildManagedMonitorStatements(
+        nodeId,
+        payload.monitors,
+        managedMonitorRows,
+        now,
+      ),
+    );
+  }
 
   const sampleBucketTs = Math.floor(now / 60) * 60;
   const sampleValues: Record<string, number | [number, number]> = {};

@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::{Context, Result, bail, ensure};
 use serde::Deserialize;
 
-use crate::protocol::InfoSnapshot;
+use crate::protocol::{InfoSnapshot, MonitorSpec};
 
 const EXEC_TIMEOUT_MS: u64 = 5000;
 
@@ -28,6 +28,7 @@ pub struct AgentConfig {
     pub enroll_token_file: Option<String>,
     pub interval_secs: u64,
     pub grace_secs: Option<u64>,
+    pub is_public: Option<bool>,
     pub system: SystemCollectConfig,
     pub mounts: Vec<MountConfig>,
     pub tcp_probes: Vec<TcpProbeConfig>,
@@ -35,6 +36,7 @@ pub struct AgentConfig {
     pub exec: Vec<ExecCheckConfig>,
     pub exec_dirs: Vec<ExecDirConfig>,
     pub info: Vec<InfoSnapshot>,
+    pub monitors: Option<Vec<MonitorSpec>>,
 }
 
 impl Default for AgentConfig {
@@ -49,6 +51,7 @@ impl Default for AgentConfig {
             enroll_token_file: None,
             interval_secs: 60,
             grace_secs: None,
+            is_public: None,
             system: SystemCollectConfig::default(),
             mounts: Vec::new(),
             tcp_probes: Vec::new(),
@@ -56,6 +59,7 @@ impl Default for AgentConfig {
             exec: Vec::new(),
             exec_dirs: Vec::new(),
             info: Vec::new(),
+            monitors: None,
         }
     }
 }
@@ -296,6 +300,16 @@ impl AgentConfig {
                 !e.key.trim().is_empty() && !e.command.is_empty(),
                 "exec[] requires key and command"
             );
+        }
+        if let Some(monitors) = &cfg.monitors {
+            for m in monitors {
+                ensure!(
+                    !m.key.trim().is_empty()
+                        && !m.name.trim().is_empty()
+                        && !m.url.trim().is_empty(),
+                    "monitors[] requires key, name, and url"
+                );
+            }
         }
 
         cfg.node_id = non_empty(&cfg.node_id)

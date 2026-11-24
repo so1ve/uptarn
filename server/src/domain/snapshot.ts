@@ -30,6 +30,7 @@ interface SnapshotNodeRow {
   id: string;
   label: string;
   is_public: number;
+  public_managed: number;
   interval_secs: number;
   grace_secs: number;
   muted_until: number;
@@ -209,7 +210,7 @@ export async function getDashboardSnapshot(
       sql: "SELECT id, name, device_type, backed_up, created_at, last_used_at FROM admin_passkeys ORDER BY created_at DESC",
     },
     {
-      sql: `SELECT id, label, is_public, interval_secs, grace_secs, muted_until, created_at,
+      sql: `SELECT id, label, is_public, public_managed, interval_secs, grace_secs, muted_until, created_at,
                    last_seen_at, rx_bps, tx_bps, system_json, mounts_json, checks_json,
                    series_json, info_json, agent_version
             FROM nodes ORDER BY sort_order ASC, id ASC`,
@@ -276,6 +277,7 @@ export async function getDashboardSnapshot(
     ({ row, system, mounts, checks, series, info }) => {
       const {
         is_public,
+        public_managed,
         system_json: _s,
         mounts_json: _m,
         checks_json: _c,
@@ -287,6 +289,7 @@ export async function getDashboardSnapshot(
       return {
         ...rest,
         is_public: is_public === 1,
+        public_managed: public_managed === 1,
         overall_status: deriveNodeStatus(row, mounts, checks, series, now),
         system,
         mounts,
@@ -417,7 +420,7 @@ export async function getPublicStatusSnapshot(
     (await db.allBatch([
       { sql: "SELECT COUNT(*) AS count FROM admin_passkeys" },
       {
-        sql: `SELECT id, name, enabled, last_checked_at, last_status, last_http_status, last_latency_ms, samples_json
+        sql: `SELECT id, name, public_url, enabled, last_checked_at, last_status, last_http_status, last_latency_ms, samples_json
               FROM monitors WHERE is_public = 1 ORDER BY sort_order ASC, name ASC`,
       },
       {
@@ -439,6 +442,7 @@ export async function getPublicStatusSnapshot(
         MonitorRow,
         | "id"
         | "name"
+        | "public_url"
         | "enabled"
         | "last_checked_at"
         | "last_status"
@@ -485,6 +489,7 @@ export async function getPublicStatusSnapshot(
       return {
         key: `m${idx}`,
         name: row.name,
+        public_url: row.public_url,
         enabled: row.enabled === 1,
         last_checked_at: row.last_checked_at,
         last_status: status,

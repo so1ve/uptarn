@@ -53,17 +53,34 @@ export interface InfoSnapshot {
   value: string;
 }
 
+export interface NodeMonitorSpec {
+  key: string;
+  name: string;
+  url: string;
+  public_url?: string | null;
+  method?: string;
+  expected_status_min?: number;
+  expected_status_max?: number;
+  expected_body?: string | null;
+  timeout_ms?: number;
+  interval_secs?: number;
+  enabled?: boolean;
+  is_public?: boolean;
+}
+
 export interface NodeReportPayload {
   node_id: string;
   label?: string;
   agent_version?: string;
   interval_secs?: number;
   grace_secs?: number;
+  is_public?: boolean;
   system?: SystemSnapshot;
   mounts?: MountSnapshot[];
   checks?: CheckSnapshot[];
   series?: SeriesSnapshot[];
   info?: InfoSnapshot[];
+  monitors?: NodeMonitorSpec[];
 }
 
 export interface JobReportPayload {
@@ -82,6 +99,7 @@ export interface MonitorInput {
   id?: string;
   name: string;
   url: string;
+  public_url?: string | null;
   method?: string;
   expected_status_min?: number;
   expected_status_max?: number;
@@ -115,6 +133,7 @@ export interface NodeSummary {
   label: string;
   overall_status: "ok" | "warn" | "fail" | "offline" | "pending";
   is_public: boolean;
+  public_managed: boolean;
   interval_secs: number;
   grace_secs: number;
   muted_until: number;
@@ -135,6 +154,7 @@ export interface MonitorSummary {
   id: string;
   name: string;
   url: string;
+  public_url: string | null;
   method: string;
   expected_status_min: number;
   expected_status_max: number;
@@ -143,6 +163,7 @@ export interface MonitorSummary {
   interval_secs: number;
   enabled: boolean;
   is_public: boolean;
+  managed_by_node_id: string | null;
   muted_until: number;
   last_checked_at: number | null;
   last_status: "ok" | "fail" | "pending";
@@ -234,6 +255,7 @@ export interface DashboardSnapshot {
 export interface PublicMonitorSummary {
   key: string;
   name: string;
+  public_url: string | null;
   enabled: boolean;
   last_checked_at: number | null;
   last_status: "ok" | "fail" | "pending";

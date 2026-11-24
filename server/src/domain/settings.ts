@@ -1,6 +1,7 @@
 import { generateRandomToken } from "../auth/index.ts";
 import type { LoadedConfig } from "../config.ts";
 import type { SqlDatabase, SqlStatement } from "../db/index.ts";
+import { httpError } from "../http.ts";
 import type { TargetType } from "../shared/index.ts";
 import { unixNow } from "../shared/index.ts";
 
@@ -121,14 +122,36 @@ export async function deleteTarget(
   targetType: TargetType,
   targetId: string,
 ): Promise<boolean> {
+  if (targetType === "monitor") {
+    const existing = await db.first<{ managed_by_node_id: string | null }>(
+      "SELECT managed_by_node_id FROM monitors WHERE id = ?1",
+      [targetId],
+    );
+    if (existing?.managed_by_node_id) {
+      throw httpError(
+        409,
+        `Monitor "${targetId}" is managed by node "${existing.managed_by_node_id}"`,
+      );
+    }
+  }
   const { table, pk } = TARGET_TABLE[targetType];
-  const [, res] = await db.batch([
+  const statements: SqlStatement[] = [
     {
       sql: "DELETE FROM alert_states WHERE target_type = ?1 AND target_id = ?2",
       params: [targetType, targetId],
     },
-    { sql: `DELETE FROM ${table} WHERE ${pk} = ?1`, params: [targetId] },
-  ]);
+  ];
+  if (targetType === "node") {
+    statements.push({
+      sql: "DELETE FROM alert_states WHERE target_type = 'monitor' AND target_id IN (SELECT id FROM monitors WHERE managed_by_node_id = ?1)",
+      params: [targetId],
+    });
+  }
+  statements.push({
+    sql: `DELETE FROM ${table} WHERE ${pk} = ?1`,
+    params: [targetId],
+  });
+  const results = await db.batch(statements);
 
-  return res.changes > 0;
+  return results.at(-1)!.changes > 0;
 }

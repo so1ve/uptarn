@@ -228,15 +228,21 @@ async function onDelete() {
         </div>
 
         <div class="flex flex-wrap items-center gap-2">
-          <UButton
-            color="neutral"
-            :loading="busy === 'public'"
-            size="xs"
-            variant="soft"
-            @click="onTogglePublic"
+          <UTooltip
+            :disabled="!node.public_managed"
+            text="Managed by agent config"
           >
-            {{ node.is_public ? "Make private" : "Make public" }}
-          </UButton>
+            <UButton
+              color="neutral"
+              :disabled="node.public_managed"
+              :loading="busy === 'public'"
+              size="xs"
+              variant="soft"
+              @click="onTogglePublic"
+            >
+              {{ node.is_public ? "Make private" : "Make public" }}
+            </UButton>
+          </UTooltip>
           <UButton
             v-if="isMuted"
             color="neutral"

@@ -129,6 +129,31 @@ pub struct InfoSnapshot {
     pub value: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitorSpec {
+    pub key: String,
+    pub name: String,
+    pub url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_status_min: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_status_max: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interval_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_public: Option<bool>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct NodeReportPayload {
     pub node_id: String,
@@ -141,6 +166,8 @@ pub struct NodeReportPayload {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub grace_secs: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_public: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub system: Option<SystemSnapshot>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub mounts: Vec<MountSnapshot>,
@@ -150,6 +177,8 @@ pub struct NodeReportPayload {
     pub series: Vec<SeriesSnapshot>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub info: Vec<InfoSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub monitors: Option<Vec<MonitorSpec>>,
 }
 
 #[derive(Debug, Serialize)]

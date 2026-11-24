@@ -41,6 +41,22 @@ const dotStatus = computed<DotStatus>(() =>
 
 const uptime = computed(() => sampleUptime(props.monitor.samples));
 
+const displayLink = computed(() => {
+  if (isAdminMonitor(props.monitor)) {
+    return { href: props.monitor.url, text: monitorTarget(props.monitor) };
+  }
+  if (!props.monitor.public_url) {
+    return null;
+  }
+
+  return {
+    href: props.monitor.public_url,
+    text: props.monitor.public_url
+      .replace(/^https?:\/\//, "")
+      .replace(/\/$/, ""),
+  };
+});
+
 const uptimeClass = computed(() => {
   if (uptime.value === null) {
     return "text-dimmed";
@@ -120,15 +136,17 @@ const uptimeClass = computed(() => {
       </div>
 
       <a
-        v-if="isAdminMonitor(monitor)"
+        v-if="displayLink"
         class="inline-flex max-w-full items-center gap-1 font-mono text-[11.5px] text-dimmed transition-colors hover:text-primary"
-        :class="reorderable ? 'pl-15' : 'pl-9'"
-        :href="monitor.url"
+        :class="
+          isAdminMonitor(monitor) ? (reorderable ? 'pl-15' : 'pl-9') : 'pl-4'
+        "
+        :href="displayLink.href"
         rel="noreferrer"
         target="_blank"
         @click.stop
       >
-        <span class="truncate">{{ monitorTarget(monitor) }}</span>
+        <span class="truncate">{{ displayLink.text }}</span>
         <UIcon class="size-3 shrink-0" name="i-lucide-external-link" />
       </a>
     </div>
@@ -186,14 +204,28 @@ const uptimeClass = computed(() => {
       </span>
     </div>
 
-    <UButton
+    <UTooltip
       v-if="isAdminMonitor(monitor)"
-      aria-label="Edit monitor"
-      color="neutral"
-      icon="i-lucide-pencil"
-      size="xs"
-      variant="ghost"
-      @click.stop="emit('edit')"
-    />
+      :disabled="!monitor.managed_by_node_id"
+      :text="
+        monitor.managed_by_node_id
+          ? `Managed by ${monitor.managed_by_node_id}`
+          : undefined
+      "
+    >
+      <UButton
+        :aria-label="
+          monitor.managed_by_node_id
+            ? `Managed by ${monitor.managed_by_node_id}`
+            : 'Edit monitor'
+        "
+        color="neutral"
+        :disabled="Boolean(monitor.managed_by_node_id)"
+        icon="i-lucide-pencil"
+        size="xs"
+        variant="ghost"
+        @click.stop="!monitor.managed_by_node_id && emit('edit')"
+      />
+    </UTooltip>
   </div>
 </template>
