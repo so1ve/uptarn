@@ -5,7 +5,7 @@ import type { AlertObservation, AlertStateRow } from "./alerts.ts";
 import { ALERT_STATE_COLUMNS, buildAlertStatements } from "./alerts.ts";
 import type { JobRow } from "./jobs.ts";
 import type { MonitorRow, ProbeResult } from "./monitors.ts";
-import { probeMonitor } from "./monitors.ts";
+import { appendMonitorSample, probeMonitor } from "./monitors.ts";
 import type { SettingRow } from "./settings.ts";
 import {
   SELECT_SETTINGS_SQL,
@@ -33,7 +33,8 @@ export interface TickReport {
   pruned: boolean;
 }
 
-const SERIES_RETENTION_SECS = 7 * 3600;
+const MAX_SERIES_RETENTION_DAYS = 7;
+const MAX_PROBES_PER_TICK = 25;
 
 export async function runTick(
   db: SqlDatabase,
@@ -62,11 +63,14 @@ export async function runTick(
 
   const dueMonitors = options.forceMonitors
     ? candidates
-    : candidates.filter(
-        (m) =>
-          m.last_checked_at === null ||
-          probeStart - m.last_checked_at >= Math.max(10, m.interval_secs - 5),
-      );
+    : candidates
+        .filter(
+          (m) =>
+            m.last_checked_at === null ||
+            probeStart - m.last_checked_at >= Math.max(10, m.interval_secs - 5),
+        )
+        .sort((a, b) => (a.last_checked_at ?? 0) - (b.last_checked_at ?? 0))
+        .slice(0, MAX_PROBES_PER_TICK);
 
   // Execute external HTTP probes before reading mutable alert/node/job state
   // so slow network I/O never causes stale state overwrites.
@@ -84,7 +88,7 @@ export async function runTick(
     (await db.allBatch([
       { sql: SELECT_SETTINGS_SQL },
       {
-        sql: "SELECT id, name, enabled, muted_until FROM monitors",
+        sql: "SELECT id, name, enabled, muted_until, samples_json FROM monitors",
       },
       {
         sql: `SELECT id, label, interval_secs, grace_secs, muted_until, last_seen_at
@@ -97,7 +101,10 @@ export async function runTick(
       { sql: `SELECT ${ALERT_STATE_COLUMNS} FROM alert_states` },
     ])) as [
       SettingRow[],
-      Pick<MonitorRow, "id" | "name" | "enabled" | "muted_until">[],
+      Pick<
+        MonitorRow,
+        "id" | "name" | "enabled" | "muted_until" | "samples_json"
+      >[],
       TickNodeRow[],
       Pick<
         JobRow,
@@ -126,33 +133,26 @@ export async function runTick(
       continue;
     }
     appliedProbes += 1;
-    writeStatements.push(
-      {
-        sql: `UPDATE monitors SET
-                last_checked_at = ?1, last_status = ?2, last_http_status = ?3,
-                last_latency_ms = ?4, last_error = ?5
-              WHERE id = ?6`,
-        params: [
-          now,
-          res.ok ? "ok" : "fail",
-          res.httpStatus,
-          res.latencyMs,
-          res.error,
-          m.id,
-        ],
-      },
-      {
-        sql: `INSERT OR REPLACE INTO monitor_samples (monitor_id, ts, ok, latency_ms, http_status)
-              VALUES (?1, ?2, ?3, ?4, ?5)`,
-        params: [
-          m.id,
-          sampleBucketTs,
-          res.ok ? 1 : 0,
-          res.latencyMs,
-          res.httpStatus,
-        ],
-      },
-    );
+    const nextSamplesJson = appendMonitorSample(m.samples_json, {
+      ts: sampleBucketTs,
+      ok: res.ok,
+      latency_ms: res.latencyMs,
+    });
+    writeStatements.push({
+      sql: `UPDATE monitors SET
+              last_checked_at = ?1, last_status = ?2, last_http_status = ?3,
+              last_latency_ms = ?4, last_error = ?5, samples_json = ?6
+            WHERE id = ?7`,
+      params: [
+        now,
+        res.ok ? "ok" : "fail",
+        res.httpStatus,
+        res.latencyMs,
+        res.error,
+        nextSamplesJson,
+        m.id,
+      ],
+    });
 
     observations.push({
       incidentKey: `monitor:${m.id}`,
@@ -210,21 +210,12 @@ export async function runTick(
 
   let pruned = false;
   if (now - settings.lastPruneAt >= 3600) {
-    writeStatements.push({
-      sql: "DELETE FROM series_samples WHERE ts < ?1",
-      params: [now - SERIES_RETENTION_SECS],
-    });
-    for (const m of allMonitors) {
+    const seriesRetentionSecs =
+      Math.min(config.retentionDays, MAX_SERIES_RETENTION_DAYS) * 86_400;
+    for (const node of nodes) {
       writeStatements.push({
-        sql: `DELETE FROM monitor_samples
-              WHERE monitor_id = ?1
-                AND ts < COALESCE(
-                  (SELECT s2.ts FROM monitor_samples s2
-                   WHERE s2.monitor_id = ?1
-                   ORDER BY s2.monitor_id DESC, s2.ts DESC LIMIT 1 OFFSET 48),
-                  0
-                )`,
-        params: [m.id],
+        sql: "DELETE FROM node_samples WHERE node_id = ?1 AND ts < ?2",
+        params: [node.id, now - seriesRetentionSecs],
       });
     }
     writeStatements.push(

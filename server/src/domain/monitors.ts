@@ -1,6 +1,6 @@
 import type { SqlDatabase, SqlStatement } from "../db/index.ts";
 import { errorMessage, readBoundedText } from "../http.ts";
-import type { MonitorInput } from "../shared/index.ts";
+import type { MonitorInput, MonitorSample } from "../shared/index.ts";
 import { unixNow } from "../shared/index.ts";
 import { parseMonitorInput } from "../validation.ts";
 
@@ -23,6 +23,46 @@ export interface MonitorRow {
   last_http_status: number | null;
   last_latency_ms: number | null;
   last_error: string | null;
+  samples_json: string;
+}
+
+type CompactMonitorSample = [ts: number, ok: 0 | 1, latency_ms: number | null];
+
+export const MAX_MONITOR_SAMPLES = 48;
+
+export function parseMonitorSamples(
+  raw: string | null | undefined,
+): MonitorSample[] {
+  if (!raw) {
+    return [];
+  }
+  const parsed = JSON.parse(raw) as CompactMonitorSample[];
+  const samples: MonitorSample[] = parsed.map(([ts, ok, latencyMs]) => ({
+    ts,
+    ok: ok === 1,
+    latency_ms: latencyMs,
+  }));
+  samples.sort((a, b) => a.ts - b.ts);
+
+  return samples;
+}
+
+export function appendMonitorSample(
+  raw: string | null | undefined,
+  sample: MonitorSample,
+  limit = MAX_MONITOR_SAMPLES,
+): string {
+  const existing = parseMonitorSamples(raw).filter((s) => s.ts !== sample.ts);
+  existing.push(sample);
+  existing.sort((a, b) => a.ts - b.ts);
+  const trimmed = existing.slice(-limit);
+  const compact: CompactMonitorSample[] = trimmed.map((s) => [
+    s.ts,
+    s.ok ? 1 : 0,
+    s.latency_ms,
+  ]);
+
+  return JSON.stringify(compact);
 }
 
 export interface ProbeResult {

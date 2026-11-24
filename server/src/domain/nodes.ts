@@ -237,35 +237,36 @@ export async function ingestNodeReport(
   ];
 
   const sampleBucketTs = Math.floor(now / 60) * 60;
-  function pushSample(key: string, value: number, aux: number | null = null) {
-    statements.push({
-      sql: `INSERT OR REPLACE INTO series_samples (node_id, series_key, ts, value, aux_value)
-            VALUES (?1, ?2, ?3, ?4, ?5)`,
-      params: [nodeId, key, sampleBucketTs, value, aux],
-    });
-  }
-
+  const sampleValues: Record<string, number | [number, number]> = {};
   if (payload.system?.cpu_pct !== undefined) {
-    pushSample("_cpu", payload.system.cpu_pct);
+    sampleValues._cpu = Math.round(payload.system.cpu_pct * 10) / 10;
   }
   if (
     payload.system?.mem_used_bytes !== undefined &&
     payload.system.mem_total_bytes !== undefined &&
     payload.system.mem_total_bytes > 0
   ) {
-    pushSample(
-      "_mem",
-      (payload.system.mem_used_bytes / payload.system.mem_total_bytes) * 100,
-    );
+    sampleValues._mem =
+      Math.round(
+        (payload.system.mem_used_bytes / payload.system.mem_total_bytes) * 1000,
+      ) / 10;
   }
   if (rxBps !== null) {
-    pushSample("_rx_bps", Math.round(rxBps * 10) / 10);
+    sampleValues._rx_bps = Math.round(rxBps * 10) / 10;
   }
   if (txBps !== null) {
-    pushSample("_tx_bps", Math.round(txBps * 10) / 10);
+    sampleValues._tx_bps = Math.round(txBps * 10) / 10;
   }
   for (const item of series) {
-    pushSample(item.key, item.value, item.loss_pct ?? null);
+    sampleValues[item.key] =
+      item.loss_pct === undefined ? item.value : [item.value, item.loss_pct];
+  }
+  if (Object.keys(sampleValues).length > 0) {
+    statements.push({
+      sql: `INSERT OR REPLACE INTO node_samples (node_id, ts, values_json)
+            VALUES (?1, ?2, ?3)`,
+      params: [nodeId, sampleBucketTs, JSON.stringify(sampleValues)],
+    });
   }
 
   const nodeObs = (
