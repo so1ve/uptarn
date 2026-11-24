@@ -20,11 +20,27 @@ const chartPalette = (isDark: boolean) => ({
   tooltipBg: isDark ? "#18181b" : "#ffffff",
   tooltipBorder: isDark ? "#27272a" : "#e4e4e7",
   tooltipText: isDark ? "#fafafa" : "#09090b",
+  tooltipMuted: isDark ? "#a1a1aa" : "#71717a",
   cpu: isDark ? "#60a5fa" : "#2563eb",
   mem: isDark ? "#a78bfa" : "#7c3aed",
   probe: isDark ? "#38bdf8" : "#0284c7",
   loss: isDark ? "#f87171" : "#dc2626",
 });
+
+interface AxisTooltipItem {
+  axisValueLabel?: string;
+  seriesName?: string;
+  seriesIndex?: number;
+  color?: unknown;
+  value?: unknown;
+}
+
+const escapeHtml = (input: string) =>
+  input
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
 
 function baseTooltip(
   isDark: boolean,
@@ -36,12 +52,32 @@ function baseTooltip(
     trigger: "axis",
     backgroundColor: p.tooltipBg,
     borderColor: p.tooltipBorder,
+    borderWidth: 1,
+    padding: [8, 10],
     textStyle: {
       color: p.tooltipText,
       fontSize: 12,
+      fontWeight: 400,
       fontFamily: "Geist Mono, monospace",
     },
-    valueFormatter,
+    formatter: (raw: unknown) => {
+      const items = (Array.isArray(raw) ? raw : [raw]) as AxisTooltipItem[];
+      const header = items[0]?.axisValueLabel ?? "";
+      const rows = items
+        .map((item) => {
+          const dotColor =
+            typeof item.color === "string" ? item.color : p.tooltipMuted;
+          const label = escapeHtml(item.seriesName ?? "");
+          const formatted = escapeHtml(
+            valueFormatter(item.value, item.seriesIndex),
+          );
+
+          return `<div style="display:flex;align-items:center;justify-content:space-between;gap:16px;line-height:1.55"><span style="display:inline-flex;align-items:center;gap:6px;color:${p.tooltipMuted};font-weight:400"><span style="width:7px;height:7px;border-radius:9999px;background:${escapeHtml(dotColor)};flex:none"></span>${label}</span><span style="color:${p.tooltipText};font-weight:500;font-variant-numeric:tabular-nums">${formatted}</span></div>`;
+        })
+        .join("");
+
+      return `<div style="font-size:11px;color:${p.tooltipMuted};font-weight:400;margin-bottom:4px">${escapeHtml(header)}</div>${rows}`;
+    },
   };
 }
 
