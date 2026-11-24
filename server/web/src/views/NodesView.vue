@@ -8,9 +8,17 @@ import NodeTable from "../components/nodes/NodeTable.vue";
 import EmptyState from "../components/ui/EmptyState.vue";
 import PageHeader from "../components/ui/PageHeader.vue";
 import StatusDot from "../components/ui/StatusDot.vue";
-import { splitIncident, useSnapshot } from "../lib/index.ts";
+import {
+  splitIncident,
+  useAction,
+  useReorder,
+  useSnapshot,
+  useUptarnStore,
+} from "../lib/index.ts";
 
 const snap = useSnapshot();
+const { run } = useAction();
+const { persistOrder } = useUptarnStore();
 
 const nodesView = useStorage<"cards" | "table">("uptarn:nodes-view", "cards");
 const nodeFilter = ref("");
@@ -29,6 +37,26 @@ const filteredNodes = computed(() => {
       )
     : snap.value.nodes;
 });
+
+const canReorder = computed(
+  () => nodeFilter.value.trim() === "" && snap.value.nodes.length > 1,
+);
+
+function onReorderNodes(ids: string[]) {
+  void run("reorder-nodes", "Failed to save node order", async () => {
+    await persistOrder("nodes", ids);
+  });
+}
+
+const {
+  draggingId,
+  dragOverId,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
+  moveBy,
+} = useReorder(() => snap.value.nodes.map((n) => n.id), onReorderNodes);
 
 const incidentHeadline = computed(() =>
   snap.value.incidents
@@ -127,15 +155,43 @@ const incidentHeadline = computed(() =>
       v-else-if="nodesView === 'cards'"
       class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3"
     >
-      <NodeCard
+      <div
         v-for="node in filteredNodes"
         :key="node.id"
-        :node
-        :now="snap.now"
-      />
+        class="group/card relative flex flex-col rounded-xl transition-opacity"
+        :class="[
+          draggingId === node.id ? 'opacity-45' : '',
+          dragOverId === node.id ? 'ring-2 ring-primary/50' : '',
+        ]"
+        :draggable="canReorder"
+        @dragend="onDragEnd"
+        @dragover="canReorder && onDragOver(node.id, $event)"
+        @dragstart="canReorder && onDragStart(node.id, $event)"
+        @drop="canReorder && onDrop(node.id, $event)"
+      >
+        <button
+          v-if="canReorder"
+          aria-label="Drag to reorder node (Alt+ArrowUp or Alt+ArrowDown)"
+          class="absolute top-3.5 left-1.5 z-10 inline-flex size-5 cursor-grab items-center justify-center rounded text-dimmed/50 opacity-0 transition-opacity group-hover/card:opacity-100 hover:text-default focus-visible:opacity-100 active:cursor-grabbing"
+          title="Drag to reorder"
+          type="button"
+          @click.stop
+          @keydown.alt.down.prevent.stop="moveBy(node.id, 1)"
+          @keydown.alt.up.prevent.stop="moveBy(node.id, -1)"
+        >
+          <UIcon class="size-3.5" name="i-lucide-grip-vertical" />
+        </button>
+        <NodeCard class="flex-1" draggable="false" :node :now="snap.now" />
+      </div>
     </div>
 
-    <NodeTable v-else :nodes="filteredNodes" :now="snap.now" />
+    <NodeTable
+      v-else
+      :nodes="filteredNodes"
+      :now="snap.now"
+      :reorderable="canReorder"
+      @reorder="onReorderNodes"
+    />
 
     <AddNodeModal v-model:open="addNodeOpen" />
   </div>

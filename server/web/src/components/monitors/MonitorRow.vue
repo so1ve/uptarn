@@ -18,12 +18,15 @@ import MonitorBars from "./MonitorBars.vue";
 const emit = defineEmits<{
   toggle: [];
   edit: [];
+  moveUp: [];
+  moveDown: [];
 }>();
 
 const props = defineProps<{
   monitor: MonitorSummary | PublicMonitorSummary;
   now: number;
   expanded?: boolean;
+  reorderable?: boolean;
 }>();
 
 const isAdminMonitor = (
@@ -66,6 +69,18 @@ const uptimeClass = computed(() => {
   >
     <div class="min-w-0 space-y-0.5">
       <div class="flex items-center gap-2">
+        <button
+          v-if="reorderable && isAdminMonitor(monitor)"
+          aria-label="Drag to reorder monitor (Alt+ArrowUp or Alt+ArrowDown)"
+          class="-ml-1 inline-flex size-5 shrink-0 cursor-grab items-center justify-center rounded text-dimmed/60 transition-colors hover:text-default active:cursor-grabbing"
+          title="Drag to reorder"
+          type="button"
+          @click.stop
+          @keydown.alt.down.prevent.stop="emit('moveDown')"
+          @keydown.alt.up.prevent.stop="emit('moveUp')"
+        >
+          <UIcon class="size-3.5" name="i-lucide-grip-vertical" />
+        </button>
         <UIcon
           v-if="isAdminMonitor(monitor)"
           class="size-3.5 shrink-0 text-dimmed transition-transform duration-150"
@@ -106,7 +121,8 @@ const uptimeClass = computed(() => {
 
       <a
         v-if="isAdminMonitor(monitor)"
-        class="inline-flex max-w-full items-center gap-1 pl-9 font-mono text-[11.5px] text-dimmed transition-colors hover:text-primary"
+        class="inline-flex max-w-full items-center gap-1 font-mono text-[11.5px] text-dimmed transition-colors hover:text-primary"
+        :class="reorderable ? 'pl-15' : 'pl-9'"
         :href="monitor.url"
         rel="noreferrer"
         target="_blank"

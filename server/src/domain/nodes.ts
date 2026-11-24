@@ -46,8 +46,8 @@ export async function createNode(
   const { token, hash } = await issueNodeToken();
   const label = input.label?.trim() || input.id;
   const res = await db.run(
-    `INSERT OR IGNORE INTO nodes (id, label, token_hash, interval_secs, grace_secs, is_public, created_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+    `INSERT OR IGNORE INTO nodes (id, label, token_hash, interval_secs, grace_secs, is_public, sort_order, created_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, COALESCE((SELECT MAX(sort_order) + 1 FROM nodes), 0), ?7)`,
     [
       input.id,
       label,
@@ -63,6 +63,18 @@ export async function createNode(
   }
 
   return { id: input.id, label, token };
+}
+
+export async function reorderNodes(
+  db: SqlDatabase,
+  ids: readonly string[],
+): Promise<void> {
+  await db.batch(
+    ids.map((id, index) => ({
+      sql: "UPDATE nodes SET sort_order = ?1 WHERE id = ?2",
+      params: [index, id],
+    })),
+  );
 }
 
 export async function setNodePublic(
@@ -193,10 +205,10 @@ export async function ingestNodeReport(
   const statements: SqlStatement[] = [
     {
       sql: `INSERT INTO nodes (
-              id, label, token_hash, interval_secs, grace_secs, created_at,
+              id, label, token_hash, interval_secs, grace_secs, sort_order, created_at,
               last_seen_at, prev_rx_bytes, prev_tx_bytes, prev_net_at,
               rx_bps, tx_bps, system_json, mounts_json, checks_json, series_json, info_json, agent_version
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, COALESCE((SELECT MAX(sort_order) + 1 FROM nodes), 0), ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
             ON CONFLICT(id) DO UPDATE SET
               label = excluded.label,
               interval_secs = excluded.interval_secs,

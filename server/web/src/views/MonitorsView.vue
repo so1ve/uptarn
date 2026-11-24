@@ -11,13 +11,14 @@ import {
   buildMonitorLatencyOption,
   monitorLatencyStats,
   useAction,
+  useReorder,
   useSnapshot,
   useUptarnStore,
 } from "../lib/index.ts";
 
 const snap = useSnapshot();
-const { busy, mute } = useAction();
-const { isDark } = useUptarnStore();
+const { busy, run, mute } = useAction();
+const { isDark, persistOrder } = useUptarnStore();
 
 const monitorModalOpen = ref(false);
 const editingMonitor = ref<MonitorSummary | null>(null);
@@ -32,6 +33,25 @@ const rows = computed(() =>
         ? buildMonitorLatencyOption(mon, isDark.value)
         : null,
   })),
+);
+
+const canReorder = computed(() => snap.value.monitors.length > 1);
+
+const {
+  draggingId,
+  dragOverId,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
+  moveBy,
+} = useReorder(
+  () => snap.value.monitors.map((m) => m.id),
+  (ids) => {
+    void run("reorder", "Failed to save monitor order", async () => {
+      await persistOrder("monitors", ids);
+    });
+  },
 );
 
 function toggleExpand(id: string) {
@@ -73,12 +93,27 @@ const onToggleMute = (mon: MonitorSummary) =>
     <EmptyState v-if="rows.length === 0">No monitors yet.</EmptyState>
 
     <div v-else class="divide-y divide-default border-y border-default">
-      <div v-for="{ mon, stats, chartOption } in rows" :key="mon.id">
+      <div
+        v-for="{ mon, stats, chartOption } in rows"
+        :key="mon.id"
+        :class="[
+          draggingId === mon.id ? 'opacity-45' : '',
+          dragOverId === mon.id ? 'bg-elevated/80 ring-1 ring-primary/50' : '',
+        ]"
+        :draggable="canReorder"
+        @dragend="onDragEnd"
+        @dragover="canReorder && onDragOver(mon.id, $event)"
+        @dragstart="canReorder && onDragStart(mon.id, $event)"
+        @drop="canReorder && onDrop(mon.id, $event)"
+      >
         <MonitorRow
           :expanded="expandedIds.has(mon.id)"
           :monitor="mon"
           :now="snap.now"
+          :reorderable="canReorder"
           @edit="openMonitorModal(mon)"
+          @move-down="moveBy(mon.id, 1)"
+          @move-up="moveBy(mon.id, -1)"
           @toggle="toggleExpand(mon.id)"
         />
 
@@ -90,25 +125,15 @@ const onToggleMute = (mon: MonitorSummary) =>
             <span class="font-mono text-xs text-muted tabular-nums">
               {{ stats ?? "" }}
             </span>
-            <div class="flex items-center gap-1.5">
-              <UButton
-                color="neutral"
-                :loading="busy === mon.id"
-                size="xs"
-                variant="soft"
-                @click="onToggleMute(mon)"
-              >
-                {{ mon.muted_until > snap.now ? "Unmute" : "Mute 1h" }}
-              </UButton>
-              <UButton
-                color="neutral"
-                size="xs"
-                variant="soft"
-                @click="openMonitorModal(mon)"
-              >
-                Edit
-              </UButton>
-            </div>
+            <UButton
+              color="neutral"
+              :loading="busy === mon.id"
+              size="xs"
+              variant="soft"
+              @click="onToggleMute(mon)"
+            >
+              {{ mon.muted_until > snap.now ? "Unmute" : "Mute 1h" }}
+            </UButton>
           </div>
 
           <EChart v-if="chartOption" height="180px" :option="chartOption" />

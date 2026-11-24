@@ -23,6 +23,8 @@ import {
   getPublicStatusSnapshot,
   ingestJobReport,
   ingestNodeReport,
+  reorderMonitors,
+  reorderNodes,
   rotateNodeToken,
   runTick,
   sendTestNotification,
@@ -40,6 +42,7 @@ import {
   parseMuteInput,
   parseNodePatch,
   parseNodeReportPayload,
+  parseOrderInput,
   parseSettingsPatch,
 } from "./validation.ts";
 
@@ -160,6 +163,12 @@ export function createApp(db: SqlDatabase, config: LoadedConfig): Hono {
     ),
   );
 
+  app.put("/api/v1/admin/nodes/order", async (c) => {
+    await reorderNodes(db, parseOrderInput(await readJson(c)));
+
+    return c.json({ ok: true });
+  });
+
   app.post("/api/v1/admin/nodes/:id/rotate-token", async (c) =>
     c.json({ ok: true, ...(await rotateNodeToken(db, c.req.param("id"))) }),
   );
@@ -180,6 +189,12 @@ export function createApp(db: SqlDatabase, config: LoadedConfig): Hono {
   app.post("/api/v1/admin/monitors", async (c) =>
     c.json({ ok: true, id: await upsertMonitor(db, await readJson(c)) }),
   );
+
+  app.put("/api/v1/admin/monitors/order", async (c) => {
+    await reorderMonitors(db, parseOrderInput(await readJson(c)));
+
+    return c.json({ ok: true });
+  });
 
   app.delete("/api/v1/admin/monitors/:id", (c) =>
     removeOr404(c, db, "monitor", c.req.param("id")),

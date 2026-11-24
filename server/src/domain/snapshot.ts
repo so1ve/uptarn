@@ -212,9 +212,9 @@ export async function getDashboardSnapshot(
       sql: `SELECT id, label, is_public, interval_secs, grace_secs, muted_until, created_at,
                    last_seen_at, rx_bps, tx_bps, system_json, mounts_json, checks_json,
                    series_json, info_json, agent_version
-            FROM nodes ORDER BY id ASC`,
+            FROM nodes ORDER BY sort_order ASC, id ASC`,
     },
-    { sql: "SELECT * FROM monitors ORDER BY name ASC" },
+    { sql: "SELECT * FROM monitors ORDER BY sort_order ASC, name ASC" },
     { sql: "SELECT * FROM jobs ORDER BY key ASC" },
     {
       sql: `SELECT incident_key, target_type, target_id, label, state,
@@ -418,12 +418,12 @@ export async function getPublicStatusSnapshot(
       { sql: "SELECT COUNT(*) AS count FROM admin_passkeys" },
       {
         sql: `SELECT id, name, enabled, last_checked_at, last_status, last_http_status, last_latency_ms, samples_json
-              FROM monitors WHERE is_public = 1 ORDER BY name ASC`,
+              FROM monitors WHERE is_public = 1 ORDER BY sort_order ASC, name ASC`,
       },
       {
         sql: `SELECT id, label, interval_secs, grace_secs, last_seen_at,
                      system_json, mounts_json, checks_json, series_json
-              FROM nodes WHERE is_public = 1 ORDER BY label ASC`,
+              FROM nodes WHERE is_public = 1 ORDER BY sort_order ASC, label ASC`,
       },
       {
         sql: `SELECT s.node_id, s.ts, s.values_json

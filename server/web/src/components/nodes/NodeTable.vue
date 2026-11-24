@@ -13,15 +13,34 @@ import {
   nodeIssueSummary,
   peakMount,
   statusTextClass,
+  useReorder,
 } from "../../lib/index.ts";
 import StatusDot from "../ui/StatusDot.vue";
+
+const emit = defineEmits<{
+  reorder: [ids: string[]];
+}>();
 
 const props = defineProps<{
   nodes: readonly NodeSummary[];
   now: number;
+  reorderable?: boolean;
 }>();
 
 const router = useRouter();
+
+const {
+  draggingId,
+  dragOverId,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
+  moveBy,
+} = useReorder(
+  () => props.nodes.map((n) => n.id),
+  (ids) => emit("reorder", ids),
+);
 
 const rows = computed(() =>
   props.nodes.map((node) => ({
@@ -41,6 +60,7 @@ const rows = computed(() =>
     <table class="w-full border-collapse text-left text-[13px]">
       <thead>
         <tr class="border-b border-default text-xs text-dimmed">
+          <th v-if="reorderable" class="w-7 py-2.5" />
           <th class="py-2.5 pr-4 font-medium">Node</th>
           <th class="px-3 py-2.5 text-right font-medium">CPU</th>
           <th class="px-3 py-2.5 text-right font-medium">Mem</th>
@@ -56,8 +76,31 @@ const rows = computed(() =>
           v-for="{ node, mem, disk, issue } in rows"
           :key="node.id"
           class="cursor-pointer transition-colors hover:bg-elevated/60"
+          :class="[
+            draggingId === node.id ? 'opacity-45' : '',
+            dragOverId === node.id
+              ? 'bg-elevated/80 ring-1 ring-primary/50 ring-inset'
+              : '',
+          ]"
+          :draggable="Boolean(reorderable)"
           @click="router.push(`/nodes/${encodeURIComponent(node.id)}`)"
+          @dragend="onDragEnd"
+          @dragover="reorderable && onDragOver(node.id, $event)"
+          @dragstart="reorderable && onDragStart(node.id, $event)"
+          @drop="reorderable && onDrop(node.id, $event)"
         >
+          <td v-if="reorderable" class="w-7 py-3 pr-1" @click.stop>
+            <button
+              aria-label="Drag to reorder node (Alt+ArrowUp or Alt+ArrowDown)"
+              class="inline-flex size-5 cursor-grab items-center justify-center rounded text-dimmed/60 transition-colors hover:text-default active:cursor-grabbing"
+              title="Drag to reorder"
+              type="button"
+              @keydown.alt.down.prevent.stop="moveBy(node.id, 1)"
+              @keydown.alt.up.prevent.stop="moveBy(node.id, -1)"
+            >
+              <UIcon class="size-3.5" name="i-lucide-grip-vertical" />
+            </button>
+          </td>
           <td class="py-3 pr-4">
             <div class="flex items-center gap-2">
               <StatusDot :status="node.overall_status" />

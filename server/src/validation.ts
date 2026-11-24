@@ -308,6 +308,25 @@ export function parseCreateNodeInput(raw: unknown) {
   };
 }
 
+export function parseOrderInput(raw: unknown): string[] {
+  const obj = asObj(raw, "order input");
+  const ids = obj.ids;
+  if (!Array.isArray(ids) || ids.length === 0 || ids.length > 500) {
+    bad("ids must be a non-empty array of at most 500 items");
+  }
+  const seen = new Set<string>();
+
+  return ids.map((id, i) => {
+    const clean = slug(id, `ids[${i}]`);
+    if (seen.has(clean)) {
+      bad(`duplicate id "${clean}"`);
+    }
+    seen.add(clean);
+
+    return clean;
+  });
+}
+
 export function parseNodePatch(raw: unknown) {
   const obj = asObj(raw, "node patch");
   const isPublic = bool(obj.is_public, "is_public");

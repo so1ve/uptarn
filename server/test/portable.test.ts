@@ -209,6 +209,38 @@ describe("uptarn portable server", () => {
     expect(histBody.history._rx_bps?.length).toBeGreaterThan(0);
     expect(histBody.history._tx_bps?.length).toBeGreaterThan(0);
 
+    const createSecondNode = await app.request("/api/v1/admin/nodes", {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer admin-tok",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ id: "alpha", label: "Alpha" }),
+    });
+
+    expect(createSecondNode.status).toBe(201);
+
+    const reorderRes = await app.request("/api/v1/admin/nodes/order", {
+      method: "PUT",
+      headers: {
+        "Authorization": "Bearer admin-tok",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ ids: ["alpha", "dsm"] }),
+    });
+
+    expect(reorderRes.status).toBe(200);
+
+    const orderedSnap = await app.request("/api/v1/admin/snapshot", {
+      headers: { Authorization: "Bearer admin-tok" },
+    });
+    const orderedBody = await orderedSnap.json<{ nodes: { id: string }[] }>();
+
+    expect(orderedBody.nodes.slice(0, 2).map((n) => n.id)).toEqual([
+      "alpha",
+      "dsm",
+    ]);
+
     const enableRes = await app.request("/api/v1/admin/settings", {
       method: "PATCH",
       headers: {

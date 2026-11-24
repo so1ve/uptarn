@@ -238,6 +238,41 @@ export function useAction() {
   return { busy, run, copy, mute };
 }
 
+function sortByOrder<T extends { id: string }>(
+  items: readonly T[],
+  ids: readonly string[],
+): T[] {
+  const rank = new Map(ids.map((id, i) => [id, i]));
+
+  return [...items].sort(
+    (a, b) => (rank.get(a.id) ?? 1e9) - (rank.get(b.id) ?? 1e9),
+  );
+}
+
+async function persistOrder(kind: "nodes" | "monitors", ids: string[]) {
+  if (!snapshot.value) {
+    return;
+  }
+  const prevNodes = snapshot.value.nodes;
+  const prevMonitors = snapshot.value.monitors;
+  snapshot.value =
+    kind === "nodes"
+      ? { ...snapshot.value, nodes: sortByOrder(prevNodes, ids) }
+      : { ...snapshot.value, monitors: sortByOrder(prevMonitors, ids) };
+  try {
+    await apiFetch(`/api/v1/admin/${kind}/order`, "PUT", { ids });
+  } catch (err) {
+    if (snapshot.value) {
+      snapshot.value =
+        kind === "nodes"
+          ? { ...snapshot.value, nodes: prevNodes }
+          : { ...snapshot.value, monitors: prevMonitors };
+    }
+
+    throw err;
+  }
+}
+
 export const useUptarnStore = () => ({
   publicStatus,
   snapshot,
@@ -252,4 +287,5 @@ export const useUptarnStore = () => ({
   refreshPublicStatus,
   showIssuedToken,
   signOutState,
+  persistOrder,
 });

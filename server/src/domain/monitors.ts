@@ -80,8 +80,8 @@ export async function upsertMonitor(
   const statements: SqlStatement[] = [
     {
       sql: `INSERT INTO monitors
-            (id, name, url, method, expected_status_min, expected_status_max, expected_body, timeout_ms, interval_secs, enabled, is_public, created_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            (id, name, url, method, expected_status_min, expected_status_max, expected_body, timeout_ms, interval_secs, enabled, is_public, sort_order, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, COALESCE((SELECT MAX(sort_order) + 1 FROM monitors), 0), ?12)
             ON CONFLICT(id) DO UPDATE SET
               last_checked_at = CASE
                 WHEN monitors.url != excluded.url
@@ -129,6 +129,18 @@ export async function upsertMonitor(
   await db.batch(statements);
 
   return parsed.id;
+}
+
+export async function reorderMonitors(
+  db: SqlDatabase,
+  ids: readonly string[],
+): Promise<void> {
+  await db.batch(
+    ids.map((id, index) => ({
+      sql: "UPDATE monitors SET sort_order = ?1 WHERE id = ?2",
+      params: [index, id],
+    })),
+  );
 }
 
 export async function probeMonitor(
