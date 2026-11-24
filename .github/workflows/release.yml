@@ -17,7 +17,6 @@ jobs:
       id-token: write
     with:
       publish: false
-      working-directory: server
 
   agent-binary:
     name: Release Agent Binary (${{ matrix.target }})
@@ -68,8 +67,8 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  server-image:
-    name: Publish Server Image
+  hub-image:
+    name: Publish Hub Image
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -99,8 +98,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=server
-          cache-to: type=gha,mode=max,scope=server
+          cache-from: type=gha,scope=hub
+          cache-to: type=gha,mode=max,scope=hub
 
   agent-image:
     name: Publish Agent Image

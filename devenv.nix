@@ -6,8 +6,7 @@
   languages = {
     javascript = {
       enable = true;
-      directory = "./server";
-      package = pkgs.node-bin.fromProject ./server;
+      package = pkgs.node-bin.fromProject ./.;
       pnpm.enable = true;
       lsp.package = pkgs.vtsls;
     };

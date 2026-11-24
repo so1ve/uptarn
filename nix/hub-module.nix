@@ -26,7 +26,7 @@ in
 
     package = lib.mkOption {
       type = lib.types.package;
-      description = "The Uptarn server package to run.";
+      description = "The Uptarn package to run.";
     };
 
     host = lib.mkOption {
@@ -184,7 +184,7 @@ in
         DynamicUser = true;
         StateDirectory = "uptarn";
         LoadCredential = credentials;
-        ExecStart = lib.getExe cfg.package;
+        ExecStart = "${lib.getExe cfg.package} serve";
         Restart = "on-failure";
         RestartSec = "5s";
         NoNewPrivileges = true;

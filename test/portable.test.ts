@@ -2,6 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.ts";
 import { sha256Hex } from "../src/auth/index.ts";
+import {
+  applySyncPlan,
+  computeSyncPlan,
+  parseSyncSpec,
+} from "../src/cli/sync.ts";
 import { loadConfig } from "../src/config.ts";
 import type { NodeDatabase } from "../src/db/node.ts";
 import { applyMigrations, openNodeSqlite } from "../src/db/node.ts";
@@ -11,6 +16,7 @@ import {
   runTick,
   upsertMonitor,
 } from "../src/domain/index.ts";
+import type { DashboardSnapshot } from "../src/shared/index.ts";
 
 describe("uptarn portable server", () => {
   let db: NodeDatabase;
@@ -988,5 +994,168 @@ describe("uptarn portable server", () => {
     expect(rollups.d1[1]).toMatchObject({ ok: 1, total: 1 });
     expect(rollups.h6).toHaveLength(2);
     expect(rollups.m30.at(-1)).toMatchObject({ ok: 1, total: 1 });
+  });
+
+  it("reconciles hub nodes, monitors, order, settings, and prune via declarative sync", async () => {
+    const config = loadConfig({
+      PUBLIC_BASE_URL: "https://status.example.com",
+      ADMIN_TOKEN: "admin-sync",
+    });
+    const app = createApp(db, config);
+    async function adminRequest<T>(
+      method: string,
+      apiPath: string,
+      body?: unknown,
+    ): Promise<T> {
+      const res = await app.request(apiPath, {
+        method,
+        headers: {
+          Authorization: "Bearer admin-sync",
+          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+
+      expect(res.ok).toBeTruthy();
+
+      return await res.json();
+    }
+
+    const nodeA = await adminRequest<{ token: string }>(
+      "POST",
+      "/api/v1/admin/nodes",
+      { id: "alpha", label: "Alpha", is_public: false },
+    );
+    await adminRequest("POST", "/api/v1/admin/nodes", {
+      id: "beta",
+      label: "Beta",
+      is_public: true,
+    });
+    await upsertMonitor(db, {
+      id: "legacy",
+      name: "Legacy",
+      url: "https://legacy.example.com/",
+    });
+    await ingestNodeReport(
+      db,
+      config,
+      {
+        node_id: "alpha",
+        monitors: [
+          {
+            key: "agent_mon",
+            name: "Agent Managed",
+            url: "https://agent.example.com/healthz",
+          },
+        ],
+      },
+      nodeA.token,
+    );
+
+    const spec = parseSyncSpec({
+      hub_url: "https://status.example.com/",
+      auto_register: true,
+      nodes: [
+        { id: "beta", is_public: false },
+        { id: "alpha", is_public: true },
+        { id: "not-yet-enrolled", is_public: false },
+      ],
+      monitors: [
+        {
+          id: "blog",
+          name: "Blog",
+          url: "https://blog.example.com",
+          public_url: "https://blog.example.com",
+          is_public: true,
+        },
+        {
+          id: "vault",
+          name: "Vault",
+          url: "https://vault.example.com/alive",
+          is_public: false,
+          expected_body: "ok",
+        },
+      ],
+    });
+
+    const snap1 = await adminRequest<DashboardSnapshot>(
+      "GET",
+      "/api/v1/admin/snapshot",
+    );
+    const plan1 = computeSyncPlan(snap1, spec);
+
+    expect(plan1.hasChanges).toBeTruthy();
+    expect(plan1.hasConflicts).toBeFalsy();
+    expect(plan1.settingsPatch).toEqual({ auto_register: true });
+    expect(plan1.nodePatches).toEqual([
+      { id: "beta", from: true, to: false },
+      { id: "alpha", from: false, to: true },
+    ]);
+    expect(plan1.missingNodes).toEqual(["not-yet-enrolled"]);
+    expect(plan1.nodeOrder).toEqual(["beta", "alpha"]);
+    expect(plan1.monitorsCreate.map((m) => m.id)).toEqual(["blog", "vault"]);
+    expect(plan1.unmanagedMonitors.map((m) => m.id)).toEqual(["legacy"]);
+    expect(plan1.monitorsDelete).toEqual([]);
+
+    await applySyncPlan(adminRequest, plan1);
+
+    const snap2 = await adminRequest<DashboardSnapshot>(
+      "GET",
+      "/api/v1/admin/snapshot",
+    );
+
+    expect(snap2.settings.auto_register).toBeTruthy();
+    expect(snap2.nodes.map((n) => [n.id, n.is_public])).toEqual([
+      ["beta", false],
+      ["alpha", true],
+    ]);
+    expect(snap2.monitors.map((m) => m.id)).toEqual([
+      "blog",
+      "vault",
+      "legacy",
+      "alpha:agent_mon",
+    ]);
+
+    const plan2 = computeSyncPlan(snap2, spec);
+
+    expect(plan2.hasChanges).toBeFalsy();
+    expect(plan2.unmanagedMonitors.map((m) => m.id)).toEqual(["legacy"]);
+
+    const prunePlan = computeSyncPlan(snap2, spec, { prune: true });
+
+    expect(prunePlan.hasChanges).toBeTruthy();
+    expect(prunePlan.monitorsDelete.map((m) => m.id)).toEqual(["legacy"]);
+
+    await applySyncPlan(adminRequest, prunePlan);
+
+    const snap3 = await adminRequest<DashboardSnapshot>(
+      "GET",
+      "/api/v1/admin/snapshot",
+    );
+
+    expect(snap3.monitors.map((m) => m.id)).toEqual([
+      "blog",
+      "vault",
+      "alpha:agent_mon",
+    ]);
+    expect(
+      computeSyncPlan(snap3, spec, { prune: true }).hasChanges,
+    ).toBeFalsy();
+
+    const conflictSpec = parseSyncSpec({
+      monitors: [
+        {
+          id: "alpha:agent_mon",
+          name: "Conflict",
+          url: "https://agent.example.com/healthz",
+        },
+      ],
+    });
+    const conflictPlan = computeSyncPlan(snap3, conflictSpec);
+
+    expect(conflictPlan.hasConflicts).toBeTruthy();
+    await expect(applySyncPlan(adminRequest, conflictPlan)).rejects.toThrow(
+      /agent-managed conflicts/,
+    );
   });
 });

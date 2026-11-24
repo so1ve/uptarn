@@ -3,7 +3,10 @@ import { so1ve } from "@so1ve/eslint-config";
 export default so1ve({
   vue: true,
   ignores: [
+    "**/.devenv/**",
+    "**/.direnv/**",
     "**/.wrangler/**",
+    "target/**",
     "public/**",
     "worker-configuration.d.ts",
     "web/src/auto-imports.d.ts",

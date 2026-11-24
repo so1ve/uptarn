@@ -15,17 +15,13 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  server:
-    name: Server
+  uptarn:
+    name: Hub & CLI
     runs-on: ubuntu-24.04
-    defaults:
-      run:
-        working-directory: server
     steps:
       - uses: so1ve/workflows/setup-js@v1
         with:
           node-version: "24"
-          working-directory: server
       - run: pnpm run types:cloudflare
       - run: pnpm run check
       - run: pnpm exec wrangler deploy --dry-run
@@ -77,7 +73,7 @@ jobs:
           server: https://cache.so1ve.dev
       - run: >-
           nix build
-          ".#packages.${{ matrix.system }}.uptarn-server"
+          ".#packages.${{ matrix.system }}.uptarn"
           ".#packages.${{ matrix.system }}.uptarn-agent"
           ".#packages.${{ matrix.system }}.uptarn-agent-static"
           --print-build-logs

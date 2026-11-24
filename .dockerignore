@@ -3,8 +3,10 @@
 .git
 .github
 **/node_modules
-server/.wrangler
-server/public
+.wrangler
+.dev.vars
+wrangler.prod.jsonc
+/public
 target
 result
 *.db

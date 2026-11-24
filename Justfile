@@ -2,20 +2,20 @@ default:
     @just --list
 
 dev:
-    pnpm --dir server run dev
+    pnpm run dev
 
 dev-web:
-    pnpm --dir server run dev:web
+    pnpm run dev:web
 
 build:
-    pnpm --dir server run build
+    pnpm run build
     cargo build --workspace --locked
 
-check: check-server check-rust check-nix
+check: check-ts check-rust check-nix
 
-check-server:
-    pnpm --dir server run types:cloudflare
-    pnpm --dir server run check
+check-ts:
+    pnpm run types:cloudflare
+    pnpm run check
 
 check-rust:
     cargo fmt --all -- --check
@@ -28,12 +28,12 @@ check-nix:
     nix flake check --all-systems --accept-flake-config
 
 fmt:
-    pnpm --dir server run lint:fix
+    pnpm run lint:fix
     cargo fmt --all
     nix fmt --accept-flake-config
 
 deploy:
-    pnpm --dir server run deploy
+    pnpm run deploy
 
 release *args:
-    pnpm --dir server run release {{ args }}
+    pnpm run release {{ args }}

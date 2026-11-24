@@ -1,5 +1,5 @@
 {
-  "name": "uptarn-server",
+  "name": "uptarn",
   "private": true,
   "version": "0.3.1",
   "packageManager": "pnpm@12.11.2",
@@ -11,12 +11,16 @@
     "url": "git+https://github.com/so1ve/uptarn.git"
   },
   "license": "MIT",
+  "bin": {
+    "uptarn": "./src/cli/index.ts"
+  },
   "engines": {
     "node": "^24.16.0 || >=26.3.0"
   },
   "scripts": {
     "build": "vite build",
     "check": "pnpm run build && pnpm run typecheck && pnpm run lint && pnpm run test",
+    "cli": "node src/cli/index.ts",
     "db:migrate": "wrangler d1 migrations apply DB --remote",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "deploy": "pnpm run build && wrangler d1 migrations apply DB --remote && wrangler deploy",
@@ -25,14 +29,17 @@
     "lint": "eslint . && prettier . --check",
     "lint:fix": "eslint . --fix && prettier . --write",
     "release": "bumpp",
-    "start": "node src/node.ts",
+    "serve": "node src/cli/index.ts serve",
+    "start": "node src/cli/index.ts serve",
     "test": "vitest run && vitest run --config vitest.cloudflare.config.ts",
     "typecheck": "vue-tsc --noEmit",
     "types:cloudflare": "wrangler types"
   },
   "dependencies": {
+    "@clerc/plugin-completions": "2.0.0-beta.2",
     "@hono/node-server": "^2.1.11",
     "@simplewebauthn/server": "^13.2.2",
+    "clerc": "2.0.0-beta.2",
     "hono": "^4.12.0"
   },
   "devDependencies": {

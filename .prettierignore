@@ -1,0 +1,12 @@
+/Cargo.lock
+/.devenv
+/.direnv
+/.wrangler
+/devenv.lock
+/flake.lock
+/pnpm-lock.yaml
+/public
+/target
+/web/src/auto-imports.d.ts
+/web/src/components.d.ts
+/worker-configuration.d.ts

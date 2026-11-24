@@ -13,7 +13,7 @@
   outputs =
     { self, nixpkgs }:
     let
-      serverManifest = builtins.fromJSON (builtins.readFile ./server/package.json);
+      manifest = builtins.fromJSON (builtins.readFile ./package.json);
       cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
       systems = [
         "x86_64-linux"
@@ -26,26 +26,26 @@
         pkgs:
         let
           src = pkgs.lib.fileset.toSource {
-            root = ./server;
+            root = ./.;
             fileset = pkgs.lib.fileset.unions [
-              ./server/package.json
-              ./server/pnpm-lock.yaml
-              ./server/pnpm-workspace.yaml
-              ./server/vite.config.ts
-              ./server/src/shared
-              ./server/web
+              ./package.json
+              ./pnpm-lock.yaml
+              ./pnpm-workspace.yaml
+              ./vite.config.ts
+              ./src/shared
+              ./web
             ];
           };
         in
         pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
           pname = "uptarn-web";
-          inherit (serverManifest) version;
+          inherit (manifest) version;
           inherit src;
 
           pnpmDeps = pkgs.fetchPnpmDeps {
             inherit (finalAttrs) pname version src;
             fetcherVersion = 5;
-            hash = "sha256-Y6fz5DPi7Kg6hBlr9Y27gblCAiwLpzVm7xSLBSnW50o=";
+            hash = "sha256-27cqdXz1SxEMGAmwRB0IweBT8cHuNjZr0fDf/HgVr/k=";
           };
 
           nativeBuildInputs = [
@@ -67,36 +67,37 @@
           '';
         });
 
-      mkServerPackage =
+      mkPackage =
         pkgs:
         let
           webAssets = mkWebAssets pkgs;
           src = pkgs.lib.fileset.toSource {
-            root = ./server;
+            root = ./.;
             fileset = pkgs.lib.fileset.unions [
-              ./server/package.json
-              ./server/pnpm-lock.yaml
-              ./server/pnpm-workspace.yaml
-              ./server/migrations
-              ./server/src
+              ./package.json
+              ./pnpm-lock.yaml
+              ./pnpm-workspace.yaml
+              ./migrations
+              ./src
             ];
           };
         in
         pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
-          pname = "uptarn-server";
-          inherit (serverManifest) version;
+          pname = manifest.name;
+          inherit (manifest) version;
           inherit src;
 
           pnpmDeps = pkgs.fetchPnpmDeps {
             inherit (finalAttrs) pname version src;
             fetcherVersion = 5;
             pnpmInstallFlags = [ "--prod" ];
-            hash = "sha256-RVXBgEsTp496gqmCh/Q3w54jIlQ4LFEKrLD8GR1Zch4=";
+            hash = "sha256-FPTAgaCg4QoGaPIhQv2zLAoC2xPENl22pukxGqSIV5I=";
           };
 
           pnpmInstallFlags = [ "--prod" ];
 
           nativeBuildInputs = [
+            pkgs.installShellFiles
             pkgs.makeWrapper
             pkgs.nodejs_24
             pkgs.pnpm
@@ -106,21 +107,26 @@
           installPhase = ''
             runHook preInstall
 
-            mkdir -p "$out/bin" "$out/share/uptarn-server"
-            cp -r package.json src migrations node_modules "$out/share/uptarn-server"
-            cp -r ${webAssets} "$out/share/uptarn-server/public"
+            mkdir -p "$out/bin" "$out/share/uptarn"
+            cp -r package.json src migrations node_modules "$out/share/uptarn"
+            cp -r ${webAssets} "$out/share/uptarn/public"
 
-            makeWrapper ${pkgs.lib.getExe pkgs.nodejs_24} "$out/bin/uptarn-server" \
-              --add-flags "$out/share/uptarn-server/src/node.ts"
+            makeWrapper ${pkgs.lib.getExe pkgs.nodejs_24} "$out/bin/uptarn" \
+              --add-flags "$out/share/uptarn/src/cli/index.ts"
+
+            installShellCompletion --cmd uptarn \
+              --bash <("$out/bin/uptarn" completions bash) \
+              --fish <("$out/bin/uptarn" completions fish) \
+              --zsh <("$out/bin/uptarn" completions zsh)
 
             runHook postInstall
           '';
 
           meta = {
-            inherit (serverManifest) description;
+            inherit (manifest) description;
             homepage = "https://github.com/so1ve/uptarn";
             license = pkgs.lib.licenses.mit;
-            mainProgram = "uptarn-server";
+            mainProgram = manifest.name;
             platforms = pkgs.lib.platforms.unix;
           };
         });
@@ -165,16 +171,31 @@
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
-          uptarn-server = mkServerPackage pkgs;
+          uptarn = mkPackage pkgs;
           isLinux = pkgs.stdenv.hostPlatform.isLinux;
         in
         {
-          inherit uptarn-server;
-          default = if isLinux then mkAgentPackage pkgs else uptarn-server;
+          inherit uptarn;
+          default = uptarn;
         }
         // pkgs.lib.optionalAttrs isLinux {
           uptarn-agent = mkAgentPackage pkgs;
           uptarn-agent-static = mkAgentPackage pkgs.pkgsStatic;
+        }
+      );
+
+      apps = forAllSystems (
+        system:
+        let
+          uptarnApp = {
+            type = "app";
+            program = nixpkgs.lib.getExe self.packages.${system}.uptarn;
+            meta.description = manifest.description;
+          };
+        in
+        {
+          uptarn = uptarnApp;
+          default = uptarnApp;
         }
       );
 
@@ -183,7 +204,7 @@
       overlays.default =
         final: _prev:
         {
-          uptarn-server = mkServerPackage final;
+          uptarn = mkPackage final;
         }
         // final.lib.optionalAttrs final.stdenv.hostPlatform.isLinux {
           uptarn-agent = mkAgentPackage final;
@@ -194,9 +215,7 @@
           { lib, pkgs, ... }:
           {
             imports = [ ./nix/hub-module.nix ];
-            services.uptarn.package =
-              lib.mkDefault
-                self.packages.${pkgs.stdenv.hostPlatform.system}.uptarn-server;
+            services.uptarn.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.uptarn;
           };
 
         agent =

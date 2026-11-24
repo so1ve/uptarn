@@ -1,7 +1,7 @@
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="server/web/public/logo-dark.svg" />
-  <source media="(prefers-color-scheme: light)" srcset="server/web/public/logo-light.svg" />
-  <img src="server/web/public/logo-light.svg" alt="Uptarn" width="52" height="52" />
+  <source media="(prefers-color-scheme: dark)" srcset="web/public/logo-dark.svg" />
+  <source media="(prefers-color-scheme: light)" srcset="web/public/logo-light.svg" />
+  <img src="web/public/logo-light.svg" alt="Uptarn" width="52" height="52" />
 </picture>
 
 # Uptarn
@@ -27,16 +27,15 @@ Covering mixed personal devices (VPS, homelab, NAS, routers), web services, and 
 
 ### One-click deploy
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/so1ve/uptarn/tree/main/server)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/so1ve/uptarn)
 
-Cloudflare provisions the D1 database (`DB`), builds the dashboard, applies `migrations/`, and deploys the Worker. After deploying, update `PUBLIC_BASE_URL` and configure `ADMIN_PASSWORD`, `ADMIN_TOKEN`, and any optional alert/auth secrets (see [server/.dev.vars.example](server/.dev.vars.example)) in the Cloudflare dashboard or via Wrangler.
+Cloudflare provisions the D1 database (`DB`), builds the dashboard, applies `migrations/`, and deploys the Worker. After deploying, update `PUBLIC_BASE_URL` and configure `ADMIN_PASSWORD`, `ADMIN_TOKEN`, and any optional alert/auth secrets (see [.dev.vars.example](.dev.vars.example)) in the Cloudflare dashboard or via Wrangler.
 
 ### Manual deploy
 
 ```sh
-cd server
 pnpm exec wrangler d1 create uptarn
-# Update database_id and PUBLIC_BASE_URL in server/wrangler.jsonc
+# Update database_id and PUBLIC_BASE_URL in wrangler.jsonc
 
 pnpm exec wrangler secret put ADMIN_PASSWORD
 pnpm exec wrangler secret put ADMIN_TOKEN
@@ -54,7 +53,7 @@ export PUBLIC_BASE_URL=https://status.example.com
 export ADMIN_PASSWORD_FILE=/run/secrets/uptarn-password
 export ADMIN_TOKEN_FILE=/run/secrets/uptarn-admin-token
 
-uptarn-server --host 0.0.0.0 --port 8787 --db /var/lib/uptarn/uptarn.db
+uptarn serve --host 0.0.0.0 --port 8787 --db /var/lib/uptarn/uptarn.db
 ```
 
 Multi-arch (`linux/amd64`, `linux/arm64`) Hub images are published to `ghcr.io/so1ve/uptarn`:
@@ -188,14 +187,14 @@ docker run -d --name uptarn-agent --restart unless-stopped --net=host \
 
 ## Nix Flake & NixOS Modules
 
-- `packages.<system>.uptarn-server`: Self-hosted Hub HTTP server
-- `packages.<system>.uptarn-agent`: Linux agent (`default` on Linux)
+- `packages.<system>.uptarn`: Hub HTTP server and management CLI (`default`)
+- `packages.<system>.uptarn-agent`: Linux agent
 - `packages.<system>.uptarn-agent-static`: Static `musl` binary for Synology DSM and OpenWrt
 - `nixosModules.default`: NixOS modules `services.uptarn` and `services.uptarn-agent`
 
 ## Releasing
 
-Bump `server/package.json`, `Cargo.toml`, and `Cargo.lock` together, commit, and push a `v*.*.*` tag:
+Bump `package.json`, `Cargo.toml`, and `Cargo.lock` together, commit, and push a `v*.*.*` tag:
 
 ```sh
 just release

@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { defineConfig } from "bumpp";
 
-const repoRoot = path.resolve(import.meta.dirname, "..");
+const repoRoot = import.meta.dirname;
 const cargoTomlPath = path.join(repoRoot, "Cargo.toml");
 const cargoLockPath = path.join(repoRoot, "Cargo.lock");
 
