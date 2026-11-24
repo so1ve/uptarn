@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::Path;
+use std::str::FromStr;
 
 use anyhow::{Context, Result, bail, ensure};
 use serde::Deserialize;
@@ -151,6 +152,38 @@ pub enum ExecOutputFormat {
     Auto,
 }
 
+impl FromStr for ExecOutputFormat {
+    type Err = ();
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "exit" => Ok(Self::Exit),
+            "json" => Ok(Self::Json),
+            "auto" => Ok(Self::Auto),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ExecDirDefaults<'a> {
+    pub group: Option<&'a str>,
+    pub format: ExecOutputFormat,
+    pub warn_exit_code: Option<i32>,
+    pub timeout_ms: u64,
+}
+
+impl Default for ExecDirDefaults<'_> {
+    fn default() -> Self {
+        Self {
+            group: None,
+            format: ExecOutputFormat::Auto,
+            warn_exit_code: None,
+            timeout_ms: EXEC_TIMEOUT_MS,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 pub enum ExecDirConfig {
@@ -160,21 +193,31 @@ pub enum ExecDirConfig {
         group: Option<String>,
         #[serde(default = "default_auto_format")]
         format: ExecOutputFormat,
+        warn_exit_code: Option<i32>,
         #[serde(default = "default_u64::<EXEC_TIMEOUT_MS>")]
         timeout_ms: u64,
     },
 }
 
 impl ExecDirConfig {
-    pub fn parts(&self) -> (&str, Option<&str>, ExecOutputFormat, u64) {
+    pub fn parts(&self) -> (&str, ExecDirDefaults<'_>) {
         match self {
-            Self::Path(path) => (path.as_str(), None, ExecOutputFormat::Auto, EXEC_TIMEOUT_MS),
+            Self::Path(path) => (path.as_str(), ExecDirDefaults::default()),
             Self::Detailed {
                 path,
                 group,
                 format,
+                warn_exit_code,
                 timeout_ms,
-            } => (path.as_str(), group.as_deref(), *format, *timeout_ms),
+            } => (
+                path.as_str(),
+                ExecDirDefaults {
+                    group: group.as_deref(),
+                    format: *format,
+                    warn_exit_code: *warn_exit_code,
+                    timeout_ms: *timeout_ms,
+                },
+            ),
         }
     }
 }
@@ -195,10 +238,10 @@ pub struct ExecCheckConfig {
     pub timeout_ms: u64,
 }
 
-fn non_empty(value: &str) -> Option<String> {
+pub fn non_empty(value: &str) -> Option<&str> {
     let trimmed = value.trim();
 
-    (!trimmed.is_empty()).then(|| trimmed.to_string())
+    (!trimmed.is_empty()).then_some(trimmed)
 }
 
 fn resolve_secret(
@@ -207,18 +250,18 @@ fn resolve_secret(
     env_var: &str,
 ) -> Result<Option<String>> {
     if let Some(val) = inline.and_then(non_empty) {
-        return Ok(Some(val));
+        return Ok(Some(val.to_string()));
     }
     if let Some(path) = file {
         let content = fs::read_to_string(path).with_context(|| format!("failed to read {path}"))?;
         if let Some(val) = non_empty(&content) {
-            return Ok(Some(val));
+            return Ok(Some(val.to_string()));
         }
     }
     if let Ok(env_val) = std::env::var(env_var)
         && let Some(val) = non_empty(&env_val)
     {
-        return Ok(Some(val));
+        return Ok(Some(val.to_string()));
     }
 
     Ok(None)
@@ -261,7 +304,10 @@ impl AgentConfig {
         }
 
         cfg.node_id = non_empty(&cfg.node_id)
-            .or_else(|| non_empty(&rustix::system::uname().nodename().to_string_lossy()))
+            .map(str::to_string)
+            .or_else(|| {
+                non_empty(&rustix::system::uname().nodename().to_string_lossy()).map(str::to_string)
+            })
             .context("node_id is unset and system hostname could not be determined")?;
 
         Ok(cfg)

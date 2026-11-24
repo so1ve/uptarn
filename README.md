@@ -144,9 +144,11 @@ node_id = "router"
 label = "OpenWrt"
 token = "uptn_node_..."
 
-# Automatically run any executable script dropped into this directory on each tick
-# (JSON stdout emitting mounts/checks/series/info is parsed automatically; plain text falls back to exit-code check)
-exec_dirs = ["/etc/uptarn/collectors.d"]
+# Automatically scan this directory on each tick without restarting the agent.
+# Supports both:
+#   1. Executable scripts (optional `# uptarn.key/label/group/warn_exit_code/format/timeout_ms = ...` headers)
+#   2. `.toml` drop-ins (single check or `[[exec]]` array, full `command = [...]` args, `./` relative paths)
+exec_dirs = ["/etc/uptarn/exec.d"]
 
 [[exec]]
 key = "tailscale"

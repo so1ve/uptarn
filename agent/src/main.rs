@@ -149,6 +149,14 @@ mod tests {
     use super::*;
     use crate::config::parse_duration_secs;
 
+    fn write_test_file(path: impl AsRef<Path>, body: &str, executable: bool) {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::write(path.as_ref(), body).unwrap();
+        let mode = if executable { 0o755 } else { 0o644 };
+        std::fs::set_permissions(path.as_ref(), std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+
     #[test]
     fn parses_human_durations() {
         assert_eq!(parse_duration_secs("60").unwrap(), 60);
@@ -212,15 +220,9 @@ command = ["sh", "-c", 'printf "%s" "{{\"checks\":[{{\"key\":\"tailscale\",\"lab
 
     #[tokio::test]
     async fn discovers_exec_dirs_and_dynamic_mounts_without_reload() {
-        use std::fs;
-        use std::os::unix::fs::PermissionsExt;
-
         let dir = tempfile::tempdir().unwrap();
         let write_script = |name: &str, body: &str, executable: bool| {
-            let path = dir.path().join(name);
-            fs::write(&path, body).unwrap();
-            let mode = if executable { 0o755 } else { 0o644 };
-            fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+            write_test_file(dir.path().join(name), body, executable);
         };
 
         write_script(
@@ -274,5 +276,127 @@ enabled = false
             Some("fatal: disk offline")
         );
         assert_eq!(second.checks[1].detail.as_deref(), Some("progress step"));
+    }
+
+    #[tokio::test]
+    async fn supports_toml_dropins_and_script_header_metadata_in_exec_dirs() {
+        use crate::protocol::HealthStatus;
+
+        let dir = tempfile::tempdir().unwrap();
+        let lib_dir = dir.path().join(".lib");
+        std::fs::create_dir(&lib_dir).unwrap();
+        let write_file = write_test_file;
+
+        // Shared helper script inside hidden .lib/ (not executed directly).
+        write_file(
+            lib_dir.join("unit.sh"),
+            "#!/bin/sh\necho \"checked $1 ${2:-}\"\nif [ \"$1\" = \"warn.service\" ]; then exit 2; fi\n",
+            true,
+        );
+
+        // 1. Single-check .toml drop-in with command args, relative ./ path,
+        //    and custom metadata.
+        write_file(
+            dir.path().join("10-ddclient.toml"),
+            r#"
+label = "ddclient"
+group = "services"
+command = ["./.lib/unit.sh", "ddclient.service", "ddclient.timer"]
+"#,
+            false,
+        );
+
+        // 2. Multi-check [[exec]] .toml drop-in inheriting directory
+        //    warn_exit_code.
+        write_file(
+            dir.path().join("20-units.toml"),
+            r#"
+[[exec]]
+key = "warn_svc"
+label = "Warn Service"
+command = ["./.lib/unit.sh", "warn.service"]
+
+[[exec]]
+key = "json_svc"
+label = "JSON Service"
+command = ["sh", "-c", 'printf "%s" "{\"checks\":[{\"key\":\"inner\",\"label\":\"Inner\",\"status\":\"ok\",\"summary\":\"ready\"}]}"']
+"#,
+            false,
+        );
+
+        // 3. Executable script with # uptarn.* header metadata (overrides
+        //    key/label/group/warn_exit_code).
+        write_file(
+            dir.path().join("30-reboot.sh"),
+            "#!/bin/sh\n# uptarn.key = reboot\n# uptarn.label = \"Kernel\"\n# uptarn.group = system\n# uptarn.warn_exit_code = 3\necho reboot required\nexit 3\n",
+            true,
+        );
+
+        // 4. Invalid .toml drop-in surfaces a failed check without breaking
+        //    other items.
+        write_file(
+            dir.path().join("40-broken.toml"),
+            "unknown_field = 123\n",
+            false,
+        );
+
+        let mut cfg_file = NamedTempFile::new().unwrap();
+        write!(
+            cfg_file,
+            r#"
+hub_url = "https://status.example.com"
+node_id = "homelab"
+token = "uptn_tok"
+
+[system]
+enabled = false
+
+[[exec_dirs]]
+path = "{dir_path}"
+group = "custom"
+warn_exit_code = 2
+"#,
+            dir_path = dir.path().display()
+        )
+        .unwrap();
+
+        let cfg = AgentConfig::load(cfg_file.path()).unwrap();
+        let mut cpu = CpuTracker::default();
+        let report = collect_report(&cfg, &mut cpu).await;
+
+        let by_key = |k: &str| {
+            report
+                .checks
+                .iter()
+                .find(|c| c.key == k)
+                .unwrap_or_else(|| panic!("missing check '{k}': {:?}", report.checks))
+        };
+
+        let dd = by_key("10-ddclient");
+        assert_eq!(dd.label, "ddclient");
+        assert_eq!(dd.group.as_deref(), Some("services"));
+        assert_eq!(dd.status, HealthStatus::Ok);
+        assert_eq!(
+            dd.summary.as_deref(),
+            Some("checked ddclient.service ddclient.timer")
+        );
+
+        let warn_svc = by_key("warn_svc");
+        assert_eq!(warn_svc.label, "Warn Service");
+        assert_eq!(warn_svc.group.as_deref(), Some("custom"));
+        assert_eq!(warn_svc.status, HealthStatus::Warn);
+
+        let inner = by_key("inner");
+        assert_eq!(inner.group.as_deref(), Some("custom"));
+        assert_eq!(inner.status, HealthStatus::Ok);
+
+        let reboot = by_key("reboot");
+        assert_eq!(reboot.label, "Kernel");
+        assert_eq!(reboot.group.as_deref(), Some("system"));
+        assert_eq!(reboot.status, HealthStatus::Warn);
+        assert_eq!(reboot.summary.as_deref(), Some("reboot required"));
+
+        let broken = by_key("40-broken");
+        assert_eq!(broken.status, HealthStatus::Fail);
     }
 }

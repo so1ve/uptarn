@@ -1,4 +1,5 @@
 mod exec;
+mod exec_dir;
 mod mounts;
 mod system;
 mod tcp;
@@ -36,7 +37,7 @@ where
 }
 
 pub async fn collect_report(cfg: &AgentConfig, cpu_tracker: &mut CpuTracker) -> NodeReportPayload {
-    let (discovered_exec, mut checks) = exec::discover_exec_dirs(&cfg.exec_dirs);
+    let (discovered_exec, mut checks) = exec_dir::discover(&cfg.exec_dirs);
     let mut all_exec = Vec::with_capacity(cfg.exec.len() + discovered_exec.len());
     all_exec.extend(cfg.exec.iter().cloned());
     all_exec.extend(discovered_exec);
@@ -53,10 +54,7 @@ pub async fn collect_report(cfg: &AgentConfig, cpu_tracker: &mut CpuTracker) -> 
         collect_parallel(&cfg.tls_certs, |c| async move {
             tls::collect_tls_cert(&c).await
         }),
-        collect_parallel(
-            &all_exec,
-            |e| async move { exec::collect_exec_item(&e).await }
-        ),
+        collect_parallel(&all_exec, |e| async move { exec::collect_item(&e).await }),
     );
 
     let mut series = Vec::with_capacity(tcp_series.len() + tls_series.len() + 1);

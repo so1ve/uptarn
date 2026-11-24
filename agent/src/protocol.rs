@@ -214,3 +214,24 @@ pub struct StructuredExecOutput {
     #[serde(default)]
     pub info: Vec<InfoSnapshot>,
 }
+
+impl StructuredExecOutput {
+    pub const fn is_empty(&self) -> bool {
+        self.mounts.is_empty()
+            && self.checks.is_empty()
+            && self.series.is_empty()
+            && self.info.is_empty()
+    }
+
+    pub fn apply_default_group(&mut self, group: &str) {
+        for c in &mut self.checks {
+            c.group.get_or_insert_with(|| group.to_string());
+        }
+        for s in &mut self.series {
+            s.group.get_or_insert_with(|| group.to_string());
+        }
+        for i in &mut self.info {
+            i.group.get_or_insert_with(|| group.to_string());
+        }
+    }
+}
