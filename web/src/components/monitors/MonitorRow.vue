@@ -95,17 +95,17 @@ const errorText = computed(() =>
 <template>
   <div
     :aria-expanded="adminMon ? Boolean(expanded) : undefined"
-    class="grid grid-cols-1 items-center gap-x-5 gap-y-2.5 py-3.5"
+    class="grid items-center gap-x-3 gap-y-2 py-3.5 lg:gap-x-5 lg:gap-y-2.5"
     :class="[
       adminMon
-        ? 'cursor-pointer px-2 transition-colors hover:bg-elevated/60 lg:grid-cols-[minmax(13rem,1.2fr)_minmax(13rem,1.65fr)_4.5rem_minmax(9rem,0.9fr)_auto]'
-        : 'px-1 lg:grid-cols-[minmax(12rem,1.1fr)_minmax(14rem,1.8fr)_4.5rem_minmax(7rem,0.8fr)]',
+        ? 'cursor-pointer grid-cols-[minmax(0,1fr)_auto_auto] px-2 transition-colors hover:bg-elevated/60 lg:grid-cols-[minmax(13rem,1.2fr)_minmax(13rem,1.65fr)_4.5rem_minmax(9rem,0.9fr)_auto]'
+        : 'grid-cols-[minmax(0,1fr)_auto] px-1 lg:grid-cols-[minmax(12rem,1.1fr)_minmax(14rem,1.8fr)_4.5rem_minmax(7rem,0.8fr)]',
       !monitor.enabled ? 'opacity-60' : '',
     ]"
     @click="adminMon && emit('toggle')"
   >
-    <div class="min-w-0 space-y-0.5">
-      <div class="flex items-center gap-2">
+    <div class="order-1 flex min-w-0 items-start gap-2">
+      <div class="flex h-5 shrink-0 items-center gap-2">
         <DragHandle
           v-if="reorderable && adminMon"
           class="-ml-1"
@@ -120,54 +120,76 @@ const errorText = computed(() =>
           name="i-lucide-chevron-right"
         />
         <StatusDot :status="dotStatus" />
-        <span class="truncate text-[13.5px] font-semibold">
-          {{ monitor.name }}
-        </span>
-        <UBadge
-          v-if="!monitor.enabled"
-          color="neutral"
-          size="xs"
-          variant="subtle"
-        >
-          Paused
-        </UBadge>
-        <UBadge
-          v-if="adminMon && !adminMon.is_public"
-          color="neutral"
-          size="xs"
-          variant="subtle"
-        >
-          Private
-        </UBadge>
-        <UBadge
-          v-if="adminMon && adminMon.muted_until > now"
-          color="warning"
-          size="xs"
-          variant="subtle"
-        >
-          Muted {{ formatRemaining(adminMon.muted_until, now) }}
-        </UBadge>
       </div>
 
-      <a
-        v-if="displayLink"
-        class="inline-flex max-w-full items-center gap-1 font-mono text-[11.5px] text-dimmed transition-colors hover:text-primary"
-        :class="adminMon ? (reorderable ? 'pl-15' : 'pl-9') : 'pl-4'"
-        :href="displayLink.href"
-        rel="noreferrer"
-        target="_blank"
-        @click.stop
-      >
-        <span class="truncate">{{ displayLink.text }}</span>
-        <UIcon class="size-3 shrink-0" name="i-lucide-external-link" />
-      </a>
+      <div class="flex min-w-0 flex-1 items-start gap-2">
+        <a
+          v-if="displayLink"
+          class="group/link inline-flex min-w-0 flex-col gap-0.5 transition-colors hover:text-primary"
+          :href="displayLink.href"
+          rel="noreferrer"
+          target="_blank"
+          @click.stop
+        >
+          <span
+            class="truncate text-[13.5px] leading-5 font-semibold transition-colors group-hover/link:text-primary"
+          >
+            {{ monitor.name }}
+          </span>
+          <span
+            class="inline-flex max-w-full items-center gap-1 font-mono text-[11.5px] text-dimmed transition-colors group-hover/link:text-primary"
+          >
+            <span class="truncate">{{ displayLink.text }}</span>
+            <UIcon class="size-3 shrink-0" name="i-lucide-external-link" />
+          </span>
+        </a>
+        <span v-else class="truncate text-[13.5px] leading-5 font-semibold">
+          {{ monitor.name }}
+        </span>
+
+        <div
+          v-if="
+            !monitor.enabled ||
+            (adminMon && (!adminMon.is_public || adminMon.muted_until > now))
+          "
+          class="flex h-5 shrink-0 items-center gap-1.5"
+        >
+          <UBadge
+            v-if="!monitor.enabled"
+            color="neutral"
+            size="xs"
+            variant="subtle"
+          >
+            Paused
+          </UBadge>
+          <UBadge
+            v-if="adminMon && !adminMon.is_public"
+            color="neutral"
+            size="xs"
+            variant="subtle"
+          >
+            Private
+          </UBadge>
+          <UBadge
+            v-if="adminMon && adminMon.muted_until > now"
+            color="warning"
+            size="xs"
+            variant="subtle"
+          >
+            Muted {{ formatRemaining(adminMon.muted_until, now) }}
+          </UBadge>
+        </div>
+      </div>
     </div>
 
-    <div @click.stop>
-      <MonitorBars :monitor :now :window />
-    </div>
-
-    <div class="font-mono text-xs font-semibold tabular-nums lg:text-right">
+    <div
+      class="font-mono text-xs font-semibold tabular-nums"
+      :class="
+        adminMon
+          ? 'order-2 self-start pt-0.5 text-right lg:order-3 lg:self-center lg:pt-0'
+          : 'order-2 self-start pt-0.5 text-right lg:order-3 lg:self-center lg:pt-0'
+      "
+    >
       <UTooltip
         :delay-duration="80"
         :disabled="uptime.total === 0"
@@ -202,8 +224,49 @@ const errorText = computed(() =>
       </UTooltip>
     </div>
 
+    <UTooltip
+      v-if="adminMon"
+      :disabled="!adminMon.managed_by_node_id"
+      :text="
+        adminMon.managed_by_node_id
+          ? `Managed by ${adminMon.managed_by_node_id}`
+          : undefined
+      "
+    >
+      <UButton
+        :aria-label="
+          adminMon.managed_by_node_id
+            ? `Managed by ${adminMon.managed_by_node_id}`
+            : 'Edit monitor'
+        "
+        class="order-3 self-start lg:order-5 lg:self-center"
+        color="neutral"
+        :disabled="Boolean(adminMon.managed_by_node_id)"
+        icon="i-lucide-pencil"
+        size="xs"
+        variant="ghost"
+        @click.stop="!adminMon.managed_by_node_id && emit('edit')"
+      />
+    </UTooltip>
+
+    <div
+      :class="
+        adminMon
+          ? 'order-4 col-span-3 lg:order-2 lg:col-span-1'
+          : 'order-3 col-span-2 lg:order-2 lg:col-span-1'
+      "
+      @click.stop
+    >
+      <MonitorBars :monitor :now :window />
+    </div>
+
     <div
       class="flex items-baseline justify-between gap-2 font-mono text-xs tabular-nums lg:flex-col lg:items-end lg:gap-0.5"
+      :class="
+        adminMon
+          ? 'order-5 col-span-3 lg:order-4 lg:col-span-1'
+          : 'order-4 col-span-2 lg:order-4 lg:col-span-1'
+      "
     >
       <span
         v-if="errorText"
@@ -226,29 +289,5 @@ const errorText = computed(() =>
         {{ formatAge(monitor.last_checked_at, now) }}
       </span>
     </div>
-
-    <UTooltip
-      v-if="adminMon"
-      :disabled="!adminMon.managed_by_node_id"
-      :text="
-        adminMon.managed_by_node_id
-          ? `Managed by ${adminMon.managed_by_node_id}`
-          : undefined
-      "
-    >
-      <UButton
-        :aria-label="
-          adminMon.managed_by_node_id
-            ? `Managed by ${adminMon.managed_by_node_id}`
-            : 'Edit monitor'
-        "
-        color="neutral"
-        :disabled="Boolean(adminMon.managed_by_node_id)"
-        icon="i-lucide-pencil"
-        size="xs"
-        variant="ghost"
-        @click.stop="!adminMon.managed_by_node_id && emit('edit')"
-      />
-    </UTooltip>
   </div>
 </template>

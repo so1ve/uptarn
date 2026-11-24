@@ -115,7 +115,7 @@ const onToggleMute = (mon: MonitorSummary) =>
 
         <div
           v-if="expandedIds.has(mon.id)"
-          class="mb-4 ml-6 rounded-xl border border-default bg-surface p-4"
+          class="mb-4 rounded-xl border border-default bg-surface p-4 sm:ml-6"
         >
           <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
             <span class="font-mono text-xs text-muted tabular-nums">

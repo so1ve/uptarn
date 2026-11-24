@@ -14,7 +14,7 @@ const model = defineModel<MonitorWindow>({ default: "24h" });
     <UButton
       v-for="w in MONITOR_WINDOWS"
       :key="w.id"
-      class="font-mono"
+      class="px-2 font-mono"
       color="neutral"
       size="xs"
       :variant="model === w.id ? 'solid' : 'ghost'"

@@ -108,7 +108,7 @@ async function onSignOut() {
         <RouterLink
           v-for="item in navItems"
           :key="item.to"
-          class="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[13px] font-medium transition-colors"
+          class="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[13px] font-medium whitespace-nowrap transition-colors"
           :class="
             item.active
               ? 'bg-elevated text-highlighted'
@@ -153,6 +153,7 @@ async function onSignOut() {
         <span class="hidden sm:inline">Public</span>
       </UButton>
       <UButton
+        aria-label="Check now"
         color="neutral"
         icon="i-lucide-refresh-cw"
         :loading="busy === 'tick'"
@@ -163,6 +164,7 @@ async function onSignOut() {
         <span class="hidden sm:inline">Check now</span>
       </UButton>
       <UButton
+        aria-label="Settings"
         color="neutral"
         icon="i-lucide-sliders-horizontal"
         size="sm"
@@ -174,8 +176,15 @@ async function onSignOut() {
     </template>
 
     <template #actions>
-      <UButton color="neutral" size="sm" variant="ghost" @click="onSignOut">
-        Sign out
+      <UButton
+        aria-label="Sign out"
+        color="neutral"
+        icon="i-lucide-log-out"
+        size="sm"
+        variant="ghost"
+        @click="onSignOut"
+      >
+        <span class="hidden sm:inline">Sign out</span>
       </UButton>
     </template>
 
