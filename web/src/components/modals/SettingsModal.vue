@@ -42,13 +42,16 @@ const patchSettings = (
     true,
   );
 
-const onSendTestAlert = () =>
-  run("test", "Test alert failed", async () => {
+const onSendTestNotification = () =>
+  run("test", "Test notification failed", async () => {
     const { delivery = {} } = await apiFetch<{
       delivery?: Record<string, string>;
     }>("/api/v1/admin/notifications/test", "POST");
     if (delivery.status === "no_channels_configured") {
-      toast.add({ title: "No alert channels configured", color: "warning" });
+      toast.add({
+        title: "No notification channels configured",
+        color: "warning",
+      });
 
       return;
     }
@@ -57,7 +60,7 @@ const onSendTestAlert = () =>
       throw new Error(failed.map(([k, v]) => `${k}: ${v}`).join("; "));
     }
 
-    return "Test alert sent";
+    return "Test notification sent";
   });
 </script>
 
@@ -121,7 +124,7 @@ const onSendTestAlert = () =>
         <USeparator />
 
         <section class="space-y-3">
-          <h3 class="text-xs font-semibold text-muted">Alerts</h3>
+          <h3 class="text-xs font-semibold text-muted">Notifications</h3>
           <div
             class="flex flex-wrap items-center justify-between gap-2 text-sm"
           >
@@ -145,7 +148,7 @@ const onSendTestAlert = () =>
               :loading="busy === 'test'"
               size="xs"
               variant="soft"
-              @click="onSendTestAlert"
+              @click="onSendTestNotification"
             >
               Send test
             </UButton>
@@ -183,7 +186,7 @@ const onSendTestAlert = () =>
                     `mute:${m.secs}`,
                     'Failed to update mute',
                     { global_mute_secs: m.secs },
-                    'All alerts muted',
+                    'All notifications muted',
                   )
                 "
               >
@@ -200,7 +203,7 @@ const onSendTestAlert = () =>
                     'mute:0',
                     'Failed to update mute',
                     { global_mute_secs: 0 },
-                    'All alerts resumed',
+                    'All notifications resumed',
                   )
                 "
               >

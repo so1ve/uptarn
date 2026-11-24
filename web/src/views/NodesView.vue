@@ -30,7 +30,7 @@ const nodesView = useStorage<"cards" | "table">("uptarn:nodes-view", "cards");
 const nodeFilter = ref("");
 const addNodeOpen = ref(false);
 
-const openIssues = computed(
+const openIncidents = computed(
   () => snap.value.incidents.filter((i) => i.state === "open").length,
 );
 
@@ -76,28 +76,30 @@ const incidentHeadline = computed(() => {
     <RouterLink
       v-if="snap.incidents.length > 0"
       class="flex flex-wrap items-center justify-between gap-3 rounded-xl px-4 py-2.5 text-sm transition-opacity hover:opacity-90"
-      :class="openIssues > 0 ? 'bg-red-500/10' : 'bg-amber-500/10'"
-      to="/admin/alerts"
+      :class="openIncidents > 0 ? 'bg-red-500/10' : 'bg-amber-500/10'"
+      to="/admin/incidents"
     >
       <div class="flex min-w-0 items-center gap-2.5">
-        <StatusDot :status="openIssues > 0 ? 'fail' : 'warn'" />
+        <StatusDot :status="openIncidents > 0 ? 'fail' : 'warn'" />
         <span
           class="font-semibold whitespace-nowrap"
           :class="
-            openIssues > 0
+            openIncidents > 0
               ? 'text-red-600 dark:text-red-400'
               : 'text-amber-600 dark:text-amber-400'
           "
         >
           {{ snap.incidents.length }}
-          {{ snap.incidents.length === 1 ? "active issue" : "active issues" }}
+          {{
+            snap.incidents.length === 1 ? "active incident" : "active incidents"
+          }}
         </span>
         <span class="truncate text-xs text-muted">{{ incidentHeadline }}</span>
       </div>
       <span
         class="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-muted"
       >
-        View alerts
+        View incidents
         <UIcon class="size-3.5" name="i-lucide-arrow-right" />
       </span>
     </RouterLink>

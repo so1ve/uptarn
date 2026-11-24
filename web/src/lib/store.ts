@@ -228,7 +228,7 @@ export function useAction() {
 
         return durationSecs > 0
           ? `Muted ${label} for ${formatDuration(durationSecs)}`
-          : `Resumed alerts for ${label}`;
+          : `Resumed notifications for ${label}`;
       },
       true,
     );

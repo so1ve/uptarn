@@ -17,7 +17,7 @@ import AppLayout from "./AppLayout.vue";
 const ROUTE_TITLES: Record<string, string> = {
   monitors: "Monitors",
   jobs: "Jobs",
-  alerts: "Alerts",
+  incidents: "Incidents",
 };
 
 const route = useRoute();
@@ -27,7 +27,7 @@ const { signOutState } = useUptarnStore();
 
 const settingsOpen = ref(false);
 
-const totalIssues = computed(() => snap.value.incidents.length);
+const totalIncidents = computed(() => snap.value.incidents.length);
 const globalMuted = computed(
   () => snap.value.settings.global_muted_until > snap.value.now,
 );
@@ -48,28 +48,28 @@ const navItems = computed(() => [
     label: "Nodes",
     active: route.name === "nodes" || route.name === "node-detail",
     count: snap.value.nodes.length,
-    alert: false,
+    urgent: false,
   },
   {
     to: "/admin/monitors",
     label: "Monitors",
     active: route.name === "monitors",
     count: snap.value.monitors.length,
-    alert: false,
+    urgent: false,
   },
   {
     to: "/admin/jobs",
     label: "Jobs",
     active: route.name === "jobs",
     count: snap.value.jobs.length,
-    alert: false,
+    urgent: false,
   },
   {
-    to: "/admin/alerts",
-    label: "Alerts",
-    active: route.name === "alerts",
-    count: totalIssues.value,
-    alert: totalIssues.value > 0,
+    to: "/admin/incidents",
+    label: "Incidents",
+    active: route.name === "incidents",
+    count: totalIncidents.value,
+    urgent: totalIncidents.value > 0,
   },
 ]);
 
@@ -121,7 +121,7 @@ async function onSignOut() {
             v-if="item.count > 0"
             class="rounded-full px-1.5 py-0.5 font-mono text-[10.5px] leading-none tabular-nums"
             :class="
-              item.alert
+              item.urgent
                 ? 'bg-red-500/15 text-red-600 dark:text-red-400'
                 : 'text-dimmed'
             "

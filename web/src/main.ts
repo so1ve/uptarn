@@ -3,7 +3,7 @@ import { createApp } from "vue";
 import { createRouter, createWebHistory } from "vue-router";
 
 import App from "./App.vue";
-import AlertsView from "./views/AlertsView.vue";
+import IncidentsView from "./views/IncidentsView.vue";
 import JobsView from "./views/JobsView.vue";
 import MonitorsView from "./views/MonitorsView.vue";
 import NodeDetailView from "./views/NodeDetailView.vue";
@@ -28,7 +28,7 @@ const router = createRouter({
     },
     { path: "/admin/monitors", name: "monitors", component: MonitorsView },
     { path: "/admin/jobs", name: "jobs", component: JobsView },
-    { path: "/admin/alerts", name: "alerts", component: AlertsView },
+    { path: "/admin/incidents", name: "incidents", component: IncidentsView },
     { path: "/:pathMatch(.*)*", redirect: "/" },
   ],
 });

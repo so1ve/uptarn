@@ -10,8 +10,8 @@ import type { TickReport } from "../domain/tick.ts";
 import { runDatabaseMigrations, startNodeServer } from "../node.ts";
 import type { DashboardSnapshot, MonitorInput } from "../shared/index.ts";
 import {
-  renderAlertEventsTable,
   renderBanner,
+  renderIncidentEventsTable,
   renderIncidentsList,
   renderJobDetail,
   renderJobsTable,
@@ -980,7 +980,7 @@ export const createCli = () =>
       },
     })
     .command("job rm <key>", {
-      description: "Delete a job and its alert state",
+      description: "Delete a job and its incident state",
       args: {
         key: { description: "Job key" },
       },
@@ -996,18 +996,18 @@ export const createCli = () =>
         ctx.log.success(`Removed job ${theme.bold(ctx.args.key)}.`);
       },
     })
-    .command("alert", {
-      description: "Inspect active incidents and alert history",
+    .command("incident", {
+      description: "Inspect active incidents and incident history",
       group: "admin",
     })
-    .command("alert ls", {
-      description: "List active incidents and recent alert events",
+    .command("incident ls", {
+      description: "List active incidents and recent history events",
       flags: {
         ...adminAuthFlags,
         limit: {
           type: nonNegativeInt,
           default: 20,
-          description: "Maximum number of recent alert events to display",
+          description: "Maximum number of recent incident events to display",
         },
         ...jsonFlag,
       },
@@ -1037,17 +1037,17 @@ export const createCli = () =>
             : renderIncidentsList(theme, data.incidents),
         );
         ctx.terminal.stdout(
-          renderSection(theme, "Recent Events", `(${events.length})`),
+          renderSection(theme, "History", `(${events.length})`),
         );
         ctx.terminal.stdout(
           events.length === 0
-            ? `  ${theme.muted("No alert events recorded.")}`
-            : renderAlertEventsTable(theme, events, now),
+            ? `  ${theme.muted("No incident history recorded.")}`
+            : renderIncidentEventsTable(theme, events, now),
         );
       },
     })
     .command("mute <targetType> <targetId>", {
-      description: "Mute or unmute alerts for a node, monitor, or job",
+      description: "Mute or unmute notifications for a node, monitor, or job",
       group: "admin",
       args: {
         targetType: {
@@ -1090,7 +1090,7 @@ export const createCli = () =>
       },
     })
     .command("unmute <targetType> <targetId>", {
-      description: "Unmute alerts for a node, monitor, or job",
+      description: "Unmute notifications for a node, monitor, or job",
       group: "admin",
       args: {
         targetType: {
@@ -1198,7 +1198,7 @@ export const createCli = () =>
       },
     })
     .command("settings mute", {
-      description: "Mute or unmute all alerts globally",
+      description: "Mute or unmute all notifications globally",
       flags: {
         ...adminAuthFlags,
         duration: {
@@ -1225,10 +1225,10 @@ export const createCli = () =>
           return;
         }
         if (res.global_muted_until === 0) {
-          ctx.log.success("Unmuted global alerts.");
+          ctx.log.success("Unmuted global notifications.");
         } else {
           ctx.log.success(
-            `Muted all alerts globally for ${ctx.flags.duration}s.`,
+            `Muted all notifications globally for ${ctx.flags.duration}s.`,
           );
         }
       },

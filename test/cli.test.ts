@@ -249,7 +249,7 @@ describe("uptarn CLI commands", () => {
     expect(finalNodes.map((n) => n.id)).toEqual(["alpha"]);
   });
 
-  it("manages jobs, alerts, mute/unmute, settings, and passkeys", async () => {
+  it("manages jobs, incidents, mute/unmute, settings, and passkeys", async () => {
     const added = JSON.parse(
       (await runCli(["node", "add", "worker", "--json"])).stdoutText(),
     ) as { token: string };
@@ -281,11 +281,11 @@ describe("uptarn CLI commands", () => {
     expect(jobDetail.stdoutText()).toContain("Nightly Backup");
     expect(jobDetail.stdoutText()).toContain("rsync exit 23");
 
-    const alerts = JSON.parse(
-      (await runCli(["alert", "ls", "--json"])).stdoutText(),
+    const incidents = JSON.parse(
+      (await runCli(["incident", "ls", "--json"])).stdoutText(),
     ) as { incidents: unknown[]; events: unknown[] };
 
-    expect(alerts.incidents.length).toBeGreaterThanOrEqual(1);
+    expect(incidents.incidents.length).toBeGreaterThanOrEqual(1);
 
     await runCli(["mute", "job", "nightly-backup", "-d", "600"]);
     const mutedJob = JSON.parse(

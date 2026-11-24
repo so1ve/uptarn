@@ -604,7 +604,7 @@ export const renderIncidentsList = (
     )
     .join("\n");
 
-export const renderAlertEventsTable = (
+export const renderIncidentEventsTable = (
   theme: Theme,
   events: readonly AlertEventSummary[],
   now: number,

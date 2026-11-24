@@ -60,12 +60,12 @@ const onToggleMute = (inc: IncidentSummary, isMuted: boolean) =>
 
 <template>
   <div class="space-y-8">
-    <PageHeader title="Alerts" />
+    <PageHeader title="Incidents" />
 
-    <section aria-labelledby="active-issues-heading" class="space-y-3">
+    <section aria-labelledby="active-incidents-heading" class="space-y-3">
       <div class="flex items-baseline gap-2">
-        <h2 id="active-issues-heading" class="text-sm font-semibold">
-          Active issues
+        <h2 id="active-incidents-heading" class="text-sm font-semibold">
+          Active incidents
         </h2>
         <span class="text-xs text-dimmed tabular-nums">
           {{ incidentRows.length }}
@@ -76,7 +76,7 @@ const onToggleMute = (inc: IncidentSummary, isMuted: boolean) =>
         v-if="incidentRows.length === 0"
         class="rounded-xl border border-default bg-surface px-5 py-6 text-sm text-muted"
       >
-        No active issues.
+        No active incidents.
       </div>
 
       <ul
@@ -132,9 +132,7 @@ const onToggleMute = (inc: IncidentSummary, isMuted: boolean) =>
 
     <section aria-labelledby="history-heading" class="space-y-3">
       <div class="flex items-baseline gap-2">
-        <h2 id="history-heading" class="text-sm font-semibold">
-          Alert history
-        </h2>
+        <h2 id="history-heading" class="text-sm font-semibold">History</h2>
         <span class="text-xs text-dimmed tabular-nums">
           {{ eventRows.length }}
         </span>
@@ -144,7 +142,7 @@ const onToggleMute = (inc: IncidentSummary, isMuted: boolean) =>
         v-if="eventRows.length === 0"
         class="rounded-xl border border-default bg-surface px-5 py-6 text-sm text-muted"
       >
-        No events yet.
+        No incident history yet.
       </div>
 
       <ol v-else class="divide-y divide-default border-y border-default">
