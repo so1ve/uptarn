@@ -11,8 +11,8 @@ import {
   memPercent,
   mountPercent,
   nodeIssueSummary,
-  peakMount,
   statusTextClass,
+  summarizeDisk,
 } from "../../lib/index.ts";
 import SparkMetric from "../ui/SparkMetric.vue";
 import StatusDot from "../ui/StatusDot.vue";
@@ -29,7 +29,9 @@ const isMuted = computed(() => props.node.muted_until > props.now);
 
 const cpuPct = computed(() => props.node.system?.cpu_pct);
 const memPct = computed(() => memPercent(props.node.system));
-const topMount = computed(() => peakMount(props.node.mounts));
+const disk = computed(() =>
+  summarizeDisk(props.node.mounts, props.node.primary_mount),
+);
 
 const hasCpu = computed(() => cpuPct.value !== undefined);
 const hasMem = computed(() => memPct.value !== null);
@@ -134,17 +136,10 @@ const memCaption = computed(() =>
                 <span class="text-dimmed">Load</span>
                 {{ node.system.load_1m.toFixed(2) }}
               </span>
-              <span v-if="topMount">
+              <span v-if="disk">
                 <span class="text-dimmed">Disk</span>
-                <span
-                  class="ml-1"
-                  :class="statusTextClass(topMount.status, '')"
-                >
-                  {{
-                    topMount.total_bytes > 0
-                      ? `${Math.round(mountPercent(topMount))}%`
-                      : "Error"
-                  }}
+                <span class="ml-1" :class="statusTextClass(disk.status, '')">
+                  {{ disk.pct !== null ? `${Math.round(disk.pct)}%` : "Error" }}
                 </span>
               </span>
             </div>

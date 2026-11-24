@@ -7,6 +7,7 @@ import { renderSection } from "./format.ts";
 export interface SyncNodeSpec {
   id: string;
   is_public?: boolean;
+  primary_mount?: string | null;
 }
 
 export type NormalizedSyncMonitor = ReturnType<typeof parseMonitorInput>;
@@ -18,10 +19,10 @@ export interface SyncSpec {
   monitors?: NormalizedSyncMonitor[];
 }
 
-export interface NodeVisibilityPatch {
+export interface NodePatchItem {
   id: string;
-  from: boolean;
-  to: boolean;
+  patch: { is_public?: boolean; primary_mount?: string | null };
+  changes: string[];
 }
 
 export interface ManagedNodeConflict {
@@ -47,7 +48,7 @@ export interface ManagedMonitorConflict {
 
 export interface SyncPlan {
   settingsPatch: { auto_register: boolean } | null;
-  nodePatches: NodeVisibilityPatch[];
+  nodePatches: NodePatchItem[];
   missingNodes: string[];
   managedNodeConflicts: ManagedNodeConflict[];
   nodeOrder: string[] | null;
@@ -126,12 +127,26 @@ export function parseSyncSpec(raw: unknown): SyncSpec {
       ) {
         throw new Error(`nodes[${idx}].is_public must be a boolean`);
       }
+      let primaryMount: string | null | undefined;
+      if (Object.hasOwn(node, "primary_mount")) {
+        if (node.primary_mount === null) {
+          primaryMount = null;
+        } else if (typeof node.primary_mount === "string") {
+          const trimmed = node.primary_mount.trim();
+          primaryMount = !trimmed || trimmed === "sum" ? null : trimmed;
+        } else {
+          throw new TypeError(
+            `nodes[${idx}].primary_mount must be a string or null`,
+          );
+        }
+      }
 
       return {
         id,
         ...(node.is_public === undefined || node.is_public === null
           ? {}
           : { is_public: node.is_public }),
+        ...(primaryMount === undefined ? {} : { primary_mount: primaryMount }),
       };
     });
   }
@@ -191,7 +206,7 @@ export function computeSyncPlan(
       ? { auto_register: spec.auto_register }
       : null;
 
-  const nodePatches: NodeVisibilityPatch[] = [];
+  const nodePatches: NodePatchItem[] = [];
   const missingNodes: string[] = [];
   const managedNodeConflicts: ManagedNodeConflict[] = [];
   let nodeOrder: string[] | null = null;
@@ -210,6 +225,10 @@ export function computeSyncPlan(
       }
       declaredExistingNodeIds.push(declared.id);
       declaredSet.add(declared.id);
+
+      const patch: { is_public?: boolean; primary_mount?: string | null } = {};
+      const changes: string[] = [];
+
       if (
         declared.is_public !== undefined &&
         declared.is_public !== existing.is_public
@@ -221,12 +240,23 @@ export function computeSyncPlan(
             current: existing.is_public,
           });
         } else {
-          nodePatches.push({
-            id: declared.id,
-            from: existing.is_public,
-            to: declared.is_public,
-          });
+          patch.is_public = declared.is_public;
+          changes.push(
+            `is_public: ${existing.is_public} -> ${declared.is_public}`,
+          );
         }
+      }
+      if (
+        declared.primary_mount !== undefined &&
+        declared.primary_mount !== existing.primary_mount
+      ) {
+        patch.primary_mount = declared.primary_mount;
+        changes.push(
+          `primary_mount: ${existing.primary_mount ?? "sum"} -> ${declared.primary_mount ?? "sum"}`,
+        );
+      }
+      if (changes.length > 0) {
+        nodePatches.push({ id: declared.id, patch, changes });
       }
     }
 
@@ -361,9 +391,9 @@ export function renderSyncPlan(
     plan.managedNodeConflicts.length > 0
   ) {
     lines.push(renderSection(theme, "Nodes"));
-    for (const patch of plan.nodePatches) {
+    for (const item of plan.nodePatches) {
       lines.push(
-        `  ${theme.warn("~")} ${theme.bold(patch.id)}  ${theme.muted(`is_public: ${patch.from} ->`)} ${patch.to ? theme.accent("true") : theme.muted("false")}`,
+        `  ${theme.warn("~")} ${theme.bold(item.id)}  ${theme.muted(item.changes.join(", "))}`,
       );
     }
     if (plan.nodeOrder) {
@@ -473,13 +503,11 @@ export async function applySyncPlan(
     await request("PATCH", "/api/v1/admin/settings", plan.settingsPatch);
   }
 
-  for (const patch of plan.nodePatches) {
+  for (const item of plan.nodePatches) {
     await request(
       "PATCH",
-      `/api/v1/admin/nodes/${encodeURIComponent(patch.id)}`,
-      {
-        is_public: patch.to,
-      },
+      `/api/v1/admin/nodes/${encodeURIComponent(item.id)}`,
+      item.patch,
     );
   }
 

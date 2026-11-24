@@ -57,19 +57,6 @@ export const statusTextClass = (
       ? "text-amber-600 dark:text-amber-400"
       : okClass;
 
-export function peakMount(
-  mounts: readonly MountSnapshot[],
-): MountSnapshot | null {
-  if (mounts.length === 0) {
-    return null;
-  }
-
-  return (
-    mounts.find((m) => m.total_bytes === 0 && m.status === "fail") ??
-    mounts.reduce((acc, m) => (mountPercent(m) > mountPercent(acc) ? m : acc))
-  );
-}
-
 export interface NodeIssueSummary {
   text: string;
   compact: string;

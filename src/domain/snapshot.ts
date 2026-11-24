@@ -19,7 +19,7 @@ import type {
   SeriesSnapshot,
   SystemSnapshot,
 } from "../shared/index.ts";
-import { unixNow } from "../shared/index.ts";
+import { round1, summarizeDisk, unixNow } from "../shared/index.ts";
 import type { JobRow } from "./jobs.ts";
 import type { MonitorRow } from "./monitors.ts";
 import { parseMonitorRollups, parseMonitorSamples } from "./monitors.ts";
@@ -36,6 +36,7 @@ interface NodeCoreRow {
   mounts_json: string;
   checks_json: string;
   series_json: string;
+  primary_mount: string | null;
 }
 
 interface SnapshotNodeRow extends NodeCoreRow {
@@ -180,22 +181,19 @@ const buildAllowedSeriesKeys = (
 ): Set<string> =>
   new Set<string>([...BUILTIN_SERIES_KEYS, ...series.map((item) => item.key)]);
 
-function peakStoragePct(mounts: readonly MountSnapshot[]): number | null {
-  if (mounts.length === 0) {
+function publicStoragePct(
+  mounts: readonly MountSnapshot[],
+  primaryMount: string | null,
+): number | null {
+  const disk = summarizeDisk(mounts, primaryMount);
+  if (!disk) {
     return null;
   }
-  if (mounts.some((m) => m.total_bytes === 0 && m.status === "fail")) {
+  if (disk.total_bytes === 0 && disk.status === "fail") {
     return 100;
   }
-  const sized = mounts.filter((m) => m.total_bytes > 0);
 
-  return sized.length === 0
-    ? null
-    : Math.max(
-        ...sized.map(
-          (m) => Math.round((m.used_bytes / m.total_bytes) * 1000) / 10,
-        ),
-      );
+  return disk.pct === null ? null : round1(disk.pct);
 }
 
 export async function getDashboardSnapshot(
@@ -218,7 +216,7 @@ export async function getDashboardSnapshot(
       sql: "SELECT id, name, device_type, backed_up, created_at, last_used_at FROM admin_passkeys ORDER BY created_at DESC",
     },
     {
-      sql: `SELECT id, label, is_public, public_managed, interval_secs, grace_secs, muted_until, created_at,
+      sql: `SELECT id, label, is_public, public_managed, primary_mount, interval_secs, grace_secs, muted_until, created_at,
                    last_seen_at, rx_bps, tx_bps, system_json, mounts_json, checks_json, series_json, info_json, agent_version
             FROM nodes ORDER BY sort_order ASC, id ASC`,
     },
@@ -277,6 +275,7 @@ export async function getDashboardSnapshot(
       overall_status: overallStatus,
       is_public: row.is_public === 1,
       public_managed: row.public_managed === 1,
+      primary_mount: row.primary_mount,
       interval_secs: row.interval_secs,
       grace_secs: row.grace_secs,
       muted_until: row.muted_until,
@@ -411,7 +410,7 @@ export async function getPublicStatusSnapshot(
             FROM monitors WHERE is_public = 1 ORDER BY sort_order ASC, name ASC`,
       },
       {
-        sql: `SELECT id, label, interval_secs, grace_secs, last_seen_at, system_json, mounts_json, checks_json, series_json
+        sql: `SELECT id, label, primary_mount, interval_secs, grace_secs, last_seen_at, system_json, mounts_json, checks_json, series_json
             FROM nodes WHERE is_public = 1 ORDER BY sort_order ASC, label ASC`,
       },
       {
@@ -484,7 +483,7 @@ export async function getPublicStatusSnapshot(
           overallStatus === "offline" ? null : (system?.uptime_secs ?? null),
         cpu_pct: system?.cpu_pct ?? null,
         mem_pct: memPct,
-        storage_pct: peakStoragePct(mounts),
+        storage_pct: publicStoragePct(mounts, row.primary_mount),
         cpu_history: hist._cpu ?? [],
         mem_history: hist._mem ?? [],
       };

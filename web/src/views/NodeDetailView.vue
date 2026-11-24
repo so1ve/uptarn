@@ -16,9 +16,8 @@ import {
   formatRemaining,
   formatUsage,
   memPercent,
-  mountPercent,
-  peakMount,
   statusTextClass,
+  summarizeDisk,
   useAction,
   useSnapshot,
   useUptarnStore,
@@ -53,8 +52,10 @@ const swapUsage = computed(() => {
     ? formatUsage(sys.swap_used_bytes, sys.swap_total_bytes)
     : null;
 });
-const topMount = computed(() =>
-  node.value ? peakMount(node.value.mounts) : null,
+const disk = computed(() =>
+  node.value
+    ? summarizeDisk(node.value.mounts, node.value.primary_mount)
+    : null,
 );
 
 const windowSecs = ref(DEFAULT_WINDOW_SECS);
@@ -141,6 +142,49 @@ const onTogglePublic = () =>
     },
     true,
   );
+
+function onSelectPrimaryMount(mountPath: string | null) {
+  const n = node.value;
+  if (!n || n.primary_mount === mountPath) {
+    return;
+  }
+  const label =
+    mountPath === null
+      ? "Total"
+      : (n.mounts.find((m) => m.path === mountPath)?.label ?? mountPath);
+  void run(
+    "disk",
+    "Failed to update disk summary",
+    async () => {
+      await apiFetch(nodeUrl(), "PATCH", { primary_mount: mountPath });
+
+      return `Disk summary set to ${label}`;
+    },
+    true,
+  );
+}
+
+const diskMenuItems = computed(() => {
+  const n = node.value;
+  if (!n || n.mounts.length <= 1) {
+    return [];
+  }
+
+  return [
+    [
+      {
+        label: "Total (all mounts)",
+        icon: n.primary_mount === null ? "i-lucide-check" : undefined,
+        onSelect: () => onSelectPrimaryMount(null),
+      },
+    ],
+    n.mounts.map((m) => ({
+      label: m.label ?? m.path,
+      icon: n.primary_mount === m.path ? "i-lucide-check" : undefined,
+      onSelect: () => onSelectPrimaryMount(m.path),
+    })),
+  ];
+});
 
 const onRotateToken = () =>
   node.value &&
@@ -305,7 +349,7 @@ async function onDelete() {
     </div>
 
     <section
-      v-if="node.system || topMount"
+      v-if="node.system || disk"
       class="grid grid-cols-2 gap-x-8 gap-y-4 border-y border-default py-5 sm:grid-cols-4"
     >
       <div v-if="node.system?.cpu_pct !== undefined" class="space-y-1">
@@ -342,25 +386,29 @@ async function onDelete() {
         </div>
       </div>
 
-      <div v-if="topMount" class="space-y-1">
-        <div class="text-xs text-muted">
-          Disk ({{ topMount.label ?? topMount.path }})
-        </div>
+      <div v-if="disk" class="space-y-1">
+        <UDropdownMenu v-if="node.mounts.length > 1" :items="diskMenuItems">
+          <button
+            class="inline-flex cursor-pointer items-center gap-1 text-xs text-muted transition-colors hover:text-default"
+            :disabled="busy === 'disk'"
+            type="button"
+          >
+            <span>Disk ({{ disk.is_sum ? "Total" : disk.label }})</span>
+            <UIcon class="size-3 text-dimmed" name="i-lucide-chevron-down" />
+          </button>
+        </UDropdownMenu>
+        <div v-else class="text-xs text-muted">Disk ({{ disk.label }})</div>
         <div
           class="text-2xl font-semibold tracking-tight tabular-nums"
-          :class="statusTextClass(topMount.status, '')"
+          :class="statusTextClass(disk.status, '')"
         >
-          {{
-            topMount.total_bytes > 0
-              ? `${Math.round(mountPercent(topMount))}%`
-              : "Error"
-          }}
+          {{ disk.pct !== null ? `${Math.round(disk.pct)}%` : "Error" }}
         </div>
         <div class="font-mono text-xs text-dimmed tabular-nums">
           {{
-            topMount.total_bytes > 0
-              ? formatUsage(topMount.used_bytes, topMount.total_bytes)
-              : (topMount.summary ?? "Unavailable")
+            disk.pct !== null
+              ? formatUsage(disk.used_bytes, disk.total_bytes)
+              : (disk.error ?? "Unavailable")
           }}
         </div>
       </div>

@@ -136,6 +136,7 @@ export interface NodeSummary {
   overall_status: "ok" | "warn" | "fail" | "offline" | "pending";
   is_public: boolean;
   public_managed: boolean;
+  primary_mount: string | null;
   interval_secs: number;
   grace_secs: number;
   muted_until: number;

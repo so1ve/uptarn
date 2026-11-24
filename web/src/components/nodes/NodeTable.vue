@@ -9,10 +9,9 @@ import {
   formatDuration,
   formatUsage,
   memPercent,
-  mountPercent,
   nodeIssueSummary,
-  peakMount,
   statusTextClass,
+  summarizeDisk,
   useReorder,
 } from "../../lib/index.ts";
 import DragHandle from "../ui/DragHandle.vue";
@@ -41,7 +40,7 @@ const rows = computed(() =>
   props.nodes.map((node) => ({
     node,
     mem: memPercent(node.system),
-    disk: peakMount(node.mounts),
+    disk: summarizeDisk(node.mounts, node.primary_mount),
     issue:
       node.overall_status === "offline" || node.overall_status === "pending"
         ? null
@@ -116,7 +115,7 @@ const rows = computed(() =>
           <td class="px-3 py-3 text-right font-mono text-xs tabular-nums">
             <span v-if="!disk" class="text-dimmed">-</span>
             <span
-              v-else-if="disk.total_bytes === 0"
+              v-else-if="disk.pct === null"
               class="text-red-500 dark:text-red-400"
             >
               Error
@@ -124,9 +123,9 @@ const rows = computed(() =>
             <span
               v-else
               :class="statusTextClass(disk.status, '')"
-              :title="formatUsage(disk.used_bytes, disk.total_bytes)"
+              :title="`${disk.is_sum ? 'Total' : disk.label}: ${formatUsage(disk.used_bytes, disk.total_bytes)}`"
             >
-              {{ Math.round(mountPercent(disk)) }}%
+              {{ Math.round(disk.pct) }}%
             </span>
           </td>
           <td

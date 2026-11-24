@@ -915,9 +915,49 @@ describe("uptarn portable server", () => {
         overall_status: "warn",
         cpu_pct: 12.5,
         mem_pct: 50,
-        storage_pct: 90,
+        storage_pct: 3.4,
       },
     ]);
+
+    // Switching primary_mount to "/" pins the summary to that specific mount.
+    const pinRes = await app.request(
+      "/api/v1/admin/nodes/secret-edge-slug-01",
+      {
+        method: "PATCH",
+        headers: adminHeaders,
+        body: JSON.stringify({ primary_mount: "/" }),
+      },
+    );
+
+    expect(pinRes.status).toBe(200);
+
+    const pinnedPub = await (
+      await app.request("/api/v1/public/status")
+    ).json<{
+      nodes: { storage_pct: number }[];
+    }>();
+
+    expect(pinnedPub.nodes[0].storage_pct).toBe(90);
+
+    // Resetting primary_mount to null (or "sum") returns to combined sum.
+    const sumRes = await app.request(
+      "/api/v1/admin/nodes/secret-edge-slug-01",
+      {
+        method: "PATCH",
+        headers: adminHeaders,
+        body: JSON.stringify({ primary_mount: null }),
+      },
+    );
+
+    expect(sumRes.status).toBe(200);
+
+    const summedPub = await (
+      await app.request("/api/v1/public/status")
+    ).json<{
+      nodes: { storage_pct: number }[];
+    }>();
+
+    expect(summedPub.nodes[0].storage_pct).toBe(3.4);
 
     for (const secret of [
       "secret-edge-slug-01",
@@ -1088,8 +1128,16 @@ describe("uptarn portable server", () => {
     expect(plan1.hasConflicts).toBeFalsy();
     expect(plan1.settingsPatch).toEqual({ auto_register: true });
     expect(plan1.nodePatches).toEqual([
-      { id: "beta", from: true, to: false },
-      { id: "alpha", from: false, to: true },
+      {
+        id: "beta",
+        patch: { is_public: false },
+        changes: ["is_public: true -> false"],
+      },
+      {
+        id: "alpha",
+        patch: { is_public: true },
+        changes: ["is_public: false -> true"],
+      },
     ]);
     expect(plan1.missingNodes).toEqual(["not-yet-enrolled"]);
     expect(plan1.nodeOrder).toEqual(["beta", "alpha"]);

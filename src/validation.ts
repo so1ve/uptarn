@@ -354,13 +354,29 @@ export function parseOrderInput(raw: unknown): string[] {
   });
 }
 
-export function parseNodePatch(raw: unknown) {
-  const isPublic = bool(asObj(raw, "node patch").is_public, "is_public");
-  if (isPublic === undefined) {
-    bad("is_public is required");
+export function parseNodePatch(raw: unknown): {
+  is_public?: boolean;
+  primary_mount?: string | null;
+} {
+  const obj = asObj(raw, "node patch");
+  const isPublic = bool(obj.is_public, "is_public");
+  let primaryMount: string | null | undefined;
+  if (Object.hasOwn(obj, "primary_mount")) {
+    if (obj.primary_mount === null) {
+      primaryMount = null;
+    } else {
+      const cleaned = str(obj.primary_mount, "primary_mount", 128);
+      primaryMount = !cleaned || cleaned === "sum" ? null : cleaned;
+    }
+  }
+  if (isPublic === undefined && primaryMount === undefined) {
+    bad("At least one of is_public or primary_mount is required");
   }
 
-  return { is_public: isPublic };
+  return {
+    ...(isPublic === undefined ? {} : { is_public: isPublic }),
+    ...(primaryMount === undefined ? {} : { primary_mount: primaryMount }),
+  };
 }
 
 export function parseMuteInput(raw: unknown) {

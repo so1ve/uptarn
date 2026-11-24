@@ -27,8 +27,8 @@ import {
   rotateNodeToken,
   runTick,
   sendTestNotification,
-  setNodePublic,
   setTargetMute,
+  updateNode,
   updateRuntimeSettings,
   upsertMonitor,
 } from "./domain/index.ts";
@@ -173,12 +173,12 @@ export function createApp(db: SqlDatabase, config: LoadedConfig): Hono {
   );
 
   app.patch("/api/v1/admin/nodes/:id", async (c) => {
-    const { is_public } = parseNodePatch(await readJson(c));
-    if (!(await setNodePublic(db, c.req.param("id"), is_public))) {
+    const patch = parseNodePatch(await readJson(c));
+    if (!(await updateNode(db, c.req.param("id"), patch))) {
       throw httpError(404, "Not found");
     }
 
-    return c.json({ ok: true, is_public });
+    return c.json({ ok: true, ...patch });
   });
 
   app.delete("/api/v1/admin/nodes/:id", (c) =>

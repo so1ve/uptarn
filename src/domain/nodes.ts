@@ -88,10 +88,10 @@ export async function createNode(
   return { id: input.id, label, token };
 }
 
-export async function setNodePublic(
+export async function updateNode(
   db: SqlDatabase,
   nodeId: string,
-  isPublic: boolean,
+  patch: { is_public?: boolean; primary_mount?: string | null },
 ): Promise<boolean> {
   const existing = await db.first<{ public_managed: number }>(
     "SELECT public_managed FROM nodes WHERE id = ?1",
@@ -100,13 +100,24 @@ export async function setNodePublic(
   if (!existing) {
     return false;
   }
-  if (existing.public_managed === 1) {
+  if (patch.is_public !== undefined && existing.public_managed === 1) {
     throw httpError(409, `Node "${nodeId}" visibility is managed by its agent`);
   }
-  const res = await db.run("UPDATE nodes SET is_public = ?1 WHERE id = ?2", [
-    isPublic ? 1 : 0,
-    nodeId,
-  ]);
+  const sets: string[] = [];
+  const params: (string | number | null)[] = [];
+  if (patch.is_public !== undefined) {
+    params.push(patch.is_public ? 1 : 0);
+    sets.push(`is_public = ?${params.length}`);
+  }
+  if (patch.primary_mount !== undefined) {
+    params.push(patch.primary_mount);
+    sets.push(`primary_mount = ?${params.length}`);
+  }
+  params.push(nodeId);
+  const res = await db.run(
+    `UPDATE nodes SET ${sets.join(", ")} WHERE id = ?${params.length}`,
+    params,
+  );
 
   return res.changes > 0;
 }

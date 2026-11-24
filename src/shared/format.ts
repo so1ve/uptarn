@@ -1,4 +1,9 @@
-import type { SeriesUnit, SystemSnapshot } from "./protocol.ts";
+import type {
+  HealthStatus,
+  MountSnapshot,
+  SeriesUnit,
+  SystemSnapshot,
+} from "./protocol.ts";
 
 export const unixNow = (): number => Math.floor(Date.now() / 1000);
 
@@ -131,4 +136,79 @@ export function formatSeriesValue(value: number, unit: SeriesUnit): string {
       return Number.isInteger(value) ? String(value) : value.toFixed(1);
     }
   }
+}
+
+export interface DiskSummary {
+  label: string | null;
+  used_bytes: number;
+  total_bytes: number;
+  pct: number | null;
+  status: HealthStatus;
+  error: string | null;
+  is_sum: boolean;
+}
+
+function singleMountSummary(m: MountSnapshot): DiskSummary {
+  const pct =
+    m.total_bytes > 0
+      ? Math.min(100, Math.max(0, (m.used_bytes / m.total_bytes) * 100))
+      : null;
+
+  return {
+    label: m.label ?? m.path,
+    used_bytes: m.used_bytes,
+    total_bytes: m.total_bytes,
+    pct,
+    status: m.status,
+    error: m.total_bytes > 0 ? null : (m.summary ?? "Unavailable"),
+    is_sum: false,
+  };
+}
+
+export function summarizeDisk(
+  mounts: readonly MountSnapshot[],
+  primaryMount?: string | null,
+): DiskSummary | null {
+  if (mounts.length === 0) {
+    return null;
+  }
+  if (primaryMount) {
+    const selected = mounts.find((m) => m.path === primaryMount);
+    if (selected) {
+      return singleMountSummary(selected);
+    }
+  }
+  if (mounts.length === 1) {
+    return singleMountSummary(mounts[0]);
+  }
+
+  const status: HealthStatus = mounts.some((m) => m.status === "fail")
+    ? "fail"
+    : mounts.some((m) => m.status === "warn")
+      ? "warn"
+      : "ok";
+  const sized = mounts.filter((m) => m.total_bytes > 0);
+  if (sized.length === 0) {
+    return {
+      label: null,
+      used_bytes: 0,
+      total_bytes: 0,
+      pct: null,
+      status,
+      error: mounts[0].summary ?? "Unavailable",
+      is_sum: true,
+    };
+  }
+  const used = sized.reduce((sum, m) => sum + m.used_bytes, 0);
+  const total = sized.reduce((sum, m) => sum + m.total_bytes, 0);
+
+  return {
+    label: null,
+    used_bytes: used,
+    total_bytes: total,
+    pct: Math.min(100, Math.max(0, (used / total) * 100)),
+    status,
+    error: null,
+    is_sum: true,
+  };
 }
