@@ -1,4 +1,8 @@
-<img src="server/web/public/favicon.svg" alt="Uptarn" width="52" height="52" />
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="server/web/public/logo-dark.svg" />
+  <source media="(prefers-color-scheme: light)" srcset="server/web/public/logo-light.svg" />
+  <img src="server/web/public/logo-light.svg" alt="Uptarn" width="52" height="52" />
+</picture>
 
 # Uptarn
 
