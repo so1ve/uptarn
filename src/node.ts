@@ -11,7 +11,7 @@ import { applyMigrations, openNodeSqlite } from "./db/node.ts";
 import { runTick } from "./domain/index.ts";
 import { errorMessage } from "./http.ts";
 
-const PUBLIC_DIR = path.resolve(import.meta.dirname, "../public");
+const DIST_DIR = path.resolve(import.meta.dirname, "../web/dist");
 
 const FILE_BACKED_ENV_KEYS = [
   "ADMIN_PASSWORD",
@@ -86,13 +86,13 @@ export async function startNodeServer(
     );
   }
 
-  const indexPath = path.join(PUBLIC_DIR, "index.html");
+  const indexPath = path.join(DIST_DIR, "index.html");
   const indexHtml = fs.existsSync(indexPath)
     ? fs.readFileSync(indexPath, "utf8")
     : null;
 
   const app = createApp(db, config);
-  const staticHandler = serveStatic({ root: PUBLIC_DIR });
+  const staticHandler = serveStatic({ root: DIST_DIR });
   for (const route of [
     "/assets/*",
     "/fonts/*",

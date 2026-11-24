@@ -20,7 +20,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 COPY migrations ./migrations
 COPY src ./src
-COPY --from=web /app/public ./public
+COPY --from=web /app/web/dist ./web/dist
 ENV HOST=0.0.0.0 PORT=8787 UPTARN_DB_PATH=/data/uptarn.db
 VOLUME ["/data"]
 EXPOSE 8787

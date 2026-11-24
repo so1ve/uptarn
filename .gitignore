@@ -6,9 +6,9 @@ wrangler.prod.jsonc
 target/
 result
 node_modules/
-/public/
-web/src/auto-imports.d.ts
-web/src/components.d.ts
+/web/dist/
+web/auto-imports.d.ts
+web/components.d.ts
 *.db
 *.db-shm
 *.db-wal

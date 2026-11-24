@@ -6,7 +6,7 @@
 .wrangler
 .dev.vars
 wrangler.prod.jsonc
-/public
+/web/dist
 target
 result
 *.db

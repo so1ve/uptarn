@@ -20,7 +20,7 @@
     "vite.config.ts",
     "vitest.cloudflare.config.ts",
     "vitest.config.ts",
-    "web/src/**/*.d.ts",
+    "web/**/*.d.ts",
     "web/src/**/*.ts",
     "web/src/**/*.vue",
     "worker-configuration.d.ts"

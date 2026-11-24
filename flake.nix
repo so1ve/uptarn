@@ -62,7 +62,7 @@
 
           installPhase = ''
             runHook preInstall
-            cp -r public "$out"
+            cp -r web/dist "$out"
             runHook postInstall
           '';
         });
@@ -107,9 +107,9 @@
           installPhase = ''
             runHook preInstall
 
-            mkdir -p "$out/bin" "$out/share/uptarn"
+            mkdir -p "$out/bin" "$out/share/uptarn/web"
             cp -r package.json src migrations node_modules "$out/share/uptarn"
-            cp -r ${webAssets} "$out/share/uptarn/public"
+            cp -r ${webAssets} "$out/share/uptarn/web/dist"
 
             makeWrapper ${pkgs.lib.getExe pkgs.nodejs_24} "$out/bin/uptarn" \
               --add-flags "$out/share/uptarn/src/cli/index.ts"

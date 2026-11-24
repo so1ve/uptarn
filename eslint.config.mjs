@@ -7,10 +7,10 @@ export default so1ve({
     "**/.direnv/**",
     "**/.wrangler/**",
     "target/**",
-    "public/**",
+    "web/dist/**",
     "worker-configuration.d.ts",
-    "web/src/auto-imports.d.ts",
-    "web/src/components.d.ts",
+    "web/auto-imports.d.ts",
+    "web/components.d.ts",
   ],
   typescript: {
     overrides: {
