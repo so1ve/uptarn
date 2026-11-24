@@ -1,4 +1,4 @@
-import { useColorMode } from "@vueuse/core";
+import { useColorMode, useEventListener, useIntervalFn } from "@vueuse/core";
 import { computed, ref } from "vue";
 
 import type {
@@ -22,6 +22,15 @@ const snapshot = ref<DashboardSnapshot | null>(null);
 const loadError = ref<string | null>(null);
 const issuedToken = ref<IssuedToken | null>(null);
 const tokenModalOpen = ref(false);
+const syncGeneration = ref(0);
+
+let snapshotRefreshPromise: Promise<void> | null = null;
+let snapshotRefreshSeq = 0;
+let lastSnapshotFetchedAt = 0;
+
+let publicRefreshPromise: Promise<void> | null = null;
+let publicRefreshSeq = 0;
+let lastPublicFetchedAt = 0;
 
 const colorMode = useColorMode();
 const isDark = computed(() => colorMode.value === "dark");
@@ -34,44 +43,120 @@ async function loadState() {
   loadError.value = null;
   try {
     const boot = await apiFetch<BootPayload>("/api/v1/boot");
+    const now = Date.now();
     if (boot.mode === "admin") {
       snapshot.value = boot.snapshot;
       publicStatus.value = null;
+      lastSnapshotFetchedAt = now;
     } else {
       snapshot.value = null;
       publicStatus.value = boot.status;
+      lastPublicFetchedAt = now;
     }
   } catch (err) {
     loadError.value = errorMessage(err);
   }
 }
 
-async function refreshSnapshot() {
-  try {
-    snapshot.value = await apiFetch<DashboardSnapshot>(
-      "/api/v1/admin/snapshot",
-    );
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 401) {
-      await loadState();
-    }
+async function refreshSnapshot(options: { force?: boolean } = {}) {
+  if (!options.force && snapshotRefreshPromise) {
+    return snapshotRefreshPromise;
   }
+
+  const seq = ++snapshotRefreshSeq;
+  const task = (async () => {
+    try {
+      const next = await apiFetch<DashboardSnapshot>("/api/v1/admin/snapshot");
+      if (seq === snapshotRefreshSeq) {
+        snapshot.value = next;
+        lastSnapshotFetchedAt = Date.now();
+        if (options.force) {
+          syncGeneration.value += 1;
+        }
+      }
+    } catch (err) {
+      if (
+        seq === snapshotRefreshSeq &&
+        err instanceof ApiError &&
+        err.status === 401
+      ) {
+        await loadState();
+      }
+    } finally {
+      if (seq === snapshotRefreshSeq) {
+        snapshotRefreshPromise = null;
+      }
+    }
+  })();
+
+  snapshotRefreshPromise = task;
+
+  return task;
 }
 
-async function refreshPublicStatus() {
-  try {
-    publicStatus.value = await apiFetch<PublicStatusSnapshot>(
-      "/api/v1/public/status",
-    );
-  } catch {
-    // Keep existing snapshot visible on transient network blips.
+async function refreshPublicStatus(options: { force?: boolean } = {}) {
+  if (!options.force && publicRefreshPromise) {
+    return publicRefreshPromise;
   }
+
+  const seq = ++publicRefreshSeq;
+  const task = (async () => {
+    try {
+      const next = await apiFetch<PublicStatusSnapshot>(
+        "/api/v1/public/status",
+      );
+      if (seq === publicRefreshSeq) {
+        publicStatus.value = next;
+        lastPublicFetchedAt = Date.now();
+      }
+    } catch {
+      // Keep existing snapshot visible on transient network blips.
+    } finally {
+      if (seq === publicRefreshSeq) {
+        publicRefreshPromise = null;
+      }
+    }
+  })();
+
+  publicRefreshPromise = task;
+
+  return task;
+}
+
+export function useLiveRefresh(
+  kind: "admin" | "public",
+  intervalMs = 10_000,
+  focusDebounceMs = 3000,
+) {
+  const trigger = () =>
+    kind === "admin" ? refreshSnapshot() : refreshPublicStatus();
+  const lastFetchedAt = () =>
+    kind === "admin" ? lastSnapshotFetchedAt : lastPublicFetchedAt;
+
+  useIntervalFn(() => {
+    if (!document.hidden) {
+      void trigger();
+    }
+  }, intervalMs);
+
+  function onFocusOrVisible() {
+    if (document.hidden) {
+      return;
+    }
+    if (Date.now() - lastFetchedAt() < focusDebounceMs) {
+      return;
+    }
+    void trigger();
+  }
+
+  useEventListener(document, "visibilitychange", onFocusOrVisible);
+  useEventListener(window, "focus", onFocusOrVisible);
 }
 
 function showIssuedToken(payload: IssuedToken) {
   issuedToken.value = payload;
   tokenModalOpen.value = true;
-  void refreshSnapshot();
+  void refreshSnapshot({ force: true });
 }
 
 async function signOutState() {
@@ -98,7 +183,7 @@ export function useAction() {
         toast.add({ title: okTitle, color: "success" });
       }
       if (refresh) {
-        await refreshSnapshot();
+        await refreshSnapshot({ force: true });
       }
 
       return true;
@@ -159,6 +244,7 @@ export const useUptarnStore = () => ({
   loadError,
   issuedToken,
   tokenModalOpen,
+  syncGeneration,
   isDark,
   toggleTheme,
   loadState,

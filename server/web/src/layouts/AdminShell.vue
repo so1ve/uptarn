@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { useIntervalFn } from "@vueuse/core";
 import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
@@ -9,6 +8,7 @@ import {
   apiFetch,
   formatRemaining,
   useAction,
+  useLiveRefresh,
   useSnapshot,
   useUptarnStore,
 } from "../lib/index.ts";
@@ -17,7 +17,7 @@ import AppLayout from "./AppLayout.vue";
 const route = useRoute();
 const snap = useSnapshot();
 const { busy, run } = useAction();
-const { refreshSnapshot, signOutState } = useUptarnStore();
+const { signOutState } = useUptarnStore();
 
 const settingsOpen = ref(false);
 
@@ -80,11 +80,7 @@ watch(
   { immediate: true },
 );
 
-useIntervalFn(() => {
-  if (!document.hidden) {
-    void refreshSnapshot();
-  }
-}, 60_000);
+useLiveRefresh("admin", 10_000, 3000);
 
 const onCheckNow = () =>
   run(

@@ -28,7 +28,7 @@ const route = useRoute();
 const router = useRouter();
 const snap = useSnapshot();
 const { busy, run, mute } = useAction();
-const { isDark, showIssuedToken } = useUptarnStore();
+const { isDark, showIssuedToken, syncGeneration } = useUptarnStore();
 
 const nodeId = computed(() => String(route.params.id ?? ""));
 const node = computed(
@@ -56,7 +56,7 @@ watch(nodeId, () => {
 });
 
 watch(
-  [nodeId, windowSecs, () => node.value?.last_seen_at],
+  [nodeId, windowSecs, () => node.value?.last_seen_at, syncGeneration],
   async ([id, secs]) => {
     const seq = ++historySeq;
     if (!id || secs === DEFAULT_WINDOW_SECS) {

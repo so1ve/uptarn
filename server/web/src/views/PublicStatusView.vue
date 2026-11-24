@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { useIntervalFn } from "@vueuse/core";
 import { computed, ref } from "vue";
 
 import SignInForm from "../components/modals/SignInForm.vue";
@@ -13,6 +12,7 @@ import {
   formatDuration,
   hostOf,
   usageTextClass,
+  useLiveRefresh,
   useUptarnStore,
 } from "../lib/index.ts";
 
@@ -20,16 +20,12 @@ const props = defineProps<{
   status: PublicStatusSnapshot;
 }>();
 
-const { loadState, refreshPublicStatus } = useUptarnStore();
+const { loadState } = useUptarnStore();
 const signInOpen = ref(false);
 
 document.title = "Status - Uptarn";
 
-useIntervalFn(() => {
-  if (!document.hidden) {
-    void refreshPublicStatus();
-  }
-}, 60_000);
+useLiveRefresh("public", 10_000, 3000);
 
 const banner = computed(() => {
   const downMonitors = props.status.monitors.filter(
