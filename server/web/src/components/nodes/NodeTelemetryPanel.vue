@@ -26,6 +26,9 @@ const hasStorage = computed(() => props.node.mounts.length > 0);
 const hasChecksOrSeries = computed(
   () => props.node.checks.length > 0 || props.scalarSeries.length > 0,
 );
+const hasAnyCheckDetail = computed(() =>
+  props.node.checks.some((c) => Boolean(c.detail)),
+);
 
 const isDetailOpen = (check: CheckSnapshot): boolean =>
   detailOverrides.value[check.key] ?? check.status !== "ok";
@@ -117,6 +120,11 @@ function scalarSummaryNote(series: SeriesSnapshot): string | null {
                   name="i-lucide-chevron-down"
                 />
               </button>
+              <span
+                v-else-if="hasAnyCheckDetail"
+                aria-hidden="true"
+                class="size-6 shrink-0"
+              />
             </div>
           </div>
           <pre
@@ -144,12 +152,19 @@ function scalarSummaryNote(series: SeriesSnapshot): string | null {
                 {{ s.group }}
               </UBadge>
             </div>
-            <span
-              class="shrink-0 font-mono text-xs tabular-nums"
-              :class="statusTextClass(s.status ?? 'ok')"
-            >
-              {{ formatSeriesValue(s.value, s.unit) }}
-            </span>
+            <div class="flex shrink-0 items-center gap-2">
+              <span
+                class="font-mono text-xs tabular-nums"
+                :class="statusTextClass(s.status ?? 'ok')"
+              >
+                {{ formatSeriesValue(s.value, s.unit) }}
+              </span>
+              <span
+                v-if="hasAnyCheckDetail"
+                aria-hidden="true"
+                class="size-6 shrink-0"
+              />
+            </div>
           </div>
           <p
             v-if="scalarSummaryNote(s)"
