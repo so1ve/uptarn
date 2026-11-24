@@ -204,12 +204,12 @@ async function onDelete() {
               {{ node.id }}
             </span>
             <UBadge
-              v-if="node.is_public"
+              v-if="!node.is_public"
               color="neutral"
               size="xs"
               variant="subtle"
             >
-              Public
+              Private
             </UBadge>
             <UBadge v-if="isMuted" color="warning" size="xs" variant="subtle">
               Muted {{ formatRemaining(node.muted_until, snap.now) }}

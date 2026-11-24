@@ -70,13 +70,13 @@ const memCaption = computed(() =>
             {{ node.label }}
           </span>
           <UBadge
-            v-if="node.is_public"
+            v-if="!node.is_public"
             class="shrink-0"
             color="neutral"
             size="xs"
             variant="subtle"
           >
-            Public
+            Private
           </UBadge>
           <UBadge
             v-if="isMuted"

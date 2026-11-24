@@ -92,6 +92,15 @@ const rows = computed(() =>
               >
                 {{ node.id }}
               </span>
+              <UBadge
+                v-if="!node.is_public"
+                class="shrink-0"
+                color="neutral"
+                size="xs"
+                variant="subtle"
+              >
+                Private
+              </UBadge>
             </div>
           </td>
           <td class="px-3 py-3 text-right font-mono text-xs tabular-nums">
