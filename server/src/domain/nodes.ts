@@ -258,6 +258,12 @@ export async function ingestNodeReport(
       (payload.system.mem_used_bytes / payload.system.mem_total_bytes) * 100,
     );
   }
+  if (rxBps !== null) {
+    pushSample("_rx_bps", Math.round(rxBps * 10) / 10);
+  }
+  if (txBps !== null) {
+    pushSample("_tx_bps", Math.round(txBps * 10) / 10);
+  }
   for (const item of series) {
     pushSample(item.key, item.value, item.loss_pct ?? null);
   }

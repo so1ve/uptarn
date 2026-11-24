@@ -114,8 +114,8 @@ async function onSignOut() {
           class="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[13px] font-medium transition-colors"
           :class="
             item.active
-              ? 'bg-muted text-highlighted'
-              : 'text-muted hover:bg-muted/60 hover:text-default'
+              ? 'bg-elevated text-highlighted'
+              : 'text-muted hover:bg-elevated/70 hover:text-default'
           "
           :to="item.to"
         >

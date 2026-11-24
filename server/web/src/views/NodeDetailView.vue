@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import NodeChartsGrid from "../components/nodes/NodeChartsGrid.vue";
 import NodeTelemetryPanel from "../components/nodes/NodeTelemetryPanel.vue";
 import ConfirmPopover from "../components/ui/ConfirmPopover.vue";
 import StatusDot from "../components/ui/StatusDot.vue";
+import type { NodeHistoryResponse, SeriesPoint } from "../lib/index.ts";
 import {
   apiFetch,
   buildProbeCharts,
@@ -43,8 +44,60 @@ const topMount = computed(() =>
   node.value ? peakMount(node.value.mounts) : null,
 );
 
+const DEFAULT_WINDOW_SECS = 21_600;
+const windowSecs = ref(DEFAULT_WINDOW_SECS);
+const customHistory = ref<Record<string, SeriesPoint[]> | null>(null);
+const loadingWindow = ref(false);
+let historySeq = 0;
+
+watch(nodeId, () => {
+  windowSecs.value = DEFAULT_WINDOW_SECS;
+  customHistory.value = null;
+});
+
+watch(
+  [nodeId, windowSecs, () => node.value?.last_seen_at],
+  async ([id, secs]) => {
+    const seq = ++historySeq;
+    if (!id || secs === DEFAULT_WINDOW_SECS) {
+      customHistory.value = null;
+      loadingWindow.value = false;
+
+      return;
+    }
+    loadingWindow.value = true;
+    try {
+      const res = await apiFetch<NodeHistoryResponse>(
+        `/api/v1/admin/nodes/${encodeURIComponent(id)}/history?window=${secs}`,
+      );
+      if (seq === historySeq) {
+        customHistory.value = res.history;
+      }
+    } catch {
+      // Keep previous series visible on transient fetch failures.
+    } finally {
+      if (seq === historySeq) {
+        loadingWindow.value = false;
+      }
+    }
+  },
+);
+
+const activeHistory = computed<Record<string, SeriesPoint[]>>(() =>
+  windowSecs.value === DEFAULT_WINDOW_SECS
+    ? (node.value?.history ?? {})
+    : (customHistory.value ?? node.value?.history ?? {}),
+);
+
 const probeCharts = computed(() =>
-  node.value ? buildProbeCharts(node.value, isDark.value) : [],
+  node.value
+    ? buildProbeCharts(
+        node.value,
+        isDark.value,
+        activeHistory.value,
+        windowSecs.value > 86_400,
+      )
+    : [],
 );
 
 const scalarSeries = computed(() => {
@@ -277,6 +330,22 @@ async function onDelete() {
             formatUsage(node.system.mem_used_bytes, node.system.mem_total_bytes)
           }}
         </div>
+        <div
+          v-if="
+            node.system.swap_total_bytes !== undefined &&
+            node.system.swap_total_bytes > 0 &&
+            node.system.swap_used_bytes !== undefined
+          "
+          class="font-mono text-[11px] text-dimmed tabular-nums"
+        >
+          Swap
+          {{
+            formatUsage(
+              node.system.swap_used_bytes,
+              node.system.swap_total_bytes,
+            )
+          }}
+        </div>
       </div>
 
       <div v-if="topMount" class="space-y-1">
@@ -307,20 +376,26 @@ async function onDelete() {
         class="space-y-1"
       >
         <div class="text-xs text-muted">Network</div>
-        <div
-          class="text-lg font-semibold tracking-tight text-blue-600 tabular-nums dark:text-blue-400"
-        >
-          ↓ {{ formatBps(node.rx_bps) }}
-        </div>
-        <div
-          class="font-mono text-xs text-violet-600 tabular-nums dark:text-violet-400"
-        >
-          ↑ {{ formatBps(node.tx_bps) }}
+        <div class="space-y-0.5 pt-0.5 font-mono tabular-nums">
+          <div class="text-sm font-semibold text-blue-600 dark:text-blue-400">
+            ↓ {{ formatBps(node.rx_bps) }}
+          </div>
+          <div
+            class="text-sm font-semibold text-violet-600 dark:text-violet-400"
+          >
+            ↑ {{ formatBps(node.tx_bps) }}
+          </div>
         </div>
       </div>
     </section>
 
-    <NodeChartsGrid :node :probe-charts />
+    <NodeChartsGrid
+      v-model:window-secs="windowSecs"
+      :history="activeHistory"
+      :loading-window
+      :node
+      :probe-charts
+    />
 
     <NodeTelemetryPanel :node :scalar-series />
   </div>

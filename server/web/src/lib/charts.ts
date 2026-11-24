@@ -6,7 +6,7 @@ import type {
   SeriesPoint,
   SeriesSnapshot,
 } from "../../../src/shared/index.ts";
-import { formatClock, formatSeriesValue } from "./format.ts";
+import { formatBps, formatSeriesValue, formatTimestamp } from "./format.ts";
 
 const AXIS_LABEL = {
   color: "#71717a",
@@ -81,10 +81,10 @@ function baseTooltip(
   };
 }
 
-const timeAxis = (timestamps: readonly number[]) => ({
+const timeAxis = (timestamps: readonly number[], showDate = false) => ({
   type: "category",
   boundaryGap: false,
-  data: timestamps.map((ts) => formatClock(ts)),
+  data: timestamps.map((ts) => formatTimestamp(ts, showDate)),
   axisLine: { show: false },
   axisTick: { show: false },
   axisLabel: AXIS_LABEL,
@@ -93,7 +93,7 @@ const timeAxis = (timestamps: readonly number[]) => ({
 const valueAxis = (
   gridColor: string,
   extra: Record<string, unknown> = {},
-  formatter?: string,
+  formatter?: string | ((v: number) => string),
 ) => ({
   type: "value",
   ...extra,
@@ -148,9 +148,11 @@ export const buildSparkOption = (
 export function buildComputeChartOption(
   node: NodeSummary,
   isDark: boolean,
+  history: Record<string, SeriesPoint[]> = node.history,
+  showDate = false,
 ): EChartsCoreOption | null {
-  const cpuPts = node.history._cpu ?? [];
-  const memPts = node.history._mem ?? [];
+  const cpuPts = history._cpu ?? [];
+  const memPts = history._mem ?? [];
   if (cpuPts.length < 2 && memPts.length < 2) {
     return null;
   }
@@ -192,11 +194,68 @@ export function buildComputeChartOption(
     tooltip: baseTooltip(isDark, (v) =>
       typeof v === "number" ? `${v.toFixed(1)}%` : "-",
     ),
-    xAxis: timeAxis(timestamps),
+    xAxis: timeAxis(timestamps, showDate),
     yAxis: valueAxis(
       p.gridColor,
       { min: 0, max: 100, interval: 25 },
       "{value}%",
+    ),
+    series,
+  };
+}
+
+export function buildNetworkChartOption(
+  node: NodeSummary,
+  isDark: boolean,
+  history: Record<string, SeriesPoint[]> = node.history,
+  showDate = false,
+): EChartsCoreOption | null {
+  const rxPts = history._rx_bps ?? [];
+  const txPts = history._tx_bps ?? [];
+  if (rxPts.length < 2 && txPts.length < 2) {
+    return null;
+  }
+
+  const timestamps = [
+    ...new Set([...rxPts.map((p) => p.ts), ...txPts.map((p) => p.ts)]),
+  ].sort((a, b) => a - b);
+  const rxMap = new Map(rxPts.map((p) => [p.ts, p.value]));
+  const txMap = new Map(txPts.map((p) => [p.ts, p.value]));
+  const p = chartPalette(isDark);
+
+  const series: unknown[] = [];
+  if (rxPts.length >= 2) {
+    series.push(
+      areaLine(
+        "RX",
+        p.cpu,
+        timestamps.map((ts) => rxMap.get(ts) ?? null),
+        isDark,
+        true,
+      ),
+    );
+  }
+  if (txPts.length >= 2) {
+    series.push(
+      areaLine(
+        "TX",
+        p.mem,
+        timestamps.map((ts) => txMap.get(ts) ?? null),
+        isDark,
+        true,
+      ),
+    );
+  }
+
+  return {
+    animationDuration: 220,
+    grid: { left: 66, right: 14, top: 14, bottom: 24 },
+    tooltip: baseTooltip(isDark, (v) =>
+      typeof v === "number" ? formatBps(v) : "-",
+    ),
+    xAxis: timeAxis(timestamps, showDate),
+    yAxis: valueAxis(p.gridColor, { min: 0, splitNumber: 3 }, (v: number) =>
+      formatBps(v),
     ),
     series,
   };
@@ -211,12 +270,14 @@ export interface ProbeChartItem {
 export function buildProbeCharts(
   node: NodeSummary,
   isDark: boolean,
+  history: Record<string, SeriesPoint[]> = node.history,
+  showDate = false,
 ): ProbeChartItem[] {
   const p = chartPalette(isDark);
   const items: ProbeChartItem[] = [];
 
   for (const s of node.series) {
-    const pts = node.history[s.key] ?? [];
+    const pts = history[s.key] ?? [];
     if (pts.length < 2) {
       continue;
     }
@@ -263,7 +324,10 @@ export function buildProbeCharts(
               : formatSeriesValue(v, s.unit)
             : "-",
         ),
-        xAxis: timeAxis(pts.map((pt) => pt.ts)),
+        xAxis: timeAxis(
+          pts.map((pt) => pt.ts),
+          showDate,
+        ),
         yAxis: [
           valueAxis(p.gridColor, { splitNumber: 3 }),
           { type: "value", show: false, min: 0, max: 100 },

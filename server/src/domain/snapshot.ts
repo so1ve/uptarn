@@ -12,6 +12,7 @@ import type {
   MonitorSample,
   MonitorSummary,
   MountSnapshot,
+  NodeHistoryResponse,
   NodeSummary,
   PasskeySummary,
   PublicStatusSnapshot,
@@ -61,6 +62,7 @@ interface RawMonitorSample {
 
 const SPARK_WINDOW_SECS = 6 * 3600;
 const MAX_SERIES_POINTS = 48;
+const MAX_DETAIL_POINTS = 72;
 
 function deriveNodeStatus(
   row: Pick<SnapshotNodeRow, "last_seen_at" | "interval_secs" | "grace_secs">,
@@ -87,13 +89,16 @@ function deriveNodeStatus(
   return statuses.includes("warn") ? "warn" : "ok";
 }
 
-function downsampleSeries(pts: SeriesPoint[]): SeriesPoint[] {
-  if (pts.length <= MAX_SERIES_POINTS) {
+function downsampleSeries(
+  pts: SeriesPoint[],
+  maxPoints = MAX_SERIES_POINTS,
+): SeriesPoint[] {
+  if (pts.length <= maxPoints) {
     return pts;
   }
   const last = pts.at(-1)!;
   const span = Math.max(1, last.ts - pts[0].ts);
-  const step = Math.max(60, Math.ceil(span / MAX_SERIES_POINTS / 60) * 60);
+  const step = Math.max(60, Math.ceil(span / maxPoints / 60) * 60);
 
   const buckets: SeriesPoint[] = [];
   let bucketTs = Math.floor(pts[0].ts / step) * step;
@@ -131,6 +136,7 @@ function downsampleSeries(pts: SeriesPoint[]): SeriesPoint[] {
 
 function groupSeriesHistory(
   rows: readonly RawSeriesSample[],
+  maxPoints = MAX_SERIES_POINTS,
 ): Map<string, Record<string, SeriesPoint[]>> {
   const byNode = new Map<string, Record<string, SeriesPoint[]>>();
   for (const s of rows) {
@@ -148,7 +154,7 @@ function groupSeriesHistory(
   for (const hist of byNode.values()) {
     for (const [key, pts] of Object.entries(hist)) {
       pts.sort((a, b) => a.ts - b.ts);
-      hist[key] = downsampleSeries(pts);
+      hist[key] = downsampleSeries(pts, maxPoints);
     }
   }
 
@@ -235,6 +241,8 @@ export async function getDashboardSnapshot(
       sql: `WITH wanted(node_id, series_key) AS (
               SELECT id, '_cpu' FROM nodes
               UNION ALL SELECT id, '_mem' FROM nodes
+              UNION ALL SELECT id, '_rx_bps' FROM nodes
+              UNION ALL SELECT id, '_tx_bps' FROM nodes
               UNION ALL SELECT n.id, json_extract(j.value, '$.key') FROM nodes n, json_each(n.series_json) j
             )
             SELECT s.node_id, s.series_key, s.ts, s.value, s.aux_value
@@ -367,6 +375,50 @@ export async function getDashboardSnapshot(
     jobs,
     events,
     passkeys,
+  };
+}
+
+export async function getNodeHistory(
+  db: SqlDatabase,
+  nodeId: string,
+  windowSecs: number,
+): Promise<NodeHistoryResponse | null> {
+  const now = unixNow();
+  const cutoff = now - windowSecs;
+  const [nodeRows, seriesRows] = (await db.allBatch([
+    {
+      sql: "SELECT id FROM nodes WHERE id = ?1",
+      params: [nodeId],
+    },
+    {
+      sql: `WITH wanted(series_key) AS (
+              SELECT '_cpu'
+              UNION ALL SELECT '_mem'
+              UNION ALL SELECT '_rx_bps'
+              UNION ALL SELECT '_tx_bps'
+              UNION ALL SELECT json_extract(j.value, '$.key')
+              FROM nodes n, json_each(n.series_json) j
+              WHERE n.id = ?1
+            )
+            SELECT s.node_id, s.series_key, s.ts, s.value, s.aux_value
+            FROM wanted w
+            CROSS JOIN series_samples s
+              ON s.node_id = ?1 AND s.series_key = w.series_key AND s.ts >= ?2`,
+      params: [nodeId, cutoff],
+    },
+  ])) as [{ id: string }[], RawSeriesSample[]];
+
+  if (nodeRows.length === 0) {
+    return null;
+  }
+
+  const history =
+    groupSeriesHistory(seriesRows, MAX_DETAIL_POINTS).get(nodeId) ?? {};
+
+  return {
+    node_id: nodeId,
+    window_secs: windowSecs,
+    history,
   };
 }
 

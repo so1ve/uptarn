@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 
-import type { NodeSummary, SeriesSnapshot } from "../../lib/index.ts";
+import type {
+  CheckSnapshot,
+  NodeSummary,
+  SeriesSnapshot,
+} from "../../lib/index.ts";
 import {
   formatMountText,
   formatSeriesValue,
@@ -16,10 +20,31 @@ const props = defineProps<{
   scalarSeries: readonly SeriesSnapshot[];
 }>();
 
+const detailOverrides = ref<Record<string, boolean>>({});
+
 const hasStorage = computed(() => props.node.mounts.length > 0);
 const hasChecksOrSeries = computed(
   () => props.node.checks.length > 0 || props.scalarSeries.length > 0,
 );
+
+const isDetailOpen = (check: CheckSnapshot): boolean =>
+  detailOverrides.value[check.key] ?? check.status !== "ok";
+
+function toggleDetail(check: CheckSnapshot) {
+  detailOverrides.value = {
+    ...detailOverrides.value,
+    [check.key]: !isDetailOpen(check),
+  };
+}
+
+function scalarSummaryNote(series: SeriesSnapshot): string | null {
+  if (!series.summary || !series.status || series.status === "ok") {
+    return null;
+  }
+  const formatted = formatSeriesValue(series.value, series.unit);
+
+  return series.summary.trim() === formatted ? null : series.summary;
+}
 </script>
 
 <template>
@@ -58,19 +83,44 @@ const hasChecksOrSeries = computed(
       <div class="divide-y divide-default border-y border-default">
         <div v-for="c in node.checks" :key="c.key" class="space-y-2 py-3.5">
           <div class="flex items-center justify-between gap-3 text-[13px]">
-            <div class="flex items-center gap-2">
+            <div class="flex min-w-0 items-center gap-2">
               <StatusDot :status="c.status" />
-              <span class="font-medium">{{ c.label }}</span>
-              <UBadge v-if="c.group" color="neutral" size="xs" variant="subtle">
+              <span class="truncate font-medium">{{ c.label }}</span>
+              <UBadge
+                v-if="c.group"
+                class="shrink-0"
+                color="neutral"
+                size="xs"
+                variant="subtle"
+              >
                 {{ c.group }}
               </UBadge>
             </div>
-            <span class="font-mono text-xs" :class="statusTextClass(c.status)">
-              {{ c.summary ?? c.status }}
-            </span>
+            <div class="flex shrink-0 items-center gap-2">
+              <span
+                class="font-mono text-xs"
+                :class="statusTextClass(c.status)"
+              >
+                {{ c.summary ?? c.status }}
+              </span>
+              <button
+                v-if="c.detail"
+                :aria-expanded="isDetailOpen(c)"
+                :aria-label="`Toggle details for ${c.label}`"
+                class="inline-flex size-6 items-center justify-center rounded-md text-dimmed transition-colors hover:bg-elevated hover:text-default"
+                type="button"
+                @click="toggleDetail(c)"
+              >
+                <UIcon
+                  class="size-3.5 transition-transform"
+                  :class="isDetailOpen(c) ? 'rotate-180' : ''"
+                  name="i-lucide-chevron-down"
+                />
+              </button>
+            </div>
           </div>
           <pre
-            v-if="c.detail"
+            v-if="c.detail && isDetailOpen(c)"
             class="max-h-56 overflow-auto rounded-lg bg-muted p-3 font-mono text-xs leading-relaxed"
             >{{ c.detail }}</pre>
         </div>
@@ -78,18 +128,36 @@ const hasChecksOrSeries = computed(
         <div
           v-for="s in scalarSeries"
           :key="s.key"
-          class="flex items-center justify-between gap-3 py-3.5 text-[13px]"
+          class="space-y-1.5 py-3.5 text-[13px]"
         >
-          <div class="flex items-center gap-2">
-            <StatusDot :status="s.status ?? 'pending'" />
-            <span class="font-medium">{{ s.label }}</span>
-            <UBadge v-if="s.group" color="neutral" size="xs" variant="subtle">
-              {{ s.group }}
-            </UBadge>
+          <div class="flex items-center justify-between gap-3">
+            <div class="flex min-w-0 items-center gap-2">
+              <StatusDot :status="s.status ?? 'pending'" />
+              <span class="truncate font-medium">{{ s.label }}</span>
+              <UBadge
+                v-if="s.group"
+                class="shrink-0"
+                color="neutral"
+                size="xs"
+                variant="subtle"
+              >
+                {{ s.group }}
+              </UBadge>
+            </div>
+            <span
+              class="shrink-0 font-mono text-xs tabular-nums"
+              :class="statusTextClass(s.status ?? 'ok')"
+            >
+              {{ formatSeriesValue(s.value, s.unit) }}
+            </span>
           </div>
-          <span class="font-mono text-xs text-muted tabular-nums">
-            {{ formatSeriesValue(s.value, s.unit) }}
-          </span>
+          <p
+            v-if="scalarSummaryNote(s)"
+            class="pl-4 font-mono text-xs break-all"
+            :class="statusTextClass(s.status ?? 'ok')"
+          >
+            {{ scalarSummaryNote(s) }}
+          </p>
         </div>
       </div>
     </div>

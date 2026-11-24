@@ -11,6 +11,8 @@ export interface SystemSnapshot {
   load_1m?: number;
   mem_used_bytes?: number;
   mem_total_bytes?: number;
+  swap_used_bytes?: number;
+  swap_total_bytes?: number;
   rx_bytes?: number;
   tx_bytes?: number;
 }
@@ -100,6 +102,12 @@ export interface MonitorSample {
   ts: number;
   ok: boolean;
   latency_ms: number | null;
+}
+
+export interface NodeHistoryResponse {
+  node_id: string;
+  window_secs: number;
+  history: Record<string, SeriesPoint[]>;
 }
 
 export interface NodeSummary {

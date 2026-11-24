@@ -120,7 +120,7 @@ async function onSignedIn() {
           <div
             v-for="node in status.nodes"
             :key="node.key"
-            class="flex flex-col justify-between gap-4 rounded-xl border border-default bg-elevated px-5 py-4"
+            class="flex flex-col justify-between gap-4 rounded-xl border border-default bg-surface px-5 py-4"
           >
             <div class="flex items-center justify-between gap-3">
               <div class="flex min-w-0 items-center gap-2">

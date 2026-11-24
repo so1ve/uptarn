@@ -72,6 +72,7 @@ pub struct SystemCollectConfig {
     pub memory: bool,
     pub load: bool,
     pub network: bool,
+    pub temperature: bool,
     pub os_info: bool,
     pub interfaces: Vec<String>,
 }
@@ -84,6 +85,7 @@ impl Default for SystemCollectConfig {
             memory: true,
             load: true,
             network: true,
+            temperature: true,
             os_info: true,
             interfaces: Vec::new(),
         }

@@ -15,7 +15,7 @@ document.title = "Sign in - Uptarn";
 <template>
   <div class="grid min-h-svh place-items-center px-4 py-10">
     <div
-      class="w-full max-w-sm rounded-xl border border-default bg-elevated p-6 shadow-sm"
+      class="w-full max-w-sm rounded-xl border border-default bg-surface p-6 shadow-sm"
     >
       <div class="mb-6 flex items-center justify-between gap-3">
         <BrandMark :host="hostOf(status.public_base_url)" />

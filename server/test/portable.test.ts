@@ -134,7 +134,15 @@ describe("uptarn portable server", () => {
       },
       body: JSON.stringify({
         node_id: "dsm",
-        system: { uptime_secs: 864_000 },
+        system: {
+          uptime_secs: 864_000,
+          mem_used_bytes: 1_000_000_000,
+          mem_total_bytes: 4_000_000_000,
+          swap_used_bytes: 128_000_000,
+          swap_total_bytes: 2_000_000_000,
+          rx_bytes: 10_000,
+          tx_bytes: 20_000,
+        },
         mounts: [
           {
             path: "/volume2",
@@ -148,6 +156,58 @@ describe("uptarn portable server", () => {
     });
 
     expect(dsmIngest.status).toBe(200);
+
+    await db.run(
+      "UPDATE nodes SET prev_net_at = prev_net_at - 60 WHERE id = 'dsm'",
+    );
+    const dsmIngest2 = await app.request("/api/v1/ingest/report", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${createdDsm.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        node_id: "dsm",
+        system: {
+          uptime_secs: 864_060,
+          mem_used_bytes: 1_100_000_000,
+          mem_total_bytes: 4_000_000_000,
+          swap_used_bytes: 128_000_000,
+          swap_total_bytes: 2_000_000_000,
+          rx_bytes: 70_000,
+          tx_bytes: 50_000,
+        },
+        mounts: [
+          {
+            path: "/volume2",
+            label: "homelab",
+            used_bytes: 500_000_000_000,
+            total_bytes: 2_000_000_000_000,
+            status: "ok",
+          },
+        ],
+      }),
+    });
+
+    expect(dsmIngest2.status).toBe(200);
+
+    const histRes = await app.request(
+      "/api/v1/admin/nodes/dsm/history?window=86400",
+      { headers: { Authorization: "Bearer admin-tok" } },
+    );
+
+    expect(histRes.status).toBe(200);
+
+    const histBody = await histRes.json<{
+      node_id: string;
+      window_secs: number;
+      history: Record<string, { ts: number; value: number }[]>;
+    }>();
+
+    expect(histBody.node_id).toBe("dsm");
+    expect(histBody.window_secs).toBe(86_400);
+    expect(histBody.history._rx_bps?.length).toBeGreaterThan(0);
+    expect(histBody.history._tx_bps?.length).toBeGreaterThan(0);
 
     const enableRes = await app.request("/api/v1/admin/settings", {
       method: "PATCH",

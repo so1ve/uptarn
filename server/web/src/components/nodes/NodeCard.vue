@@ -57,7 +57,7 @@ const memCaption = computed(() =>
 
 <template>
   <RouterLink
-    class="group flex flex-col justify-between gap-4 rounded-xl border border-default bg-elevated px-5 py-4 transition-colors hover:border-accented"
+    class="group flex flex-col justify-between gap-4 rounded-xl border border-default bg-surface px-5 py-4 transition-colors hover:border-accented"
     :to="`/nodes/${encodeURIComponent(node.id)}`"
   >
     <div class="space-y-4">

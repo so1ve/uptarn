@@ -38,6 +38,10 @@ pub struct SystemSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mem_total_bytes: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub swap_used_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub swap_total_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub rx_bytes: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tx_bytes: Option<u64>,

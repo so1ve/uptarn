@@ -55,7 +55,7 @@ const rows = computed(() =>
         <tr
           v-for="{ node, mem, disk, issue } in rows"
           :key="node.id"
-          class="cursor-pointer transition-colors hover:bg-muted/60"
+          class="cursor-pointer transition-colors hover:bg-elevated/60"
           @click="router.push(`/nodes/${encodeURIComponent(node.id)}`)"
         >
           <td class="py-3 pr-4">

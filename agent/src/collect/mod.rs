@@ -59,7 +59,13 @@ pub async fn collect_report(cfg: &AgentConfig, cpu_tracker: &mut CpuTracker) -> 
         ),
     );
 
-    let mut series = Vec::with_capacity(tcp_series.len() + tls_series.len());
+    let mut series = Vec::with_capacity(tcp_series.len() + tls_series.len() + 1);
+    if cfg.system.enabled
+        && cfg.system.temperature
+        && let Some(temp) = system::collect_temperature()
+    {
+        series.push(temp);
+    }
     series.extend(tcp_series);
     series.extend(tls_series);
 

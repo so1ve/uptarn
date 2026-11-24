@@ -19,6 +19,7 @@ import {
   createNode,
   deleteTarget,
   getDashboardSnapshot,
+  getNodeHistory,
   getPublicStatusSnapshot,
   ingestJobReport,
   ingestNodeReport,
@@ -130,6 +131,24 @@ export function createApp(db: SqlDatabase, config: LoadedConfig): Hono {
   app.get("/api/v1/admin/snapshot", async (c) =>
     c.json(await getDashboardSnapshot(db, config)),
   );
+
+  app.get("/api/v1/admin/nodes/:id/history", async (c) => {
+    const rawWindow = c.req.query("window");
+    const parsed = rawWindow === undefined ? 21_600 : Number(rawWindow);
+    if (!Number.isFinite(parsed) || parsed < 300 || parsed > 14 * 86_400) {
+      throw httpError(400, "window must be between 300 and 1209600 seconds");
+    }
+    const result = await getNodeHistory(
+      db,
+      c.req.param("id"),
+      Math.floor(parsed),
+    );
+    if (!result) {
+      throw httpError(404, "Not found");
+    }
+
+    return c.json(result);
+  });
 
   app.post("/api/v1/admin/nodes", async (c) =>
     c.json(

@@ -172,6 +172,8 @@ export function parseNodeReportPayload(raw: unknown): NodeReportPayload {
       load_1m: num(sys.load_1m, "system.load_1m", 0),
       mem_used_bytes: num(sys.mem_used_bytes, "system.mem_used_bytes", 0),
       mem_total_bytes: num(sys.mem_total_bytes, "system.mem_total_bytes", 0),
+      swap_used_bytes: num(sys.swap_used_bytes, "system.swap_used_bytes", 0),
+      swap_total_bytes: num(sys.swap_total_bytes, "system.swap_total_bytes", 0),
       rx_bytes: num(sys.rx_bytes, "system.rx_bytes", 0),
       tx_bytes: num(sys.tx_bytes, "system.tx_bytes", 0),
     };

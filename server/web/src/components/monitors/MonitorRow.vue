@@ -58,7 +58,7 @@ const uptimeClass = computed(() => {
     class="grid grid-cols-1 items-center gap-x-5 gap-y-2.5 py-3.5"
     :class="[
       isAdminMonitor(monitor)
-        ? 'cursor-pointer px-2 transition-colors hover:bg-muted/40 lg:grid-cols-[minmax(13rem,1.2fr)_minmax(13rem,1.65fr)_4.5rem_minmax(9rem,0.9fr)_auto]'
+        ? 'cursor-pointer px-2 transition-colors hover:bg-elevated/60 lg:grid-cols-[minmax(13rem,1.2fr)_minmax(13rem,1.65fr)_4.5rem_minmax(9rem,0.9fr)_auto]'
         : 'px-1 lg:grid-cols-[minmax(12rem,1.1fr)_minmax(14rem,1.8fr)_4.5rem_minmax(7rem,0.8fr)]',
       !monitor.enabled ? 'opacity-60' : '',
     ]"

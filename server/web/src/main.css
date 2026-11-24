@@ -33,17 +33,25 @@
     "Geist Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
 }
 
+@theme inline {
+  --color-surface: var(--ui-surface);
+}
+
 :root {
   --ui-bg: #fafafa;
-  --ui-bg-elevated: #ffffff;
+  --ui-surface: #ffffff;
   --ui-bg-muted: #f4f4f5;
+  --ui-bg-elevated: #ececef;
+  --ui-bg-accented: #e4e4e7;
   --ui-border: rgba(9, 9, 11, 0.085);
 }
 
 .dark {
   --ui-bg: #09090b;
-  --ui-bg-elevated: #111113;
+  --ui-surface: #111113;
   --ui-bg-muted: #18181b;
+  --ui-bg-elevated: #27272a;
+  --ui-bg-accented: #3f3f46;
   --ui-border: rgba(255, 255, 255, 0.08);
 }
 

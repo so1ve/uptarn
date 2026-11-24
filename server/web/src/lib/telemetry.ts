@@ -114,7 +114,10 @@ export function nodeIssueSummary(
       .filter((s) => s.status && s.status !== "ok")
       .map((s) => ({
         label: s.label,
-        detail: `${formatSeriesValue(s.value, s.unit)}${s.loss_pct && s.loss_pct > 0 ? `, ${Math.round(s.loss_pct)}% loss` : ""}`,
+        detail:
+          s.status === "fail" && s.summary
+            ? s.summary
+            : `${formatSeriesValue(s.value, s.unit)}${s.loss_pct && s.loss_pct > 0 ? `, ${Math.round(s.loss_pct)}% loss` : ""}`,
         fail: s.status === "fail",
       })),
     ...node.checks

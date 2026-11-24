@@ -42,3 +42,14 @@ export const formatClock = (ts: number): string =>
     hour: "2-digit",
     minute: "2-digit",
   });
+
+export function formatTimestamp(ts: number, showDate = false): string {
+  if (!showDate) {
+    return formatClock(ts);
+  }
+  const d = new Date(ts * 1000);
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+
+  return `${mm}/${dd} ${formatClock(ts)}`;
+}

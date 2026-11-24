@@ -74,7 +74,7 @@ const onToggleMute = (inc: IncidentSummary, isMuted: boolean) =>
 
       <div
         v-if="incidentRows.length === 0"
-        class="rounded-xl border border-default bg-elevated px-5 py-6 text-sm text-muted"
+        class="rounded-xl border border-default bg-surface px-5 py-6 text-sm text-muted"
       >
         No active issues.
       </div>
@@ -142,7 +142,7 @@ const onToggleMute = (inc: IncidentSummary, isMuted: boolean) =>
 
       <div
         v-if="eventRows.length === 0"
-        class="rounded-xl border border-default bg-elevated px-5 py-6 text-sm text-muted"
+        class="rounded-xl border border-default bg-surface px-5 py-6 text-sm text-muted"
       >
         No events yet.
       </div>
