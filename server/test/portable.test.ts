@@ -391,8 +391,11 @@ describe("uptarn portable server", () => {
     );
 
     expect(sentRequests).toHaveLength(2);
-    expect(sentRequests[0].body).toContain("FIRING");
-    expect(sentRequests[0].body).toContain("ddclient.service");
+    expect(sentRequests[0].body).toContain("🔴");
+    expect(sentRequests[0].body).toContain(
+      "<blockquote>failed: ddclient.service</blockquote>",
+    );
+    expect(sentRequests[0].body).toContain("/nodes/homelab");
 
     sentRequests.length = 0;
     vi.setSystemTime(1120 * 1000);
@@ -415,7 +418,8 @@ describe("uptarn portable server", () => {
     );
 
     expect(sentRequests).toHaveLength(2);
-    expect(sentRequests[0].body).toContain("RESOLVED");
+    expect(sentRequests[0].body).toContain("🟢");
+    expect(sentRequests[0].body).toContain("recovered after");
     await expect(
       db.all("SELECT incident_key FROM alert_states"),
     ).resolves.toEqual([]);
@@ -448,12 +452,13 @@ describe("uptarn portable server", () => {
     const tickRes = await runTick(db, config);
 
     expect(tickRes.probed_monitors).toBe(1);
-    expect(sentRequests).toHaveLength(4);
+    expect(sentRequests).toHaveLength(2);
 
     const bodies = sentRequests.map((r) => r.body).join("\n");
 
-    expect(bodies).toContain("homelab: Connectivity");
-    expect(bodies).toContain("Job: Restic Backup");
+    expect(bodies).toContain("2 alerts firing");
+    expect(bodies).toContain("homelab / Connectivity");
+    expect(bodies).toContain("Job / Restic Backup");
   });
 
   it("validates admin inputs and keeps expected_status_max >= expected_status_min", async () => {

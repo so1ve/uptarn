@@ -48,20 +48,124 @@ const escapeHtml = (text: string): string =>
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 
-function formatAlertBodies(alert: AlertPayload): {
-  plain: string;
-  html: string;
+// Prevent Telegram from turning domain names inside alert titles into blue links.
+const defangDomain = (text: string): string =>
+  text.replace(/([a-z0-9])\.(?=[a-z0-9])/gi, "$1.\u200B");
+
+function formatAlertTitle(alert: AlertPayload): {
+  scope: string | null;
+  subject: string;
 } {
-  const tag = alert.kind === "firing" ? "FIRING" : "RESOLVED";
-  const dur =
-    alert.kind === "resolved" && alert.durationSecs !== undefined
-      ? ` (after ${formatDuration(alert.durationSecs)})`
-      : "";
-  const url = escapeHtml(alert.dashboardUrl);
+  if (alert.targetType === "monitor") {
+    return { scope: null, subject: alert.label.replace(/^HTTP:\s*/i, "") };
+  }
+  if (alert.targetType === "job") {
+    return { scope: "Job", subject: alert.label.replace(/^Job:\s*/i, "") };
+  }
+  const sep = alert.label.indexOf(": ");
+  if (sep > 0) {
+    return {
+      scope: alert.label.slice(0, sep),
+      subject: alert.label.slice(sep + 2),
+    };
+  }
+
+  return { scope: null, subject: alert.label };
+}
+
+function resolveActionLink(alerts: readonly AlertPayload[]): {
+  label: string;
+  url: string;
+} {
+  const first = alerts[0];
+  const base = first.dashboardUrl.replace(/\/+$/, "");
+  const allSameType = alerts.every((a) => a.targetType === first.targetType);
+  const allSameTarget =
+    allSameType && alerts.every((a) => a.targetId === first.targetId);
+
+  if (allSameTarget && first.targetType === "node") {
+    const nodeName = formatAlertTitle(first).scope ?? first.targetId;
+
+    return {
+      label: `Open ${nodeName}`,
+      url: `${base}/nodes/${encodeURIComponent(first.targetId)}`,
+    };
+  }
+  if (allSameType && first.targetType === "monitor") {
+    return { label: "Open monitors", url: `${base}/monitors` };
+  }
+  if (allSameType && first.targetType === "job") {
+    return { label: "Open jobs", url: `${base}/jobs` };
+  }
+
+  return { label: "Open dashboard", url: `${base}/` };
+}
+
+function formatBatchBodies(alerts: readonly AlertPayload[]): {
+  plain: string;
+  telegramHtml: string;
+  matrixHtml: string;
+  action: { label: string; url: string };
+} {
+  const first = alerts[0];
+  const icon = first.kind === "firing" ? "🔴" : "🟢";
+  const action = resolveActionLink(alerts);
+
+  if (alerts.length === 1) {
+    const { scope, subject } = formatAlertTitle(first);
+    const title = scope ? `${scope} / ${subject}` : subject;
+    const dur =
+      first.kind === "resolved" && first.durationSecs !== undefined
+        ? ` (recovered after ${formatDuration(first.durationSecs)})`
+        : "";
+    const safeTitle = escapeHtml(defangDomain(title));
+    const safeSummary = escapeHtml(first.summary);
+    const safeUrl = escapeHtml(action.url);
+
+    return {
+      plain: `${icon} ${title}${dur}\n${first.summary}\n${action.url}`,
+      telegramHtml: `${icon} <b>${safeTitle}</b>${escapeHtml(dur)}\n<blockquote>${safeSummary}</blockquote>`,
+      matrixHtml: `${icon} <b>${escapeHtml(title)}</b>${escapeHtml(dur)}<br/><blockquote>${safeSummary}</blockquote><a href="${safeUrl}">${escapeHtml(action.label)}</a>`,
+      action,
+    };
+  }
+
+  const sameNode =
+    first.targetType === "node" &&
+    alerts.every(
+      (a) => a.targetType === "node" && a.targetId === first.targetId,
+    );
+  const sharedScope = sameNode ? formatAlertTitle(first).scope : null;
+  const heading = sharedScope
+    ? `${sharedScope} (${alerts.length} ${first.kind === "firing" ? "alerts" : "recovered"})`
+    : `${alerts.length} alerts ${first.kind === "firing" ? "firing" : "recovered"}`;
+
+  const plainLines: string[] = [];
+  const htmlLines: string[] = [];
+  for (const alert of alerts) {
+    const { scope, subject } = formatAlertTitle(alert);
+    const itemName = sharedScope
+      ? subject
+      : scope
+        ? `${scope} / ${subject}`
+        : subject;
+    const dur =
+      alert.kind === "resolved" && alert.durationSecs !== undefined
+        ? ` (${formatDuration(alert.durationSecs)})`
+        : "";
+    plainLines.push(`• ${itemName}${dur}: ${alert.summary}`);
+    htmlLines.push(
+      `• <b>${escapeHtml(defangDomain(itemName))}</b>${escapeHtml(dur)}: ${escapeHtml(alert.summary)}`,
+    );
+  }
+
+  const safeUrl = escapeHtml(action.url);
 
   return {
-    plain: `[${tag}] ${alert.label}${dur}\n${alert.summary}\n${alert.dashboardUrl}`,
-    html: `<b>[${tag}] ${escapeHtml(alert.label)}</b>${escapeHtml(dur)}\n<code>${escapeHtml(alert.summary)}</code>\n<a href="${url}">${url}</a>`,
+    plain: `${icon} ${heading}\n${plainLines.join("\n")}\n${action.url}`,
+    telegramHtml: `${icon} <b>${escapeHtml(defangDomain(heading))}</b>\n<blockquote>${htmlLines.join("\n")}</blockquote>`,
+    matrixHtml: `${icon} <b>${escapeHtml(heading)}</b><br/><blockquote>${htmlLines.join("<br/>")}</blockquote><a href="${safeUrl}">${escapeHtml(action.label)}</a>`,
+    action,
   };
 }
 
@@ -82,14 +186,30 @@ async function sendJson(url: string, init: RequestInit): Promise<void> {
   );
 }
 
-export async function dispatchNotifications(
+export async function dispatchNotificationBatch(
   config: LoadedConfig,
-  alert: AlertPayload,
+  alerts: readonly AlertPayload[],
 ): Promise<Record<string, string>> {
-  const { plain, html } = formatAlertBodies(alert);
+  if (alerts.length === 0) {
+    return { status: "no_alerts" };
+  }
+
+  const { plain, telegramHtml, matrixHtml, action } = formatBatchBodies(alerts);
   const tasks: [string, Promise<void>][] = [];
 
   if (config.telegram) {
+    const body: Record<string, unknown> = {
+      chat_id: config.telegram.chatId,
+      text: telegramHtml,
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+    };
+    if (/^https?:\/\//i.test(action.url)) {
+      body.reply_markup = {
+        inline_keyboard: [[{ text: `${action.label} ↗`, url: action.url }]],
+      };
+    }
+
     tasks.push([
       "telegram",
       sendJson(
@@ -97,12 +217,7 @@ export async function dispatchNotifications(
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chat_id: config.telegram.chatId,
-            text: html,
-            parse_mode: "HTML",
-            disable_web_page_preview: true,
-          }),
+          body: JSON.stringify(body),
         },
       ),
     ]);
@@ -124,7 +239,7 @@ export async function dispatchNotifications(
             msgtype: "m.text",
             body: plain,
             format: "org.matrix.custom.html",
-            formatted_body: html.replace(/\n/g, "<br/>"),
+            formatted_body: matrixHtml,
           }),
         },
       ),
@@ -148,17 +263,25 @@ export async function dispatchNotifications(
   return Object.fromEntries(entries) as Record<string, string>;
 }
 
+export const dispatchNotifications = (
+  config: LoadedConfig,
+  alert: AlertPayload,
+): Promise<Record<string, string>> =>
+  dispatchNotificationBatch(config, [alert]);
+
 export const sendTestNotification = (
   config: LoadedConfig,
 ): Promise<Record<string, string>> =>
-  dispatchNotifications(config, {
-    kind: "resolved",
-    targetType: "monitor",
-    targetId: "test",
-    label: "Uptarn test notification",
-    summary: "Notification channel verification succeeded.",
-    dashboardUrl: config.publicBaseUrl,
-  });
+  dispatchNotificationBatch(config, [
+    {
+      kind: "resolved",
+      targetType: "monitor",
+      targetId: "test",
+      label: "Uptarn test notification",
+      summary: "Notification channel verification succeeded.",
+      dashboardUrl: config.publicBaseUrl,
+    },
+  ]);
 
 export async function buildAlertStatements(
   config: LoadedConfig,
@@ -266,27 +389,37 @@ export async function buildAlertStatements(
   }
 
   if (notifications.length > 0) {
+    const batches = (["firing", "resolved"] as const)
+      .map((kind) => notifications.filter((n) => n.payload.kind === kind))
+      .filter((group) => group.length > 0);
+
     const deliveries = await Promise.all(
-      notifications.map(({ payload }) =>
-        dispatchNotifications(config, payload),
+      batches.map((group) =>
+        dispatchNotificationBatch(
+          config,
+          group.map((item) => item.payload),
+        ),
       ),
     );
-    for (const [idx, delivery] of deliveries.entries()) {
-      const { obs, payload } = notifications[idx];
-      statements.push({
-        sql: `INSERT INTO alert_events (incident_key, target_type, target_id, label, kind, summary, created_at, delivery_json)
-              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
-        params: [
-          obs.incidentKey,
-          obs.targetType,
-          obs.targetId,
-          obs.label,
-          payload.kind,
-          obs.summary,
-          now,
-          JSON.stringify(delivery),
-        ],
-      });
+
+    for (const [idx, group] of batches.entries()) {
+      const deliveryJson = JSON.stringify(deliveries[idx]);
+      for (const { obs, payload } of group) {
+        statements.push({
+          sql: `INSERT INTO alert_events (incident_key, target_type, target_id, label, kind, summary, created_at, delivery_json)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
+          params: [
+            obs.incidentKey,
+            obs.targetType,
+            obs.targetId,
+            obs.label,
+            payload.kind,
+            obs.summary,
+            now,
+            deliveryJson,
+          ],
+        });
+      }
     }
   }
 

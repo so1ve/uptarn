@@ -187,11 +187,21 @@ export async function probeMonitor(
       error: null,
     };
   } catch (error) {
+    const rawError = errorMessage(error);
+    const isTimeout =
+      (error instanceof Error &&
+        (error.name === "TimeoutError" || error.name === "AbortError")) ||
+      /aborted due to timeout/i.test(rawError);
+    const timeoutLabel =
+      monitor.timeout_ms >= 1000 && monitor.timeout_ms % 1000 === 0
+        ? `${monitor.timeout_ms / 1000}s`
+        : `${monitor.timeout_ms}ms`;
+
     return {
       ok: false,
       httpStatus: null,
       latencyMs: Math.round((performance.now() - started) * 10) / 10,
-      error: errorMessage(error),
+      error: isTimeout ? `Timed out after ${timeoutLabel}` : rawError,
     };
   }
 }
