@@ -545,7 +545,7 @@ describe("uptarn portable server", () => {
     expect(sentRequests[0].body).toContain(
       "<blockquote>failed: ddclient.service</blockquote>",
     );
-    expect(sentRequests[0].body).toContain("/nodes/homelab");
+    expect(sentRequests[0].body).toContain("/admin/nodes/homelab");
 
     sentRequests.length = 0;
     vi.setSystemTime(1120 * 1000);

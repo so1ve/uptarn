@@ -44,28 +44,28 @@ const pageTitle = computed(() => {
 
 const navItems = computed(() => [
   {
-    to: "/",
+    to: "/admin",
     label: "Nodes",
     active: route.name === "nodes" || route.name === "node-detail",
     count: snap.value.nodes.length,
     alert: false,
   },
   {
-    to: "/monitors",
+    to: "/admin/monitors",
     label: "Monitors",
     active: route.name === "monitors",
     count: snap.value.monitors.length,
     alert: false,
   },
   {
-    to: "/jobs",
+    to: "/admin/jobs",
     label: "Jobs",
     active: route.name === "jobs",
     count: snap.value.jobs.length,
     alert: false,
   },
   {
-    to: "/alerts",
+    to: "/admin/alerts",
     label: "Alerts",
     active: route.name === "alerts",
     count: totalIssues.value,
@@ -102,7 +102,7 @@ async function onSignOut() {
 </script>
 
 <template>
-  <AppLayout home-to="/" :version="snap.version">
+  <AppLayout home-to="/admin" :version="snap.version">
     <template #nav>
       <nav aria-label="Primary" class="flex items-center gap-1">
         <RouterLink
@@ -142,6 +142,16 @@ async function onSignOut() {
       >
         Muted {{ formatRemaining(snap.settings.global_muted_until, snap.now) }}
       </UBadge>
+      <UButton
+        aria-label="Public status page"
+        color="neutral"
+        icon="i-lucide-globe"
+        size="sm"
+        to="/"
+        variant="ghost"
+      >
+        <span class="hidden sm:inline">Public</span>
+      </UButton>
       <UButton
         color="neutral"
         icon="i-lucide-refresh-cw"

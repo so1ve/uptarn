@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { useStorage } from "@vueuse/core";
 import { computed, ref } from "vue";
+import { useRouter } from "vue-router";
 
 import SignInForm from "../components/modals/SignInForm.vue";
 import MonitorRow from "../components/monitors/MonitorRow.vue";
 import MonitorWindowToggle from "../components/monitors/MonitorWindowToggle.vue";
+import EmptyState from "../components/ui/EmptyState.vue";
 import SparkMetric from "../components/ui/SparkMetric.vue";
 import StatusDot from "../components/ui/StatusDot.vue";
 import UsageBar from "../components/ui/UsageBar.vue";
@@ -20,14 +22,20 @@ import {
 
 const props = defineProps<{
   status: PublicStatusSnapshot;
+  adminPreview?: boolean;
 }>();
 
+const router = useRouter();
 const { loadState } = useUptarnStore();
 const signInOpen = ref(false);
 const monitorWindow = useStorage<MonitorWindow>("uptarn:monitor-window", "24h");
 
 document.title = "Status - Uptarn";
 useLiveRefresh("public", 10_000, 3000);
+
+const hasContent = computed(
+  () => props.status.monitors.length > 0 || props.status.nodes.length > 0,
+);
 
 const BANNER_STYLES = {
   fail: { bg: "bg-red-500/10", text: "text-red-600 dark:text-red-400" },
@@ -64,6 +72,7 @@ const banner = computed(() => {
 async function onSignedIn() {
   signInOpen.value = false;
   await loadState();
+  await router.push("/admin");
 }
 </script>
 
@@ -71,6 +80,17 @@ async function onSignedIn() {
   <AppLayout :host="hostOf(status.public_base_url)" :version="status.version">
     <template #actions>
       <UButton
+        v-if="adminPreview"
+        color="neutral"
+        icon="i-lucide-arrow-left"
+        size="sm"
+        to="/admin"
+        variant="soft"
+      >
+        Dashboard
+      </UButton>
+      <UButton
+        v-else
         color="neutral"
         size="sm"
         variant="soft"
@@ -80,7 +100,15 @@ async function onSignedIn() {
       </UButton>
     </template>
 
-    <div class="space-y-8">
+    <EmptyState v-if="!hasContent">
+      <p class="font-medium text-default">Nothing is public yet.</p>
+      <p class="mt-1 text-xs text-muted">
+        Mark a node or monitor as public to show it here. Visitors see the
+        sign-in screen until then.
+      </p>
+    </EmptyState>
+
+    <div v-else class="space-y-8">
       <div
         class="flex items-center gap-2.5 rounded-xl px-4 py-3 text-sm"
         :class="BANNER_STYLES[banner.tone].bg"
@@ -185,6 +213,7 @@ async function onSignedIn() {
     </div>
 
     <UModal
+      v-if="!adminPreview"
       v-model:open="signInOpen"
       title="Sign in"
       :ui="{ content: 'max-w-sm' }"

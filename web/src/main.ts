@@ -15,11 +15,20 @@ const router = createRouter({
   history: createWebHistory(),
   scrollBehavior: () => ({ top: 0 }),
   routes: [
-    { path: "/", name: "nodes", component: NodesView },
-    { path: "/nodes/:id", name: "node-detail", component: NodeDetailView },
-    { path: "/monitors", name: "monitors", component: MonitorsView },
-    { path: "/jobs", name: "jobs", component: JobsView },
-    { path: "/alerts", name: "alerts", component: AlertsView },
+    {
+      path: "/",
+      name: "public-status",
+      component: { render: () => null },
+    },
+    { path: "/admin", name: "nodes", component: NodesView },
+    {
+      path: "/admin/nodes/:id",
+      name: "node-detail",
+      component: NodeDetailView,
+    },
+    { path: "/admin/monitors", name: "monitors", component: MonitorsView },
+    { path: "/admin/jobs", name: "jobs", component: JobsView },
+    { path: "/admin/alerts", name: "alerts", component: AlertsView },
     { path: "/:pathMatch(.*)*", redirect: "/" },
   ],
 });

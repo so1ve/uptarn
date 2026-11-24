@@ -87,17 +87,17 @@ function resolveActionLink(alerts: readonly AlertPayload[]): {
 
     return {
       label: `Open ${nodeName}`,
-      url: `${base}/nodes/${encodeURIComponent(first.targetId)}`,
+      url: `${base}/admin/nodes/${encodeURIComponent(first.targetId)}`,
     };
   }
   if (allSameType && first.targetType === "monitor") {
-    return { label: "Open monitors", url: `${base}/monitors` };
+    return { label: "Open monitors", url: `${base}/admin/monitors` };
   }
   if (allSameType && first.targetType === "job") {
-    return { label: "Open jobs", url: `${base}/jobs` };
+    return { label: "Open jobs", url: `${base}/admin/jobs` };
   }
 
-  return { label: "Open dashboard", url: `${base}/` };
+  return { label: "Open dashboard", url: `${base}/admin` };
 }
 
 function formatBatchBodies(alerts: readonly AlertPayload[]) {

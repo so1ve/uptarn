@@ -77,7 +77,7 @@ const incidentHeadline = computed(() => {
       v-if="snap.incidents.length > 0"
       class="flex flex-wrap items-center justify-between gap-3 rounded-xl px-4 py-2.5 text-sm transition-opacity hover:opacity-90"
       :class="openIssues > 0 ? 'bg-red-500/10' : 'bg-amber-500/10'"
-      to="/alerts"
+      to="/admin/alerts"
     >
       <div class="flex min-w-0 items-center gap-2.5">
         <StatusDot :status="openIssues > 0 ? 'fail' : 'warn'" />

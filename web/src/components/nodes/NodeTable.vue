@@ -72,7 +72,7 @@ const rows = computed(() =>
           :key="node.id"
           class="cursor-pointer transition-colors hover:bg-elevated/60"
           v-bind="dragAttrs(node.id, Boolean(reorderable))"
-          @click="router.push(`/nodes/${encodeURIComponent(node.id)}`)"
+          @click="router.push(`/admin/nodes/${encodeURIComponent(node.id)}`)"
         >
           <td v-if="reorderable" class="w-7 py-3 pr-1" @click.stop>
             <DragHandle

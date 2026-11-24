@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useRouter } from "vue-router";
+
 import SignInForm from "../components/modals/SignInForm.vue";
 import BrandMark from "../components/ui/BrandMark.vue";
 import type { PublicStatusSnapshot } from "../lib/index.ts";
@@ -8,8 +10,14 @@ defineProps<{
   status: PublicStatusSnapshot;
 }>();
 
+const router = useRouter();
 const { isDark, toggleTheme, loadState } = useUptarnStore();
 document.title = "Sign in - Uptarn";
+
+async function onAuthenticated() {
+  await loadState();
+  await router.push("/admin");
+}
 </script>
 
 <template>
@@ -31,7 +39,7 @@ document.title = "Sign in - Uptarn";
 
       <h1 class="mb-5 text-lg font-semibold tracking-tight">Sign in</h1>
 
-      <SignInForm :auth="status.auth" @authenticated="loadState" />
+      <SignInForm :auth="status.auth" @authenticated="onAuthenticated" />
     </div>
   </div>
 </template>

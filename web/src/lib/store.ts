@@ -93,7 +93,13 @@ const adminRefresher = createRefresher<DashboardSnapshot>(
 const publicRefresher = createRefresher<PublicStatusSnapshot>(
   "/api/v1/public/status",
   (next) => {
+    loadError.value = null;
     publicStatus.value = next;
+  },
+  (err) => {
+    if (!publicStatus.value) {
+      loadError.value = errorMessage(err);
+    }
   },
 );
 

@@ -65,7 +65,7 @@ const onRemoveJob = (key: string) =>
             </span>
             <RouterLink
               v-if="job.node_id"
-              :to="`/nodes/${encodeURIComponent(job.node_id)}`"
+              :to="`/admin/nodes/${encodeURIComponent(job.node_id)}`"
             >
               <UBadge
                 class="font-mono hover:opacity-80"

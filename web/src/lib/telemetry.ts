@@ -215,10 +215,10 @@ export const splitIncident = (
 
 export const incidentRoute = (inc: IncidentSummary): string =>
   inc.target_type === "node"
-    ? `/nodes/${encodeURIComponent(inc.target_id)}`
+    ? `/admin/nodes/${encodeURIComponent(inc.target_id)}`
     : inc.target_type === "monitor"
-      ? "/monitors"
-      : "/jobs";
+      ? "/admin/monitors"
+      : "/admin/jobs";
 
 export const targetMutedUntil = (
   snap: DashboardSnapshot,
