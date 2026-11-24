@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  pull_request: {}
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  server:
+    name: Server
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: so1ve/workflows/setup-js@v1
+        with:
+          node-version: "24"
+          working-directory: server
+      - run: pnpm run types:cloudflare
+      - run: pnpm run check
+      - run: pnpm exec wrangler deploy --dry-run
+
+  agent:
+    name: Agent
+    uses: so1ve/workflows/.github/workflows/rust-ci.yml@v1
+    with:
+      toolchain: nightly
+      runs-on: ubuntu-24.04
+      runs-on-matrix: '"ubuntu-24.04"'
+      clippy-command: cargo clippy --locked --all-targets -- -D warnings
+      test-command: cargo test --locked
+
+  nix:
+    name: Nix
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v32
+        with:
+          extra_nix_config: accept-flake-config = true
+      - run: nix fmt -- --ci
+      - run: nix run nixpkgs#actionlint
+      - run: nix flake check --all-systems
+
+  nix-build:
+    name: Nix Build (${{ matrix.system }})
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: x86_64-linux
+            runner: ubuntu-24.04
+          - system: aarch64-linux
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v32
+        with:
+          extra_nix_config: accept-flake-config = true
+      - uses: so1ve/firn@v1
+        with:
+          server: https://cache.so1ve.dev
+      - run: >-
+          nix build
+          ".#packages.${{ matrix.system }}.uptarn-server"
+          ".#packages.${{ matrix.system }}.uptarn-agent"
+          ".#packages.${{ matrix.system }}.uptarn-agent-static"
+          --print-build-logs
+          --print-out-paths >> "$FIRN_PATHS_FILE"

@@ -1,0 +1,12 @@
+PUBLIC_BASE_URL=http://localhost:8787
+ADMIN_PASSWORD=change-me-in-dev
+ADMIN_TOKEN=uptarn-dev-admin-token
+# Optional Cloudflare Access integration
+# CF_ACCESS_TEAM_DOMAIN=your-team.cloudflareaccess.com
+# CF_ACCESS_AUD=
+# Optional IM alert targets
+# TELEGRAM_BOT_TOKEN=
+# TELEGRAM_CHAT_ID=
+# MATRIX_HOMESERVER=https://matrix.example.com
+# MATRIX_ACCESS_TOKEN=
+# MATRIX_ROOM_ID=!room:example.com

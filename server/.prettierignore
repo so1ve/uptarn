@@ -1,0 +1,6 @@
+/pnpm-lock.yaml
+/worker-configuration.d.ts
+/.wrangler
+/public
+/web/src/auto-imports.d.ts
+/web/src/components.d.ts

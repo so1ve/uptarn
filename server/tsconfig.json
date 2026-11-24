@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "jsx": "preserve",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["@cloudflare/vitest-plugin/types", "node", "vite/client"],
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "erasableSyntaxOnly": true,
+    "noEmit": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true
+  },
+  "include": [
+    "bump.config.ts",
+    "src/**/*.ts",
+    "test/**/*.ts",
+    "vite.config.ts",
+    "vitest.cloudflare.config.ts",
+    "vitest.config.ts",
+    "web/src/**/*.d.ts",
+    "web/src/**/*.ts",
+    "web/src/**/*.vue",
+    "worker-configuration.d.ts"
+  ]
+}

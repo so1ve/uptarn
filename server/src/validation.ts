@@ -1,0 +1,342 @@
+import { generateRandomToken } from "./auth/index.ts";
+import { httpError } from "./http.ts";
+import type {
+  HealthStatus,
+  JobReportPayload,
+  MonitorInput,
+  NodeReportPayload,
+  SeriesUnit,
+  SystemSnapshot,
+  TargetType,
+} from "./shared/index.ts";
+
+const SLUG_RE = /^[a-z0-9][\w.:-]{0,63}$/i;
+const STATUSES = [
+  "ok",
+  "warn",
+  "fail",
+] as const satisfies readonly HealthStatus[];
+const UNITS = [
+  "ms",
+  "%",
+  "bytes",
+  "bps",
+  "celsius",
+  "count",
+  "days",
+] as const satisfies readonly SeriesUnit[];
+const METHODS = ["GET", "HEAD", "POST"] as const;
+const TARGETS = [
+  "node",
+  "monitor",
+  "job",
+] as const satisfies readonly TargetType[];
+
+function bad(msg: string): never {
+  throw httpError(400, msg);
+}
+
+function asObj(val: unknown, field: string): Record<string, unknown> {
+  if (typeof val !== "object" || val === null || Array.isArray(val)) {
+    bad(`${field} must be an object`);
+  }
+
+  return val as Record<string, unknown>;
+}
+
+function str(val: unknown, field: string, max: number): string | undefined {
+  if (val === undefined || val === null) {
+    return undefined;
+  }
+  if (typeof val !== "string") {
+    bad(`${field} must be a string`);
+  }
+
+  return val.trim().slice(0, max) || undefined;
+}
+
+const reqStr = (val: unknown, field: string, max: number): string =>
+  str(val, field, max) ?? bad(`${field} is required`);
+
+function slug(val: unknown, field: string): string {
+  const s = reqStr(val, field, 64);
+  if (!SLUG_RE.test(s)) {
+    bad(`${field} must match ${SLUG_RE.source}`);
+  }
+
+  return s;
+}
+
+function num(
+  val: unknown,
+  field: string,
+  min?: number,
+  max?: number,
+): number | undefined {
+  if (val === undefined || val === null) {
+    return undefined;
+  }
+  if (typeof val !== "number" || !Number.isFinite(val)) {
+    bad(`${field} must be a finite number`);
+  }
+  if ((min !== undefined && val < min) || (max !== undefined && val > max)) {
+    bad(`${field} out of range`);
+  }
+
+  return val;
+}
+
+const reqNum = (
+  val: unknown,
+  field: string,
+  min?: number,
+  max?: number,
+): number => num(val, field, min, max) ?? bad(`${field} is required`);
+
+function int(
+  val: unknown,
+  field: string,
+  min?: number,
+  max?: number,
+): number | undefined {
+  const n = num(val, field, min, max);
+
+  return n === undefined ? undefined : Math.floor(n);
+}
+
+const reqInt = (
+  val: unknown,
+  field: string,
+  min?: number,
+  max?: number,
+): number => int(val, field, min, max) ?? bad(`${field} is required`);
+
+function bool(val: unknown, field: string): boolean | undefined {
+  if (val === undefined || val === null) {
+    return undefined;
+  }
+  if (typeof val !== "boolean") {
+    bad(`${field} must be a boolean`);
+  }
+
+  return val;
+}
+
+function oneOf<T extends string>(
+  val: unknown,
+  field: string,
+  allowed: readonly T[],
+): T | undefined {
+  if (val === undefined || val === null) {
+    return undefined;
+  }
+  if (typeof val !== "string" || !allowed.includes(val as T)) {
+    bad(`${field} must be one of ${allowed.join(", ")}`);
+  }
+
+  return val as T;
+}
+
+const reqOneOf = <T extends string>(
+  val: unknown,
+  field: string,
+  allowed: readonly T[],
+): T => oneOf(val, field, allowed) ?? bad(`${field} is required`);
+
+function list<T>(
+  raw: unknown,
+  field: string,
+  max: number,
+  itemFn: (item: Record<string, unknown>, prefix: string) => T,
+): T[] {
+  if (raw === undefined || raw === null) {
+    return [];
+  }
+  if (!Array.isArray(raw) || raw.length > max) {
+    bad(`${field} must be an array of at most ${max} items`);
+  }
+
+  return raw.map((el, i) =>
+    itemFn(asObj(el, `${field}[${i}]`), `${field}[${i}]`),
+  );
+}
+
+export function parseNodeReportPayload(raw: unknown): NodeReportPayload {
+  const obj = asObj(raw, "report body");
+  let system: SystemSnapshot | undefined;
+  if (obj.system !== undefined && obj.system !== null) {
+    const sys = asObj(obj.system, "system");
+    system = {
+      uptime_secs: reqInt(sys.uptime_secs, "system.uptime_secs", 0),
+      cpu_pct: num(sys.cpu_pct, "system.cpu_pct", 0, 100),
+      load_1m: num(sys.load_1m, "system.load_1m", 0),
+      mem_used_bytes: num(sys.mem_used_bytes, "system.mem_used_bytes", 0),
+      mem_total_bytes: num(sys.mem_total_bytes, "system.mem_total_bytes", 0),
+      rx_bytes: num(sys.rx_bytes, "system.rx_bytes", 0),
+      tx_bytes: num(sys.tx_bytes, "system.tx_bytes", 0),
+    };
+  }
+
+  return {
+    node_id: slug(obj.node_id, "node_id"),
+    label: str(obj.label, "label", 80),
+    agent_version: str(obj.agent_version, "agent_version", 40),
+    interval_secs: int(obj.interval_secs, "interval_secs", 10, 86_400),
+    grace_secs: int(obj.grace_secs, "grace_secs", 10, 604_800),
+    system,
+    mounts: list(obj.mounts, "mounts", 64, (m, p) => ({
+      path: reqStr(m.path, `${p}.path`, 128),
+      label: str(m.label, `${p}.label`, 64),
+      used_bytes: reqInt(m.used_bytes, `${p}.used_bytes`, 0),
+      total_bytes: reqInt(m.total_bytes, `${p}.total_bytes`, 0),
+      status: reqOneOf(m.status, `${p}.status`, STATUSES),
+      summary: str(m.summary, `${p}.summary`, 200),
+    })),
+    checks: list(obj.checks, "checks", 128, (c, p) => ({
+      key: slug(c.key, `${p}.key`),
+      label: reqStr(c.label, `${p}.label`, 80),
+      group: str(c.group, `${p}.group`, 40),
+      status: reqOneOf(c.status, `${p}.status`, STATUSES),
+      summary: str(c.summary, `${p}.summary`, 240),
+      detail: str(c.detail, `${p}.detail`, 2048),
+    })),
+    series: list(obj.series, "series", 128, (s, p) => ({
+      key: slug(s.key, `${p}.key`),
+      label: reqStr(s.label, `${p}.label`, 80),
+      group: str(s.group, `${p}.group`, 40),
+      unit: reqOneOf(s.unit, `${p}.unit`, UNITS),
+      value: reqNum(s.value, `${p}.value`),
+      loss_pct: num(s.loss_pct, `${p}.loss_pct`, 0, 100),
+      status: oneOf(s.status, `${p}.status`, STATUSES),
+      summary: str(s.summary, `${p}.summary`, 200),
+    })),
+    info: list(obj.info, "info", 128, (inf, p) => ({
+      key: slug(inf.key, `${p}.key`),
+      label: reqStr(inf.label, `${p}.label`, 80),
+      group: str(inf.group, `${p}.group`, 40),
+      value: reqStr(inf.value, `${p}.value`, 512),
+    })),
+  };
+}
+
+export function parseJobReportPayload(raw: unknown): JobReportPayload {
+  const obj = asObj(raw, "job payload");
+
+  return {
+    job_key: slug(obj.job_key, "job_key"),
+    node_id:
+      obj.node_id === undefined || obj.node_id === null
+        ? undefined
+        : slug(obj.node_id, "node_id"),
+    label: str(obj.label, "label", 80),
+    interval_secs: reqInt(obj.interval_secs, "interval_secs", 30, 2_592_000),
+    grace_secs: int(obj.grace_secs, "grace_secs", 30, 604_800),
+    status: reqOneOf(obj.status, "status", ["ok", "fail"] as const),
+    duration_ms: int(obj.duration_ms, "duration_ms", 0),
+    summary: str(obj.summary, "summary", 240),
+    detail: str(obj.detail, "detail", 4096),
+  };
+}
+
+function generateMonitorId(name: string): string {
+  const base = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+  const suffix = generateRandomToken("m", 4).slice(2);
+
+  return base ? `${base}-${suffix}` : `mon-${suffix}`;
+}
+
+export function parseMonitorInput(raw: MonitorInput | unknown) {
+  const obj = asObj(raw, "monitor input");
+  const name = reqStr(obj.name, "name", 80);
+  const rawId = str(obj.id, "id", 64);
+  const id = rawId ? slug(rawId, "id") : generateMonitorId(name);
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(reqStr(obj.url, "url", 512));
+  } catch {
+    bad("url must be a valid HTTP(S) URL");
+  }
+  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+    bad("url protocol must be http: or https:");
+  }
+
+  const expectedStatusMin =
+    int(obj.expected_status_min, "expected_status_min", 100, 599) ?? 200;
+  const expectedStatusMax =
+    int(
+      obj.expected_status_max,
+      "expected_status_max",
+      expectedStatusMin,
+      599,
+    ) ?? Math.max(299, expectedStatusMin);
+
+  return {
+    id,
+    name,
+    url: parsedUrl.toString(),
+    method: reqOneOf(
+      (str(obj.method, "method", 10) ?? "GET").toUpperCase(),
+      "method",
+      METHODS,
+    ),
+    expected_status_min: expectedStatusMin,
+    expected_status_max: expectedStatusMax,
+    expected_body: str(obj.expected_body, "expected_body", 256) ?? null,
+    timeout_ms: int(obj.timeout_ms, "timeout_ms", 500, 30_000) ?? 8000,
+    interval_secs: int(obj.interval_secs, "interval_secs", 30, 86_400) ?? 60,
+    enabled: obj.enabled === undefined ? true : Boolean(obj.enabled),
+    is_public: bool(obj.is_public, "is_public") ?? true,
+  };
+}
+
+export function parseCreateNodeInput(raw: unknown) {
+  const obj = asObj(raw, "node input");
+
+  return {
+    id: slug(obj.id, "id"),
+    label: str(obj.label, "label", 80),
+    interval_secs: int(obj.interval_secs, "interval_secs", 10, 86_400),
+    grace_secs: int(obj.grace_secs, "grace_secs", 10, 604_800),
+    is_public: bool(obj.is_public, "is_public") ?? false,
+  };
+}
+
+export function parseNodePatch(raw: unknown) {
+  const obj = asObj(raw, "node patch");
+  const isPublic = bool(obj.is_public, "is_public");
+  if (isPublic === undefined) {
+    bad("is_public is required");
+  }
+
+  return { is_public: isPublic };
+}
+
+export function parseMuteInput(raw: unknown) {
+  const obj = asObj(raw, "mute input");
+
+  return {
+    target_type: reqOneOf(obj.target_type, "target_type", TARGETS),
+    target_id: reqStr(obj.target_id, "target_id", 128),
+    duration_secs: int(obj.duration_secs, "duration_secs", 0),
+    muted_until: int(obj.muted_until, "muted_until", 0),
+  };
+}
+
+export function parseSettingsPatch(raw: unknown) {
+  const obj = asObj(raw, "settings patch");
+
+  return {
+    auto_register: bool(obj.auto_register, "auto_register"),
+    rotate_enrollment_token: bool(
+      obj.rotate_enrollment_token,
+      "rotate_enrollment_token",
+    ),
+    global_muted_until: int(obj.global_muted_until, "global_muted_until", 0),
+    global_mute_secs: int(obj.global_mute_secs, "global_mute_secs", 0),
+  };
+}

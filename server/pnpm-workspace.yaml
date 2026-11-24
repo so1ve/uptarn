@@ -1,0 +1,9 @@
+shellEmulator: true
+
+overrides:
+  typescript: npm:typescript-native-bridge@6.0.3-bridge.19.tsgo.7.0.2
+
+allowBuilds:
+  esbuild: true
+  vue-demi: false
+  workerd: true

@@ -1,0 +1,60 @@
+{
+  "name": "uptarn-server",
+  "private": true,
+  "version": "0.1.1",
+  "packageManager": "pnpm@12.11.2",
+  "author": "Ray <i@mk1.io> (https://github.com/so1ve/)",
+  "type": "module",
+  "description": "Push-based monitoring hub built for Cloudflare Workers, unifying flexible node reporting, HTTP probes, and cron jobs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/so1ve/uptarn.git"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": "^24.16.0 || >=26.3.0"
+  },
+  "scripts": {
+    "build": "vite build",
+    "check": "pnpm run build && pnpm run typecheck && pnpm run lint && pnpm run test",
+    "db:migrate": "wrangler d1 migrations apply DB --remote",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "deploy": "pnpm run build && wrangler d1 migrations apply DB --remote && wrangler deploy",
+    "dev": "wrangler dev",
+    "dev:web": "vite",
+    "lint": "eslint . && prettier . --check",
+    "lint:fix": "eslint . --fix && prettier . --write",
+    "release": "bumpp",
+    "start": "node src/node.ts",
+    "test": "vitest run && vitest run --config vitest.cloudflare.config.ts",
+    "typecheck": "vue-tsc --noEmit",
+    "types:cloudflare": "wrangler types"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.11",
+    "@simplewebauthn/server": "^13.2.2",
+    "hono": "^4.12.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "latest",
+    "@iconify-json/lucide": "^1.2.158",
+    "@nuxt/ui": "^4.13.0",
+    "@so1ve/eslint-config": "^4.7.0",
+    "@so1ve/prettier-config": "^4.7.0",
+    "@types/node": "^25.0.0",
+    "@vitejs/plugin-vue": "^6.0.11",
+    "@vueuse/core": "^15.0.0",
+    "bumpp": "^12.3.0",
+    "echarts": "^6.1.0",
+    "eslint": "^10.15.0",
+    "prettier": "^3.10.1",
+    "tailwindcss": "^4.3.5",
+    "typescript": "npm:typescript-native-bridge@6.0.3-bridge.19.tsgo.7.0.2",
+    "vite": "^8.3.8",
+    "vitest": "latest",
+    "vue": "^3.5.46",
+    "vue-router": "^5.5.1",
+    "vue-tsc": "^3.3.14",
+    "wrangler": "latest"
+  }
+}

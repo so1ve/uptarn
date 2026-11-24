@@ -1,0 +1,12 @@
+.devenv
+.direnv
+.git
+.github
+**/node_modules
+server/.wrangler
+server/public
+target
+result
+*.db
+*.db-shm
+*.db-wal

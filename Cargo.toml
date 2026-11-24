@@ -1,0 +1,96 @@
+[workspace]
+members = ["agent"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.1"
+edition = "2024"
+repository = "https://github.com/so1ve/uptarn"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+anyhow = "1.0"
+clap = { version = "4.6", default-features = false, features = [
+  "derive",
+  "env",
+  "error-context",
+  "help",
+  "std",
+  "usage",
+] }
+clap_complete = "4.6"
+reqwest = { version = "0.13", default-features = false, features = [
+  "json",
+  "rustls-no-provider",
+] }
+rustix = { version = "1.1", features = ["fs", "system"] }
+rustls = { version = "0.23", default-features = false, features = [
+  "ring",
+  "std",
+  "tls12",
+] }
+rustls-pki-types = { version = "1", features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3.27"
+tokio = { version = "1.50", features = [
+  "fs",
+  "io-std",
+  "io-util",
+  "macros",
+  "net",
+  "process",
+  "rt",
+  "signal",
+  "sync",
+  "time",
+] }
+tokio-rustls = { version = "0.26", default-features = false, features = [
+  "ring",
+  "tls12",
+] }
+toml = { version = "1.1", default-features = false, features = [
+  "parse",
+  "serde",
+] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+clone_on_ref_ptr = "warn"
+default_trait_access = "warn"
+disallowed_methods = "warn"
+enum_glob_use = "warn"
+fn_params_excessive_bools = "warn"
+format_collect = "warn"
+format_push_string = "warn"
+implicit_clone = "warn"
+items_after_statements = "warn"
+manual_let_else = "warn"
+manual_string_new = "warn"
+match_same_arms = "warn"
+match_wildcard_for_single_variants = "warn"
+missing_const_for_fn = "warn"
+must_use_candidate = "warn"
+needless_pass_by_value = "warn"
+new_without_default = "allow"
+redundant_pub_crate = "warn"
+semicolon_if_nothing_returned = "warn"
+single_match_else = "warn"
+struct_excessive_bools = "warn"
+undocumented_unsafe_blocks = "warn"
+uninlined_format_args = "warn"
+unnecessary_literal_bound = "warn"
+use_self = "warn"
+verbose_file_reads = "warn"
+wildcard_imports = "warn"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

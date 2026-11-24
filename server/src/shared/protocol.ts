@@ -1,0 +1,260 @@
+export type HealthStatus = "ok" | "warn" | "fail";
+
+export type TargetType = "node" | "monitor" | "job";
+
+export type SeriesUnit =
+  "ms" | "%" | "bytes" | "bps" | "celsius" | "count" | "days";
+
+export interface SystemSnapshot {
+  uptime_secs: number;
+  cpu_pct?: number;
+  load_1m?: number;
+  mem_used_bytes?: number;
+  mem_total_bytes?: number;
+  rx_bytes?: number;
+  tx_bytes?: number;
+}
+
+export interface MountSnapshot {
+  path: string;
+  label?: string;
+  used_bytes: number;
+  total_bytes: number;
+  status: HealthStatus;
+  summary?: string;
+}
+
+export interface CheckSnapshot {
+  key: string;
+  label: string;
+  group?: string;
+  status: HealthStatus;
+  summary?: string;
+  detail?: string;
+}
+
+export interface SeriesSnapshot {
+  key: string;
+  label: string;
+  group?: string;
+  unit: SeriesUnit;
+  value: number;
+  loss_pct?: number;
+  status?: HealthStatus;
+  summary?: string;
+}
+
+export interface InfoSnapshot {
+  key: string;
+  label: string;
+  group?: string;
+  value: string;
+}
+
+export interface NodeReportPayload {
+  node_id: string;
+  label?: string;
+  agent_version?: string;
+  interval_secs?: number;
+  grace_secs?: number;
+  system?: SystemSnapshot;
+  mounts?: MountSnapshot[];
+  checks?: CheckSnapshot[];
+  series?: SeriesSnapshot[];
+  info?: InfoSnapshot[];
+}
+
+export interface JobReportPayload {
+  job_key: string;
+  node_id?: string;
+  label?: string;
+  interval_secs: number;
+  grace_secs?: number;
+  status: "ok" | "fail";
+  duration_ms?: number;
+  summary?: string;
+  detail?: string;
+}
+
+export interface MonitorInput {
+  id?: string;
+  name: string;
+  url: string;
+  method?: string;
+  expected_status_min?: number;
+  expected_status_max?: number;
+  expected_body?: string | null;
+  timeout_ms?: number;
+  interval_secs?: number;
+  enabled?: boolean;
+  is_public?: boolean;
+}
+
+export interface SeriesPoint {
+  ts: number;
+  value: number;
+  aux?: number | null;
+}
+
+export interface MonitorSample {
+  ts: number;
+  ok: boolean;
+  latency_ms: number | null;
+}
+
+export interface NodeSummary {
+  id: string;
+  label: string;
+  overall_status: "ok" | "warn" | "fail" | "offline" | "pending";
+  is_public: boolean;
+  interval_secs: number;
+  grace_secs: number;
+  muted_until: number;
+  created_at: number;
+  last_seen_at: number | null;
+  rx_bps: number | null;
+  tx_bps: number | null;
+  agent_version: string | null;
+  system: SystemSnapshot | null;
+  mounts: MountSnapshot[];
+  checks: CheckSnapshot[];
+  series: SeriesSnapshot[];
+  info: InfoSnapshot[];
+  history: Record<string, SeriesPoint[]>;
+}
+
+export interface MonitorSummary {
+  id: string;
+  name: string;
+  url: string;
+  method: string;
+  expected_status_min: number;
+  expected_status_max: number;
+  expected_body: string | null;
+  timeout_ms: number;
+  interval_secs: number;
+  enabled: boolean;
+  is_public: boolean;
+  muted_until: number;
+  last_checked_at: number | null;
+  last_status: "ok" | "fail" | "pending";
+  last_http_status: number | null;
+  last_latency_ms: number | null;
+  last_error: string | null;
+  samples: MonitorSample[];
+}
+
+export interface JobSummary {
+  key: string;
+  node_id: string | null;
+  label: string;
+  interval_secs: number;
+  grace_secs: number;
+  muted_until: number;
+  last_run_at: number;
+  overall_status: "ok" | "fail" | "overdue";
+  last_status: "ok" | "fail";
+  last_duration_ms: number | null;
+  last_summary: string | null;
+  last_detail: string | null;
+  next_due_at: number;
+}
+
+export interface IncidentSummary {
+  incident_key: string;
+  target_type: TargetType;
+  target_id: string;
+  label: string;
+  state: "failing" | "open";
+  consecutive_failures: number;
+  opened_at: number | null;
+  last_changed_at: number;
+  last_summary: string;
+}
+
+export interface AlertEventSummary {
+  id: number;
+  incident_key: string;
+  target_type: TargetType;
+  target_id: string;
+  label: string;
+  kind: "firing" | "resolved";
+  summary: string;
+  created_at: number;
+  delivery: Record<string, string>;
+}
+
+export interface PasskeySummary {
+  id: string;
+  name: string;
+  device_type: string;
+  backed_up: boolean;
+  created_at: number;
+  last_used_at: number | null;
+}
+
+export interface AuthMethodsSummary {
+  password_enabled: boolean;
+  cf_access_enabled: boolean;
+  passkey_count: number;
+}
+
+export interface AdminSettingsSummary {
+  auto_register: boolean;
+  enrollment_token: string | null;
+  global_muted_until: number;
+  channels: {
+    telegram: boolean;
+    matrix: boolean;
+  };
+  auth: AuthMethodsSummary;
+}
+
+export interface DashboardSnapshot {
+  now: number;
+  version: string;
+  public_base_url: string;
+  settings: AdminSettingsSummary;
+  incidents: IncidentSummary[];
+  nodes: NodeSummary[];
+  monitors: MonitorSummary[];
+  jobs: JobSummary[];
+  events: AlertEventSummary[];
+  passkeys: PasskeySummary[];
+}
+
+export interface PublicMonitorSummary {
+  key: string;
+  name: string;
+  enabled: boolean;
+  last_checked_at: number | null;
+  last_status: "ok" | "fail" | "pending";
+  last_latency_ms: number | null;
+  status_detail: string | null;
+  samples: MonitorSample[];
+}
+
+export interface PublicNodeSummary {
+  key: string;
+  label: string;
+  overall_status: "ok" | "warn" | "fail" | "offline" | "pending";
+  uptime_secs: number | null;
+  cpu_pct: number | null;
+  mem_pct: number | null;
+  storage_pct: number | null;
+  cpu_history: SeriesPoint[];
+  mem_history: SeriesPoint[];
+}
+
+export interface PublicStatusSnapshot {
+  now: number;
+  version: string;
+  public_base_url: string;
+  auth: AuthMethodsSummary;
+  monitors: PublicMonitorSummary[];
+  nodes: PublicNodeSummary[];
+}
+
+export type BootPayload =
+  | { mode: "admin"; snapshot: DashboardSnapshot }
+  | { mode: "public"; status: PublicStatusSnapshot };

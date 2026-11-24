@@ -1,0 +1,14 @@
+.devenv/
+.direnv/
+target/
+result
+node_modules/
+server/public/
+server/web/src/auto-imports.d.ts
+server/web/src/components.d.ts
+server/.wrangler/
+server/.dev.vars
+server/wrangler.prod.jsonc
+*.db
+*.db-shm
+*.db-wal
