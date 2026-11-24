@@ -2,10 +2,11 @@ import type {
   DashboardSnapshot,
   HealthStatus,
   IncidentSummary,
-  MonitorSample,
+  MonitorRollupBucket,
   MonitorSummary,
   MountSnapshot,
   NodeSummary,
+  PublicMonitorSummary,
   TargetType,
 } from "../../../src/shared/index.ts";
 import {
@@ -122,21 +123,92 @@ export function nodeIssueSummary(
   };
 }
 
-export function sampleUptime(samples: readonly MonitorSample[]): number | null {
-  const recent = samples.slice(-36);
+export type MonitorWindow = "live" | "24h" | "7d" | "15d" | "30d";
 
-  return recent.length === 0
-    ? null
-    : (recent.filter((s) => s.ok).length / recent.length) * 100;
+export const MONITOR_WINDOWS: readonly { id: MonitorWindow; label: string }[] =
+  [
+    { id: "live", label: "Live" },
+    { id: "24h", label: "24h" },
+    { id: "7d", label: "7d" },
+    { id: "15d", label: "15d" },
+    { id: "30d", label: "30d" },
+  ];
+
+export const ROLLUP_WINDOW_SPEC: Record<
+  Exclude<MonitorWindow, "live">,
+  { key: "m30" | "h6" | "d1"; step: number; slots: number }
+> = {
+  "24h": { key: "m30", step: 1800, slots: 48 },
+  "7d": { key: "h6", step: 21_600, slots: 28 },
+  "15d": { key: "d1", step: 86_400, slots: 15 },
+  "30d": { key: "d1", step: 86_400, slots: 30 },
+};
+
+export function getMonitorWindowBuckets(
+  mon: MonitorSummary | PublicMonitorSummary,
+  window: Exclude<MonitorWindow, "live">,
+  now: number,
+): MonitorRollupBucket[] {
+  const { key, step, slots } = ROLLUP_WINDOW_SPEC[window];
+  const endTs = Math.floor(now / step) * step;
+  const minTs = endTs - (slots - 1) * step;
+
+  return mon.rollups[key].filter((b) => b.ts >= minTs && b.ts <= endTs);
+}
+
+export function monitorUptime(
+  mon: MonitorSummary | PublicMonitorSummary,
+  window: MonitorWindow,
+  now: number,
+): { pct: number | null; ok: number; total: number } {
+  if (window === "live") {
+    const recent = mon.samples.slice(-36);
+    const total = recent.length;
+    const ok = recent.filter((s) => s.ok).length;
+
+    return { pct: total === 0 ? null : (ok / total) * 100, ok, total };
+  }
+  const buckets = getMonitorWindowBuckets(mon, window, now);
+  let ok = 0;
+  let total = 0;
+  for (const b of buckets) {
+    ok += b.ok;
+    total += b.total;
+  }
+
+  return { pct: total === 0 ? null : (ok / total) * 100, ok, total };
+}
+
+export function formatUptimePct(pct: number | null): string {
+  if (pct === null) {
+    return "-";
+  }
+  if (pct >= 100) {
+    return "100%";
+  }
+  if (pct >= 99.9) {
+    return `${Math.min(99.99, Math.floor(pct * 100) / 100).toFixed(2)}%`;
+  }
+
+  return `${pct.toFixed(1)}%`;
 }
 
 export const stripUrlScheme = (url: string): string =>
   url.replace(/^https?:\/\//, "").replace(/\/$/, "");
 
-export function monitorLatencyStats(mon: MonitorSummary): string | null {
-  const latencies = mon.samples
-    .filter((s) => s.ok && s.latency_ms !== null)
-    .map((s) => s.latency_ms!);
+export function monitorLatencyStats(
+  mon: MonitorSummary,
+  window: MonitorWindow = "live",
+  now = 0,
+): string | null {
+  const latencies =
+    window === "live"
+      ? mon.samples
+          .filter((s) => s.ok && s.latency_ms !== null)
+          .map((s) => s.latency_ms!)
+      : getMonitorWindowBuckets(mon, window, now)
+          .filter((b) => b.avg_ms !== null)
+          .map((b) => b.avg_ms!);
   if (latencies.length === 0) {
     return null;
   }

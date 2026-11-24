@@ -1,0 +1,1 @@
+ALTER TABLE monitors ADD COLUMN rollup_json TEXT NOT NULL DEFAULT '{}';

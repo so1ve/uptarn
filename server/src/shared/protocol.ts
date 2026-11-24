@@ -111,6 +111,19 @@ export interface MonitorSample {
   latency_ms: number | null;
 }
 
+export interface MonitorRollupBucket {
+  ts: number;
+  ok: number;
+  total: number;
+  avg_ms: number | null;
+}
+
+export interface MonitorRollups {
+  m30: MonitorRollupBucket[];
+  h6: MonitorRollupBucket[];
+  d1: MonitorRollupBucket[];
+}
+
 export interface NodeHistoryResponse {
   node_id: string;
   window_secs: number;
@@ -160,6 +173,7 @@ export interface MonitorSummary {
   last_latency_ms: number | null;
   last_error: string | null;
   samples: MonitorSample[];
+  rollups: MonitorRollups;
 }
 
 export interface JobSummary {
@@ -251,6 +265,7 @@ export interface PublicMonitorSummary {
   last_latency_ms: number | null;
   status_detail: string | null;
   samples: MonitorSample[];
+  rollups: MonitorRollups;
 }
 
 export interface PublicNodeSummary {

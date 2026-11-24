@@ -5,7 +5,11 @@ import type { AlertObservation, AlertStateRow } from "./alerts.ts";
 import { ALERT_STATE_COLUMNS, buildAlertStatements } from "./alerts.ts";
 import type { JobRow } from "./jobs.ts";
 import type { MonitorRow, ProbeResult } from "./monitors.ts";
-import { appendMonitorSample, probeMonitor } from "./monitors.ts";
+import {
+  appendMonitorRollup,
+  appendMonitorSample,
+  probeMonitor,
+} from "./monitors.ts";
 import type { SettingRow } from "./settings.ts";
 import {
   SELECT_SETTINGS_SQL,
@@ -74,7 +78,7 @@ export async function runTick(
     (await db.allBatch([
       { sql: SELECT_SETTINGS_SQL },
       {
-        sql: "SELECT id, name, enabled, muted_until, samples_json FROM monitors",
+        sql: "SELECT id, name, enabled, muted_until, samples_json, rollup_json FROM monitors",
       },
       {
         sql: "SELECT id, label, interval_secs, grace_secs, muted_until, last_seen_at FROM nodes WHERE last_seen_at IS NOT NULL",
@@ -103,21 +107,26 @@ export async function runTick(
       continue;
     }
     appliedProbes += 1;
+    const sample = {
+      ts: sampleBucketTs,
+      ok: res.ok,
+      latency_ms: res.latencyMs,
+    };
     writeStatements.push({
       sql: `UPDATE monitors SET
               last_checked_at = ?1, last_status = ?2, last_http_status = ?3,
-              last_latency_ms = ?4, last_error = ?5, samples_json = ?6
-            WHERE id = ?7`,
+              last_latency_ms = ?4, last_error = ?5, samples_json = ?6, rollup_json = ?7
+            WHERE id = ?8`,
       params: [
         now,
         res.ok ? "ok" : "fail",
         res.httpStatus,
         res.latencyMs,
         res.error,
-        appendMonitorSample(m.samples_json, {
-          ts: sampleBucketTs,
-          ok: res.ok,
-          latency_ms: res.latencyMs,
+        appendMonitorSample(m.samples_json, sample),
+        appendMonitorRollup(m.rollup_json, m.samples_json, {
+          ...sample,
+          ts: now,
         }),
         m.id,
       ],

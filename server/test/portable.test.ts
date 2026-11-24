@@ -931,4 +931,62 @@ describe("uptarn portable server", () => {
       expect(rawText).not.toContain(secret);
     }
   });
+
+  it("tracks 30m, 6h, and 1d monitor uptime rollups across ticks", async () => {
+    vi.useFakeTimers();
+    const baseMs = Date.UTC(2026, 10, 20, 0, 10, 0);
+    vi.setSystemTime(baseMs);
+
+    const config = loadConfig({
+      PUBLIC_BASE_URL: "https://status.example.com",
+      ADMIN_TOKEN: "admin-rollup",
+    });
+    const app = createApp(db, config);
+
+    await upsertMonitor(db, {
+      id: "blog",
+      name: "Blog",
+      url: "https://blog.example.com",
+      is_public: true,
+    });
+
+    let nextOk = true;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("ok", { status: nextOk ? 200 : 503 })),
+    );
+
+    // Day 1: 1 ok, 1 fail in the same 30m bucket.
+    await runTick(db, config, { forceMonitors: true });
+    vi.setSystemTime(baseMs + 5 * 60_000);
+    nextOk = false;
+    await runTick(db, config, { forceMonitors: true });
+
+    // Day 2 (+24h): 1 ok in a new 30m / 6h / 1d bucket.
+    vi.setSystemTime(baseMs + 86_400_000);
+    nextOk = true;
+    await runTick(db, config, { forceMonitors: true });
+
+    const pubRes = await app.request("/api/v1/public/status");
+    const pub = await pubRes.json<{
+      monitors: {
+        name: string;
+        rollups: {
+          m30: { ok: number; total: number }[];
+          h6: { ok: number; total: number }[];
+          d1: { ok: number; total: number }[];
+        };
+      }[];
+    }>();
+
+    expect(pub.monitors).toHaveLength(1);
+
+    const { rollups } = pub.monitors[0];
+
+    expect(rollups.d1).toHaveLength(2);
+    expect(rollups.d1[0]).toMatchObject({ ok: 1, total: 2 });
+    expect(rollups.d1[1]).toMatchObject({ ok: 1, total: 1 });
+    expect(rollups.h6).toHaveLength(2);
+    expect(rollups.m30.at(-1)).toMatchObject({ ok: 1, total: 1 });
+  });
 });

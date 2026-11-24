@@ -1,12 +1,14 @@
 <script setup lang="ts">
+import { useStorage } from "@vueuse/core";
 import { computed, reactive, ref } from "vue";
 
 import MonitorModal from "../components/modals/MonitorModal.vue";
 import MonitorRow from "../components/monitors/MonitorRow.vue";
+import MonitorWindowToggle from "../components/monitors/MonitorWindowToggle.vue";
 import EChart from "../components/ui/EChart.vue";
 import EmptyState from "../components/ui/EmptyState.vue";
 import PageHeader from "../components/ui/PageHeader.vue";
-import type { MonitorSummary } from "../lib/index.ts";
+import type { MonitorSummary, MonitorWindow } from "../lib/index.ts";
 import {
   buildMonitorLatencyOption,
   monitorLatencyStats,
@@ -23,15 +25,20 @@ const { isDark, persistOrder } = useUptarnStore();
 const monitorModalOpen = ref(false);
 const editingMonitor = ref<MonitorSummary | null>(null);
 const expandedIds = reactive(new Set<string>());
+const monitorWindow = useStorage<MonitorWindow>("uptarn:monitor-window", "24h");
 
 const rows = computed(() =>
   snap.value.monitors.map((mon) => ({
     mon,
-    stats: monitorLatencyStats(mon),
-    chartOption:
-      expandedIds.has(mon.id) && mon.samples.length >= 2
-        ? buildMonitorLatencyOption(mon, isDark.value)
-        : null,
+    stats: monitorLatencyStats(mon, monitorWindow.value, snap.value.now),
+    chartOption: expandedIds.has(mon.id)
+      ? buildMonitorLatencyOption(
+          mon,
+          isDark.value,
+          monitorWindow.value,
+          snap.value.now,
+        )
+      : null,
   })),
 );
 
@@ -75,6 +82,7 @@ const onToggleMute = (mon: MonitorSummary) =>
 <template>
   <div class="space-y-6">
     <PageHeader title="Monitors">
+      <MonitorWindowToggle v-if="rows.length > 0" v-model="monitorWindow" />
       <UButton
         color="primary"
         icon="i-lucide-plus"
@@ -98,6 +106,7 @@ const onToggleMute = (mon: MonitorSummary) =>
           :monitor="mon"
           :now="snap.now"
           :reorderable="canReorder"
+          :window="monitorWindow"
           @edit="openMonitorModal(mon)"
           @move-down="moveBy(mon.id, 1)"
           @move-up="moveBy(mon.id, -1)"

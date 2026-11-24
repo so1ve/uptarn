@@ -77,9 +77,15 @@ const indexHtml = fs.existsSync(indexPath)
 
 const app = createApp(db, config);
 const staticHandler = serveStatic({ root: PUBLIC_DIR });
-app.use("/assets/*", staticHandler);
-app.use("/fonts/*", staticHandler);
-app.use("/favicon.svg", staticHandler);
+for (const route of [
+  "/assets/*",
+  "/fonts/*",
+  "/favicon.svg",
+  "/logo-dark.svg",
+  "/logo-light.svg",
+]) {
+  app.use(route, staticHandler);
+}
 app.get("*", async (c, next) => {
   if (c.req.path.startsWith("/api/")) {
     await next();

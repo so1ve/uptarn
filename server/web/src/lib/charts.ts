@@ -15,6 +15,8 @@ import {
   formatSeriesValue,
   formatTimestamp,
 } from "../../../src/shared/index.ts";
+import type { MonitorWindow } from "./telemetry.ts";
+import { getMonitorWindowBuckets } from "./telemetry.ts";
 
 use([BarChart, LineChart, GridComponent, TooltipComponent, CanvasRenderer]);
 
@@ -322,8 +324,23 @@ export function buildProbeCharts(
 export function buildMonitorLatencyOption(
   mon: MonitorSummary,
   isDark: boolean,
-): EChartsCoreOption {
+  window: MonitorWindow = "live",
+  now = 0,
+): EChartsCoreOption | null {
   const p = chartPalette(isDark);
+  const points =
+    window === "live"
+      ? mon.samples.map((s) => ({
+          ts: s.ts,
+          ms: s.ok ? s.latency_ms : null,
+        }))
+      : getMonitorWindowBuckets(mon, window, now).map((b) => ({
+          ts: b.ts,
+          ms: b.avg_ms,
+        }));
+  if (points.length < 2) {
+    return null;
+  }
 
   return {
     animationDuration: 180,
@@ -331,13 +348,16 @@ export function buildMonitorLatencyOption(
     tooltip: baseTooltip(isDark, (v) =>
       typeof v === "number" ? `${Math.round(v)} ms` : "Failed",
     ),
-    xAxis: timeAxis(mon.samples.map((s) => s.ts)),
+    xAxis: timeAxis(
+      points.map((pt) => pt.ts),
+      window !== "live" && window !== "24h",
+    ),
     yAxis: valueAxis(p.gridColor, { splitNumber: 3 }, "{value} ms"),
     series: [
       areaLine(
-        "Latency",
+        window === "live" ? "Latency" : "Avg latency",
         p.cpu,
-        mon.samples.map((s) => (s.ok ? s.latency_ms : null)),
+        points.map((pt) => pt.ms),
         isDark,
       ),
     ],

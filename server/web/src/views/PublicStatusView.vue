@@ -1,13 +1,15 @@
 <script setup lang="ts">
+import { useStorage } from "@vueuse/core";
 import { computed, ref } from "vue";
 
 import SignInForm from "../components/modals/SignInForm.vue";
 import MonitorRow from "../components/monitors/MonitorRow.vue";
+import MonitorWindowToggle from "../components/monitors/MonitorWindowToggle.vue";
 import SparkMetric from "../components/ui/SparkMetric.vue";
 import StatusDot from "../components/ui/StatusDot.vue";
 import UsageBar from "../components/ui/UsageBar.vue";
 import AppLayout from "../layouts/AppLayout.vue";
-import type { PublicStatusSnapshot } from "../lib/index.ts";
+import type { MonitorWindow, PublicStatusSnapshot } from "../lib/index.ts";
 import {
   formatDuration,
   hostOf,
@@ -22,6 +24,7 @@ const props = defineProps<{
 
 const { loadState } = useUptarnStore();
 const signInOpen = ref(false);
+const monitorWindow = useStorage<MonitorWindow>("uptarn:monitor-window", "24h");
 
 document.title = "Status - Uptarn";
 useLiveRefresh("public", 10_000, 3000);
@@ -89,13 +92,17 @@ async function onSignedIn() {
       </div>
 
       <section v-if="status.monitors.length > 0" class="space-y-3">
-        <h2 class="text-base font-semibold tracking-tight">Services</h2>
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <h2 class="text-base font-semibold tracking-tight">Services</h2>
+          <MonitorWindowToggle v-model="monitorWindow" />
+        </div>
         <div class="divide-y divide-default border-y border-default">
           <MonitorRow
             v-for="mon in status.monitors"
             :key="mon.key"
             :monitor="mon"
             :now="status.now"
+            :window="monitorWindow"
           />
         </div>
       </section>

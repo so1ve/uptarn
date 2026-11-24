@@ -1,6 +1,11 @@
 import type { SqlDatabase, SqlStatement } from "../db/index.ts";
 import { errorMessage, httpError, readBoundedText } from "../http.ts";
-import type { MonitorInput, MonitorSample } from "../shared/index.ts";
+import type {
+  MonitorInput,
+  MonitorRollupBucket,
+  MonitorRollups,
+  MonitorSample,
+} from "../shared/index.ts";
 import { unixNow } from "../shared/index.ts";
 import { parseMonitorInput } from "../validation.ts";
 
@@ -29,6 +34,7 @@ export interface MonitorRow extends MonitorConfigFields {
   last_latency_ms: number | null;
   last_error: string | null;
   samples_json: string;
+  rollup_json: string;
 }
 
 type CompactMonitorSample = [ts: number, ok: 0 | 1, latency_ms: number | null];
@@ -60,6 +66,111 @@ export function appendMonitorSample(
     .map((s) => [s.ts, s.ok ? 1 : 0, s.latency_ms]);
 
   return JSON.stringify(compact);
+}
+
+type CompactRollupBucket = [
+  ts: number,
+  ok: number,
+  total: number,
+  ms_sum: number,
+  ms_cnt: number,
+];
+
+interface CompactRollups {
+  m30?: CompactRollupBucket[];
+  h6?: CompactRollupBucket[];
+  d1?: CompactRollupBucket[];
+}
+
+const ROLLUP_SPECS = [
+  { key: "m30", step: 1800, limit: 48 },
+  { key: "h6", step: 21_600, limit: 28 },
+  { key: "d1", step: 86_400, limit: 30 },
+] as const;
+
+function addSampleToCompact(
+  rollup: CompactRollups,
+  ts: number,
+  ok: boolean,
+  latencyMs: number | null,
+): void {
+  for (const { key, step, limit } of ROLLUP_SPECS) {
+    const bucketTs = Math.floor(ts / step) * step;
+    const minTs = bucketTs - (limit - 1) * step;
+    const list = (rollup[key] ?? []).filter((b) => b[0] >= minTs);
+    let bucket = list.find((b) => b[0] === bucketTs);
+    if (!bucket) {
+      bucket = [bucketTs, 0, 0, 0, 0];
+      list.push(bucket);
+    }
+    bucket[2] += 1;
+    if (ok) {
+      bucket[1] += 1;
+      if (latencyMs !== null) {
+        bucket[3] += Math.round(latencyMs);
+        bucket[4] += 1;
+      }
+    }
+    list.sort((a, b) => a[0] - b[0]);
+    rollup[key] = list.slice(-limit);
+  }
+}
+
+function loadCompactRollups(
+  raw: string | null | undefined,
+  fallbackSamples?: readonly MonitorSample[],
+): CompactRollups {
+  const parsed = raw ? (JSON.parse(raw) as CompactRollups) : {};
+  const hasData =
+    (parsed.m30?.length ?? 0) > 0 ||
+    (parsed.h6?.length ?? 0) > 0 ||
+    (parsed.d1?.length ?? 0) > 0;
+  if (!hasData && fallbackSamples && fallbackSamples.length > 0) {
+    const seeded: CompactRollups = {};
+    for (const s of fallbackSamples) {
+      addSampleToCompact(seeded, s.ts, s.ok, s.latency_ms);
+    }
+
+    return seeded;
+  }
+
+  return parsed;
+}
+
+export function appendMonitorRollup(
+  rawRollup: string | null | undefined,
+  rawSamples: string | null | undefined,
+  sample: MonitorSample,
+): string {
+  const rollup = loadCompactRollups(rawRollup, parseMonitorSamples(rawSamples));
+  addSampleToCompact(rollup, sample.ts, sample.ok, sample.latency_ms);
+
+  return JSON.stringify(rollup);
+}
+
+const toRollupBuckets = (
+  list: readonly CompactRollupBucket[] | undefined,
+): MonitorRollupBucket[] =>
+  (list ?? [])
+    .map(([ts, ok, total, msSum, msCnt]) => ({
+      ts,
+      ok,
+      total,
+      avg_ms: msCnt > 0 ? Math.round(msSum / msCnt) : null,
+    }))
+    .sort((a, b) => a.ts - b.ts);
+
+export function parseMonitorRollups(
+  raw: string | null | undefined,
+  fallbackSamples?: readonly MonitorSample[],
+): MonitorRollups {
+  const compact = loadCompactRollups(raw, fallbackSamples);
+
+  return {
+    m30: toRollupBuckets(compact.m30),
+    h6: toRollupBuckets(compact.h6),
+    d1: toRollupBuckets(compact.d1),
+  };
 }
 
 export interface ProbeResult {

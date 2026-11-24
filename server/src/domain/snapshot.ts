@@ -22,7 +22,7 @@ import type {
 import { unixNow } from "../shared/index.ts";
 import type { JobRow } from "./jobs.ts";
 import type { MonitorRow } from "./monitors.ts";
-import { parseMonitorSamples } from "./monitors.ts";
+import { parseMonitorRollups, parseMonitorSamples } from "./monitors.ts";
 import type { SettingRow } from "./settings.ts";
 import { SELECT_SETTINGS_SQL, parseRuntimeSettings } from "./settings.ts";
 
@@ -301,17 +301,23 @@ export async function getDashboardSnapshot(
       is_public,
       last_status,
       samples_json,
+      rollup_json,
       ...rest
-    }) => ({
-      ...rest,
-      enabled: enabled === 1,
-      is_public: is_public === 1,
-      last_status:
-        last_status === "ok" || last_status === "fail"
-          ? last_status
-          : "pending",
-      samples: parseMonitorSamples(samples_json),
-    }),
+    }) => {
+      const samples = parseMonitorSamples(samples_json);
+
+      return {
+        ...rest,
+        enabled: enabled === 1,
+        is_public: is_public === 1,
+        last_status:
+          last_status === "ok" || last_status === "fail"
+            ? last_status
+            : "pending",
+        samples,
+        rollups: parseMonitorRollups(rollup_json, samples),
+      };
+    },
   );
 
   const jobs: JobSummary[] = jobRows.map(({ created_at: _c, ...row }) => {
@@ -401,7 +407,7 @@ export async function getPublicStatusSnapshot(
     (await db.allBatch([
       { sql: "SELECT COUNT(*) AS count FROM admin_passkeys" },
       {
-        sql: `SELECT id, name, public_url, enabled, last_checked_at, last_status, last_http_status, last_latency_ms, samples_json
+        sql: `SELECT id, name, public_url, enabled, last_checked_at, last_status, last_http_status, last_latency_ms, samples_json, rollup_json
             FROM monitors WHERE is_public = 1 ORDER BY sort_order ASC, name ASC`,
       },
       {
@@ -452,6 +458,10 @@ export async function getPublicStatusSnapshot(
               : "Unreachable"
             : null,
         samples: parseMonitorSamples(row.samples_json).slice(-36),
+        rollups: parseMonitorRollups(
+          row.rollup_json,
+          parseMonitorSamples(row.samples_json),
+        ),
       };
     }),
     nodes: nodeRows.map((row, idx) => {
