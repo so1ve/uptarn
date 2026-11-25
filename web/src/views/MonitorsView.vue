@@ -2,8 +2,7 @@
 import { computed, reactive, ref } from "vue";
 
 import MonitorModal from "../components/modals/MonitorModal.vue";
-import MonitorRow from "../components/monitors/MonitorRow.vue";
-import ChartCard from "../components/ui/ChartCard.vue";
+import MonitorItem from "../components/monitors/MonitorItem.vue";
 import EmptyState from "../components/ui/EmptyState.vue";
 import MuteButton from "../components/ui/MuteButton.vue";
 import PageHeader from "../components/ui/PageHeader.vue";
@@ -11,47 +10,27 @@ import SegmentedControl from "../components/ui/SegmentedControl.vue";
 import type { MonitorSummary } from "../lib/index.ts";
 import {
   MONITOR_WINDOWS,
-  buildMonitorLatencyOption,
   collectGroups,
   groupItems,
-  monitorLatencyStats,
   reorderNamedGroups,
   useMonitorWindow,
   usePersistedReorder,
   useSnapshot,
-  useUptarnStore,
 } from "../lib/index.ts";
 
 const snap = useSnapshot();
-const { isDark } = useUptarnStore();
 
 const monitorModalOpen = ref(false);
 const editingMonitor = ref<MonitorSummary | null>(null);
 const expandedIds = reactive(new Set<string>());
 const monitorWindow = useMonitorWindow();
 
-const rows = computed(() =>
-  snap.value.monitors.map((mon) => ({
-    mon,
-    stats: monitorLatencyStats(mon, monitorWindow.value, snap.value.now),
-    chartOption:
-      mon.probe.type !== "exec" && expandedIds.has(mon.id)
-        ? buildMonitorLatencyOption(
-            mon,
-            isDark.value,
-            monitorWindow.value,
-            snap.value.now,
-          )
-        : null,
-  })),
-);
-
-const groupedRows = computed(() =>
-  groupItems(rows.value, (row) => row.mon.group),
+const groupedMonitors = computed(() =>
+  groupItems(snap.value.monitors, (mon) => mon.group),
 );
 const existingGroups = computed(() => collectGroups(snap.value.monitors));
 const namedGroupCount = computed(
-  () => groupedRows.value.filter((g) => g.isNamed).length,
+  () => groupedMonitors.value.filter((g) => g.isNamed).length,
 );
 const groupById = computed(
   () => new Map(snap.value.monitors.map((m) => [m.id, m.group])),
@@ -65,31 +44,28 @@ const {
   commit: commitOrder,
 } = usePersistedReorder(
   "monitors",
-  () => groupedRows.value.flatMap((g) => g.items.map((r) => r.mon.id)),
+  () => groupedMonitors.value.flatMap((g) => g.items.map((m) => m.id)),
   undefined,
   (id) => groupById.value.get(id) ?? null,
 );
 
 function moveGroup(index: number, delta: -1 | 1) {
   const next = reorderNamedGroups(
-    groupedRows.value,
+    groupedMonitors.value,
     index,
     delta,
-    (r) => r.mon.id,
+    (m) => m.id,
   );
   if (next) {
     commitOrder(next);
   }
 }
 
-function toggleExpand(mon: MonitorSummary) {
-  if (mon.probe.type === "exec") {
-    return;
-  }
-  if (expandedIds.has(mon.id)) {
-    expandedIds.delete(mon.id);
+function toggleExpand(id: string) {
+  if (expandedIds.has(id)) {
+    expandedIds.delete(id);
   } else {
-    expandedIds.add(mon.id);
+    expandedIds.add(id);
   }
 }
 
@@ -103,7 +79,7 @@ function openMonitorModal(mon: MonitorSummary | null) {
   <div class="space-y-6">
     <PageHeader title="Monitors">
       <SegmentedControl
-        v-if="rows.length > 0"
+        v-if="snap.monitors.length > 0"
         v-model="monitorWindow"
         aria-label="Uptime window"
         mono
@@ -119,11 +95,11 @@ function openMonitorModal(mon: MonitorSummary | null) {
       </UButton>
     </PageHeader>
 
-    <EmptyState v-if="rows.length === 0">No monitors yet.</EmptyState>
+    <EmptyState v-if="snap.monitors.length === 0">No monitors yet.</EmptyState>
 
     <div v-else class="space-y-6">
       <div
-        v-for="(group, groupIdx) in groupedRows"
+        v-for="(group, groupIdx) in groupedMonitors"
         :key="group.key"
         class="space-y-2"
       >
@@ -134,7 +110,7 @@ function openMonitorModal(mon: MonitorSummary | null) {
             groupDropAttrs(
               group.key,
               group.isNamed ? group.label : null,
-              group.items.map((r) => r.mon.id),
+              group.items.map((m) => m.id),
               canReorder,
             )
           "
@@ -167,11 +143,11 @@ function openMonitorModal(mon: MonitorSummary | null) {
 
         <div class="divide-y divide-default border-y border-default">
           <div
-            v-for="{ mon, stats, chartOption } in group.items"
+            v-for="mon in group.items"
             :key="mon.id"
             v-bind="dragAttrs(mon.id, canReorder)"
           >
-            <MonitorRow
+            <MonitorItem
               :expanded="expandedIds.has(mon.id)"
               :monitor="mon"
               :now="snap.now"
@@ -180,23 +156,9 @@ function openMonitorModal(mon: MonitorSummary | null) {
               @edit="openMonitorModal(mon)"
               @move-down="moveBy(mon.id, 1)"
               @move-up="moveBy(mon.id, -1)"
-              @toggle="toggleExpand(mon)"
-            />
-
-            <ChartCard
-              v-if="mon.probe.type !== 'exec' && expandedIds.has(mon.id)"
-              class="mb-4 sm:ml-6"
-              compact
-              empty-text="No samples yet."
-              height="180px"
-              :option="chartOption"
+              @toggle="toggleExpand(mon.id)"
             >
-              <template #title>
-                <span class="font-mono text-xs text-muted tabular-nums">
-                  {{ stats ?? "" }}
-                </span>
-              </template>
-              <template #meta>
+              <template #chart-meta>
                 <MuteButton
                   :label="mon.name"
                   :muted-until="mon.muted_until"
@@ -206,7 +168,7 @@ function openMonitorModal(mon: MonitorSummary | null) {
                   variant="soft"
                 />
               </template>
-            </ChartCard>
+            </MonitorItem>
           </div>
         </div>
       </div>

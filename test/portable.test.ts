@@ -1778,4 +1778,169 @@ describe("uptarn portable server", () => {
       { ts: 1350, value: 30, aux: null },
     ]);
   });
+
+  it("exposes strictly redacted public incidents and has_latency flags without leaking private targets or internal node checks", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000 * 1000);
+    const config = loadConfig({
+      PUBLIC_BASE_URL: "https://status.example.com",
+      ADMIN_TOKEN: "admin-tok",
+      FAILURE_THRESHOLD: "1",
+    });
+    const app = createApp(db, config);
+    const adminHeaders = {
+      "Authorization": "Bearer admin-tok",
+      "Content-Type": "application/json",
+    };
+
+    const nodeRes = await app.request("/api/v1/admin/nodes", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({
+        id: "secret-node-slug",
+        label: "Public Edge",
+        is_public: true,
+        interval_secs: 60,
+        grace_secs: 60,
+      }),
+    });
+    const { token } = await nodeRes.json<{ token: string }>();
+
+    // Report node with a failing internal check (must NEVER appear on public incidents)
+    // and an agent exec monitor (has_latency must be false).
+    await ingestNodeReport(
+      db,
+      config,
+      {
+        node_id: "secret-node-slug",
+        label: "Public Edge",
+        system: { uptime_secs: 1000 },
+        checks: [
+          {
+            key: "db_secret",
+            label: "Internal DB",
+            status: "fail",
+            summary: "password auth failed on 10.0.0.5",
+          },
+        ],
+        monitors: [
+          {
+            key: "worker",
+            name: "Queue Worker",
+            from: "agent",
+            type: "exec",
+            is_public: true,
+            result: { ok: true },
+          },
+        ],
+      },
+      token,
+    );
+
+    await upsertMonitor(db, {
+      id: "pub-api",
+      name: "Public API",
+      url: "https://internal.corp:8443/health",
+      is_public: true,
+    });
+    await upsertMonitor(db, {
+      id: "priv-api",
+      name: "Secret Admin",
+      url: "https://10.0.0.9/admin",
+      is_public: false,
+    });
+
+    // Fail both monitors with sensitive error text -> firing alert_events
+    vi.stubGlobal("fetch", (async () => {
+      throw new Error("connect ECONNREFUSED 10.0.0.88:8443");
+    }) satisfies typeof fetch);
+    await runTick(db, config, { forceMonitors: true });
+
+    // Recover both monitors 120s later -> paired resolved incident
+    vi.setSystemTime(10_120 * 1000);
+    vi.stubGlobal(
+      "fetch",
+      (async () => new Response("ok", { status: 200 })) satisfies typeof fetch,
+    );
+    await runTick(db, config, { forceMonitors: true });
+
+    // Trigger an ongoing HTTP 502 on pub-api and let node go offline
+    vi.setSystemTime(10_400 * 1000);
+    vi.stubGlobal(
+      "fetch",
+      (async () =>
+        new Response("bad gw", { status: 502 })) satisfies typeof fetch,
+    );
+    await runTick(db, config, { forceMonitors: true });
+
+    const pubRes = await app.request("/api/v1/public/status");
+    const raw = await pubRes.text();
+
+    expect(raw).not.toContain("secret-node-slug");
+    expect(raw).not.toContain("Secret Admin");
+    expect(raw).not.toContain("Internal DB");
+    expect(raw).not.toContain("10.0.0.88");
+    expect(raw).not.toContain("10.0.0.5");
+
+    const pub = JSON.parse(raw) as {
+      monitors: { key: string; name: string; has_latency: boolean }[];
+      nodes: { key: string; label: string }[];
+      incidents: {
+        key: string;
+        target_key: string;
+        target_type: string;
+        name: string;
+        state: string;
+        started_at: number;
+        resolved_at: number | null;
+        reason: string;
+      }[];
+    };
+
+    const apiMon = pub.monitors.find((m) => m.name === "Public API")!;
+    const execMon = pub.monitors.find((m) => m.name === "Queue Worker")!;
+
+    expect(apiMon.has_latency).toBeTruthy();
+    expect(execMon.has_latency).toBeFalsy();
+
+    expect(pub.incidents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          target_type: "node",
+          target_key: pub.nodes[0].key,
+          name: "Public Edge",
+          state: "open",
+          resolved_at: null,
+          reason: "Offline",
+        }),
+        expect.objectContaining({
+          target_type: "monitor",
+          target_key: execMon.key,
+          name: "Queue Worker",
+          state: "open",
+          resolved_at: null,
+          reason: "Failed",
+        }),
+        expect.objectContaining({
+          target_type: "monitor",
+          target_key: apiMon.key,
+          name: "Public API",
+          state: "open",
+          resolved_at: null,
+          reason: "HTTP 502",
+        }),
+        expect.objectContaining({
+          target_type: "monitor",
+          target_key: apiMon.key,
+          name: "Public API",
+          state: "resolved",
+          started_at: 10_000,
+          resolved_at: 10_120,
+          reason: "Unreachable",
+        }),
+      ]),
+    );
+    expect(pub.incidents).toHaveLength(4);
+    expect(pub.incidents.at(-1)?.state).toBe("resolved");
+  });
 });

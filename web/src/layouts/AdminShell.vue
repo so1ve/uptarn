@@ -5,8 +5,10 @@ import { useRoute } from "vue-router";
 import IssuedTokenModal from "../components/modals/IssuedTokenModal.vue";
 import SettingsModal from "../components/modals/SettingsModal.vue";
 import MutedBadge from "../components/ui/MutedBadge.vue";
+import StatusBanner from "../components/ui/StatusBanner.vue";
 import {
   apiFetch,
+  splitIncident,
   useAction,
   useLiveRefresh,
   useSnapshot,
@@ -28,6 +30,18 @@ const { signOutState } = useUptarnStore();
 const settingsOpen = ref(false);
 
 const totalIncidents = computed(() => snap.value.incidents.length);
+const openIncidents = computed(
+  () => snap.value.incidents.filter((i) => i.state === "open").length,
+);
+const incidentHeadline = computed(() => {
+  const titles = snap.value.incidents
+    .slice(0, 3)
+    .map((inc) => splitIncident(inc).title)
+    .join(", ");
+  const extra = snap.value.incidents.length - 3;
+
+  return extra > 0 ? `${titles} +${extra} more` : titles;
+});
 
 const pageTitle = computed(() => {
   if (route.name === "node-detail") {
@@ -180,6 +194,24 @@ async function onSignOut() {
         <span class="hidden sm:inline">Sign out</span>
       </UButton>
     </template>
+
+    <StatusBanner
+      v-if="snap.incidents.length > 0 && route.name !== 'incidents'"
+      class="mb-6"
+      :title="`${snap.incidents.length} ${snap.incidents.length === 1 ? 'active incident' : 'active incidents'}`"
+      to="/admin/incidents"
+      :tone="openIncidents > 0 ? 'fail' : 'warn'"
+    >
+      <span class="truncate text-xs text-muted">{{ incidentHeadline }}</span>
+      <template #trailing>
+        <span
+          class="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-muted"
+        >
+          View incidents
+          <UIcon class="size-3.5" name="i-lucide-arrow-right" />
+        </span>
+      </template>
+    </StatusBanner>
 
     <RouterView />
 

@@ -9,12 +9,10 @@ import DragHandle from "../components/ui/DragHandle.vue";
 import EmptyState from "../components/ui/EmptyState.vue";
 import PageHeader from "../components/ui/PageHeader.vue";
 import SegmentedControl from "../components/ui/SegmentedControl.vue";
-import StatusBanner from "../components/ui/StatusBanner.vue";
 import {
   collectGroups,
   groupItems,
   reorderNamedGroups,
-  splitIncident,
   usePersistedReorder,
   useSnapshot,
 } from "../lib/index.ts";
@@ -28,10 +26,6 @@ const snap = useSnapshot();
 const nodesView = useStorage<"cards" | "table">("uptarn:nodes-view", "cards");
 const nodeFilter = ref("");
 const addNodeOpen = ref(false);
-
-const openIncidents = computed(
-  () => snap.value.incidents.filter((i) => i.state === "open").length,
-);
 
 const filteredNodes = computed(() => {
   const q = nodeFilter.value.trim().toLowerCase();
@@ -84,37 +78,10 @@ function moveGroup(index: number, delta: -1 | 1) {
     onReorderNodes(next);
   }
 }
-
-const incidentHeadline = computed(() => {
-  const titles = snap.value.incidents
-    .slice(0, 3)
-    .map((inc) => splitIncident(inc).title)
-    .join(", ");
-  const extra = snap.value.incidents.length - 3;
-
-  return extra > 0 ? `${titles} +${extra} more` : titles;
-});
 </script>
 
 <template>
   <div class="space-y-6">
-    <StatusBanner
-      v-if="snap.incidents.length > 0"
-      :title="`${snap.incidents.length} ${snap.incidents.length === 1 ? 'active incident' : 'active incidents'}`"
-      to="/admin/incidents"
-      :tone="openIncidents > 0 ? 'fail' : 'warn'"
-    >
-      <span class="truncate text-xs text-muted">{{ incidentHeadline }}</span>
-      <template #trailing>
-        <span
-          class="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-muted"
-        >
-          View incidents
-          <UIcon class="size-3.5" name="i-lucide-arrow-right" />
-        </span>
-      </template>
-    </StatusBanner>
-
     <PageHeader title="Nodes">
       <UInput
         v-if="snap.nodes.length > 6"

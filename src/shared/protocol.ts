@@ -298,6 +298,7 @@ export interface PublicMonitorSummary {
   key: string;
   name: string;
   group: string | null;
+  has_latency: boolean;
   public_url: string | null;
   enabled: boolean;
   last_checked_at: number | null;
@@ -321,6 +322,17 @@ export interface PublicNodeSummary {
   mem_history: SeriesPoint[];
 }
 
+export interface PublicIncidentSummary {
+  key: string;
+  target_key: string;
+  target_type: "monitor" | "node";
+  name: string;
+  state: "open" | "resolved";
+  started_at: number;
+  resolved_at: number | null;
+  reason: string;
+}
+
 export interface PublicStatusSnapshot {
   now: number;
   version: string;
@@ -328,6 +340,7 @@ export interface PublicStatusSnapshot {
   auth: AuthMethodsSummary;
   monitors: PublicMonitorSummary[];
   nodes: PublicNodeSummary[];
+  incidents: PublicIncidentSummary[];
 }
 
 export type BootPayload =

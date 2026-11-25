@@ -198,7 +198,7 @@ export const stripUrlScheme = (url: string): string =>
   url.replace(/^https?:\/\//, "").replace(/\/$/, "");
 
 export function monitorLatencyStats(
-  mon: MonitorSummary,
+  mon: MonitorSummary | PublicMonitorSummary,
   window: MonitorWindow = "live",
   now = 0,
 ): string | null {

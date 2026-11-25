@@ -9,11 +9,13 @@ import type {
   IncidentSummary,
   InfoSnapshot,
   JobSummary,
+  MonitorKind,
   MonitorSummary,
   MountSnapshot,
   NodeHistoryResponse,
   NodeSummary,
   PasskeySummary,
+  PublicIncidentSummary,
   PublicStatusSnapshot,
   SeriesPoint,
   SeriesSnapshot,
@@ -72,6 +74,140 @@ interface RawNodeSample {
 const MAX_DETAIL_POINTS = 72;
 const BUILTIN_SERIES_KEYS = ["_cpu", "_mem", "_rx_bps", "_tx_bps"] as const;
 const PUBLIC_SPARK_KEYS = new Set<string>(["_cpu", "_mem"]);
+
+interface PublicAlertStateRow {
+  incident_key: string;
+  target_type: "monitor" | "node";
+  target_id: string;
+  opened_at: number | null;
+  last_changed_at: number;
+  last_summary: string;
+}
+
+interface PublicAlertEventRow {
+  incident_key: string;
+  target_type: "monitor" | "node";
+  target_id: string;
+  kind: "firing" | "resolved";
+  summary: string;
+  created_at: number;
+}
+
+function sanitizePublicReason(
+  targetType: "monitor" | "node",
+  summary: string,
+  probeType?: MonitorKind,
+): string {
+  if (targetType === "node") {
+    return "Offline";
+  }
+  const httpMatch = /^HTTP (\d{3})\b/.exec(summary);
+  if (httpMatch) {
+    return `HTTP ${httpMatch[1]}`;
+  }
+  if (/^Timed out\b/i.test(summary)) {
+    return "Timed out";
+  }
+
+  return probeType === "exec" ? "Failed" : "Unreachable";
+}
+
+function buildPublicIncidents(
+  openStates: readonly PublicAlertStateRow[],
+  eventRows: readonly PublicAlertEventRow[],
+  publicMonitors: ReadonlyMap<
+    string,
+    { key: string; name: string; probeType: MonitorKind }
+  >,
+  publicNodes: ReadonlyMap<string, { key: string; label: string }>,
+): PublicIncidentSummary[] {
+  function resolveTarget(
+    targetType: "monitor" | "node",
+    targetId: string,
+    incidentKey: string,
+  ): { targetKey: string; name: string; probeType?: MonitorKind } | null {
+    if (targetType === "monitor") {
+      const m = publicMonitors.get(targetId);
+
+      return m
+        ? { targetKey: m.key, name: m.name, probeType: m.probeType }
+        : null;
+    }
+    if (incidentKey !== `node:${targetId}:offline`) {
+      return null;
+    }
+    const n = publicNodes.get(targetId);
+
+    return n ? { targetKey: n.key, name: n.label } : null;
+  }
+
+  const pendingFiring = new Map<
+    string,
+    { startedAt: number; reason: string }
+  >();
+  const resolved: Omit<PublicIncidentSummary, "key">[] = [];
+
+  for (const ev of [...eventRows].reverse()) {
+    const target = resolveTarget(ev.target_type, ev.target_id, ev.incident_key);
+    if (!target) {
+      continue;
+    }
+    if (ev.kind === "firing") {
+      pendingFiring.set(ev.incident_key, {
+        startedAt: ev.created_at,
+        reason: sanitizePublicReason(
+          ev.target_type,
+          ev.summary,
+          target.probeType,
+        ),
+      });
+    } else {
+      const started = pendingFiring.get(ev.incident_key);
+      pendingFiring.delete(ev.incident_key);
+      resolved.push({
+        target_key: target.targetKey,
+        target_type: ev.target_type,
+        name: target.name,
+        state: "resolved",
+        started_at: started?.startedAt ?? ev.created_at,
+        resolved_at: ev.created_at,
+        reason:
+          started?.reason ??
+          sanitizePublicReason(ev.target_type, ev.summary, target.probeType),
+      });
+    }
+  }
+
+  const ongoing: Omit<PublicIncidentSummary, "key">[] = [];
+  for (const st of openStates) {
+    const target = resolveTarget(st.target_type, st.target_id, st.incident_key);
+    if (!target) {
+      continue;
+    }
+    const fired = pendingFiring.get(st.incident_key);
+    ongoing.push({
+      target_key: target.targetKey,
+      target_type: st.target_type,
+      name: target.name,
+      state: "open",
+      started_at: st.opened_at ?? fired?.startedAt ?? st.last_changed_at,
+      resolved_at: null,
+      reason: sanitizePublicReason(
+        st.target_type,
+        st.last_summary,
+        target.probeType,
+      ),
+    });
+  }
+
+  ongoing.sort((a, b) => b.started_at - a.started_at);
+  resolved.sort((a, b) => b.started_at - a.started_at);
+
+  return [...ongoing, ...resolved].slice(0, 20).map((item, idx) => ({
+    key: `i${idx}`,
+    ...item,
+  }));
+}
 
 function parseNodeCore(row: NodeCoreRow, now: number) {
   const system = row.system_json
@@ -402,7 +538,13 @@ export async function getPublicStatusSnapshot(
   config: LoadedConfig,
 ): Promise<PublicStatusSnapshot> {
   const now = unixNow();
-  const [passkeyCountRows, monitorRows, nodeRows] = (await db.allBatch([
+  const [
+    passkeyCountRows,
+    monitorRows,
+    nodeRows,
+    openAlertStates,
+    recentAlertEvents,
+  ] = (await db.allBatch([
     { sql: "SELECT COUNT(*) AS count FROM admin_passkeys" },
     {
       sql: `SELECT id, name, group_name, probe_json, public_url, enabled, last_checked_at, last_status, last_http_status, last_latency_ms, samples_json, rollup_json
@@ -412,58 +554,96 @@ export async function getPublicStatusSnapshot(
       sql: `SELECT id, label, group_name, primary_mount, interval_secs, grace_secs, last_seen_at, system_json, mounts_json, checks_json, series_json, spark_json
             FROM nodes WHERE is_public = 1 ORDER BY sort_order ASC, label ASC`,
     },
-  ])) as [{ count: number }[], MonitorRow[], NodeCoreRow[]];
+    {
+      sql: `SELECT incident_key, target_type, target_id, opened_at, last_changed_at, last_summary
+            FROM alert_states WHERE state = 'open' AND target_type IN ('monitor', 'node')`,
+    },
+    {
+      sql: `SELECT incident_key, target_type, target_id, kind, summary, created_at
+            FROM alert_events WHERE target_type IN ('monitor', 'node') ORDER BY created_at DESC LIMIT 60`,
+    },
+  ])) as [
+    { count: number }[],
+    MonitorRow[],
+    NodeCoreRow[],
+    PublicAlertStateRow[],
+    PublicAlertEventRow[],
+  ];
+
+  const publicMonitorsById = new Map<
+    string,
+    { key: string; name: string; probeType: MonitorKind }
+  >();
+  const monitors = monitorRows.map((row, idx) => {
+    const key = `m${idx}`;
+    const status = monitorStatus(row.last_status);
+    const allSamples = parseMonitorSamples(row.samples_json);
+    const probe = parseMonitorProbe(row.probe_json);
+    publicMonitorsById.set(row.id, {
+      key,
+      name: row.name,
+      probeType: probe.type,
+    });
+
+    return {
+      key,
+      name: row.name,
+      group: row.group_name ?? null,
+      has_latency: probe.type !== "exec",
+      public_url: row.public_url,
+      enabled: row.enabled === 1,
+      last_checked_at: row.last_checked_at,
+      last_status: status,
+      last_latency_ms: row.last_latency_ms,
+      status_detail:
+        status === "fail"
+          ? row.last_http_status
+            ? `HTTP ${row.last_http_status}`
+            : probe.type === "exec"
+              ? "Failed"
+              : "Unreachable"
+          : null,
+      samples: allSamples.slice(-36),
+      rollups: parseMonitorRollups(row.rollup_json, allSamples),
+    };
+  });
+
+  const publicNodesById = new Map<string, { key: string; label: string }>();
+  const nodes = nodeRows.map((row, idx) => {
+    const key = `n${idx}`;
+    publicNodesById.set(row.id, { key, label: row.label });
+    const { system, mounts, overallStatus } = parseNodeCore(row, now);
+    const hist = parseNodeSpark(row.spark_json, PUBLIC_SPARK_KEYS, now);
+    const rawMemPct = memPercent(system);
+    const memPct = rawMemPct === null ? null : round1(rawMemPct);
+
+    return {
+      key,
+      label: row.label,
+      group: row.group_name ?? null,
+      overall_status: overallStatus,
+      uptime_secs:
+        overallStatus === "offline" ? null : (system?.uptime_secs ?? null),
+      cpu_pct: system?.cpu_pct ?? null,
+      mem_pct: memPct,
+      storage_pct: publicStoragePct(mounts, row.primary_mount),
+      cpu_history: hist._cpu ?? [],
+      mem_history: hist._mem ?? [],
+    };
+  });
 
   return {
     now,
     version: manifest.version,
     public_base_url: config.publicBaseUrl,
     auth: buildAuthSummary(config, passkeyCountRows[0]?.count ?? 0),
-    monitors: monitorRows.map((row, idx) => {
-      const status = monitorStatus(row.last_status);
-      const allSamples = parseMonitorSamples(row.samples_json);
-      const probe = parseMonitorProbe(row.probe_json);
-
-      return {
-        key: `m${idx}`,
-        name: row.name,
-        group: row.group_name ?? null,
-        public_url: row.public_url,
-        enabled: row.enabled === 1,
-        last_checked_at: row.last_checked_at,
-        last_status: status,
-        last_latency_ms: row.last_latency_ms,
-        status_detail:
-          status === "fail"
-            ? row.last_http_status
-              ? `HTTP ${row.last_http_status}`
-              : probe.type === "exec"
-                ? "Failed"
-                : "Unreachable"
-            : null,
-        samples: allSamples.slice(-36),
-        rollups: parseMonitorRollups(row.rollup_json, allSamples),
-      };
-    }),
-    nodes: nodeRows.map((row, idx) => {
-      const { system, mounts, overallStatus } = parseNodeCore(row, now);
-      const hist = parseNodeSpark(row.spark_json, PUBLIC_SPARK_KEYS, now);
-      const rawMemPct = memPercent(system);
-      const memPct = rawMemPct === null ? null : round1(rawMemPct);
-
-      return {
-        key: `n${idx}`,
-        label: row.label,
-        group: row.group_name ?? null,
-        overall_status: overallStatus,
-        uptime_secs:
-          overallStatus === "offline" ? null : (system?.uptime_secs ?? null),
-        cpu_pct: system?.cpu_pct ?? null,
-        mem_pct: memPct,
-        storage_pct: publicStoragePct(mounts, row.primary_mount),
-        cpu_history: hist._cpu ?? [],
-        mem_history: hist._mem ?? [],
-      };
-    }),
+    monitors,
+    nodes,
+    incidents: buildPublicIncidents(
+      openAlertStates,
+      recentAlertEvents,
+      publicMonitorsById,
+      publicNodesById,
+    ),
   };
 }

@@ -5,6 +5,7 @@ import type {
   DotStatus,
   MonitorSummary,
   MonitorWindow,
+  PublicIncidentSummary,
   PublicMonitorSummary,
 } from "../../lib/index.ts";
 import {
@@ -34,6 +35,7 @@ const props = withDefaults(
     window?: MonitorWindow;
     expanded?: boolean;
     reorderable?: boolean;
+    incidents?: readonly PublicIncidentSummary[];
   }>(),
   { window: "24h" },
 );
@@ -44,8 +46,10 @@ const adminMon = computed<MonitorSummary | null>(() =>
   "probe" in props.monitor ? props.monitor : null,
 );
 
-const expandable = computed(
-  () => adminMon.value !== null && adminMon.value.probe.type !== "exec",
+const expandable = computed(() =>
+  adminMon.value === null
+    ? (props.monitor as PublicMonitorSummary).has_latency
+    : adminMon.value.probe.type !== "exec",
 );
 
 const dotStatus = computed<DotStatus>(() =>
@@ -141,11 +145,7 @@ const errorText = computed(() =>
           :class="expanded ? 'rotate-90 text-default' : ''"
           name="i-lucide-chevron-right"
         />
-        <span
-          v-else-if="adminMon"
-          aria-hidden="true"
-          class="size-3.5 shrink-0"
-        />
+        <span v-else aria-hidden="true" class="size-3.5 shrink-0" />
         <StatusDot :status="dotStatus" />
       </div>
 
@@ -274,7 +274,7 @@ const errorText = computed(() =>
       "
       @click.stop
     >
-      <MonitorBars :monitor :now :window />
+      <MonitorBars :incidents :monitor :now :window />
     </div>
 
     <div

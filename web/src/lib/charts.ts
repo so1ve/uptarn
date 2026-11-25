@@ -7,6 +7,7 @@ import { CanvasRenderer } from "echarts/renderers";
 import type {
   MonitorSummary,
   NodeSummary,
+  PublicMonitorSummary,
   SeriesPoint,
   SeriesSnapshot,
 } from "../../../src/shared/index.ts";
@@ -324,7 +325,7 @@ export function buildProbeCharts(
 }
 
 export function buildMonitorLatencyOption(
-  mon: MonitorSummary,
+  mon: MonitorSummary | PublicMonitorSummary,
   isDark: boolean,
   window: MonitorWindow = "live",
   now = 0,

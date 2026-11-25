@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 
+import PublicIncidentsSection from "../components/incidents/PublicIncidentsSection.vue";
 import SignInForm from "../components/modals/SignInForm.vue";
-import MonitorRow from "../components/monitors/MonitorRow.vue";
+import MonitorItem from "../components/monitors/MonitorItem.vue";
 import EmptyState from "../components/ui/EmptyState.vue";
 import SegmentedControl from "../components/ui/SegmentedControl.vue";
 import SparkMetric from "../components/ui/SparkMetric.vue";
@@ -32,6 +33,15 @@ const router = useRouter();
 const { loadState } = useUptarnStore();
 const signInOpen = ref(false);
 const monitorWindow = useMonitorWindow();
+const expandedKeys = reactive(new Set<string>());
+
+function toggleExpand(key: string) {
+  if (expandedKeys.has(key)) {
+    expandedKeys.delete(key);
+  } else {
+    expandedKeys.add(key);
+  }
+}
 
 document.title = "Status - Uptarn";
 useLiveRefresh("public", 10_000, 3000);
@@ -45,6 +55,28 @@ const groupedMonitors = computed(() =>
 const groupedNodes = computed(() =>
   groupItems(props.status.nodes, (n) => n.group),
 );
+const ongoingIncidents = computed(() =>
+  props.status.incidents.filter((i) => i.state === "open"),
+);
+const resolvedIncidents = computed(() =>
+  props.status.incidents.filter((i) => i.state === "resolved"),
+);
+const incidentsByMonitorKey = computed(() => {
+  const map = new Map<string, typeof props.status.incidents>();
+  for (const inc of props.status.incidents) {
+    if (inc.target_type !== "monitor") {
+      continue;
+    }
+    const list = map.get(inc.target_key);
+    if (list) {
+      list.push(inc);
+    } else {
+      map.set(inc.target_key, [inc]);
+    }
+  }
+
+  return map;
+});
 
 const banner = computed(() => {
   const failing =
@@ -111,6 +143,13 @@ async function onSignedIn() {
     <div v-else class="space-y-8">
       <StatusBanner :title="banner.text" :tone="banner.tone" />
 
+      <PublicIncidentsSection
+        highlight
+        :incidents="ongoingIncidents"
+        :now="status.now"
+        title="Active incidents"
+      />
+
       <section v-if="status.monitors.length > 0" class="space-y-4">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <h2 class="text-base font-semibold tracking-tight">Services</h2>
@@ -131,13 +170,16 @@ async function onSignedIn() {
               {{ group.label }}
             </h3>
             <div class="divide-y divide-default border-y border-default">
-              <MonitorRow
-                v-for="mon in group.items"
-                :key="mon.key"
-                :monitor="mon"
-                :now="status.now"
-                :window="monitorWindow"
-              />
+              <div v-for="mon in group.items" :key="mon.key">
+                <MonitorItem
+                  :expanded="expandedKeys.has(mon.key)"
+                  :incidents="incidentsByMonitorKey.get(mon.key)"
+                  :monitor="mon"
+                  :now="status.now"
+                  :window="monitorWindow"
+                  @toggle="toggleExpand(mon.key)"
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -229,6 +271,12 @@ async function onSignedIn() {
           </div>
         </div>
       </section>
+
+      <PublicIncidentsSection
+        :incidents="resolvedIncidents"
+        :now="status.now"
+        title="Recent incidents"
+      />
     </div>
 
     <UModal

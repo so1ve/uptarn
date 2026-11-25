@@ -6,6 +6,7 @@ import type {
   MonitorSample,
   MonitorSummary,
   MonitorWindow,
+  PublicIncidentSummary,
   PublicMonitorSummary,
 } from "../../lib/index.ts";
 import {
@@ -13,6 +14,7 @@ import {
   formatAge,
   formatClock,
   formatDateShort,
+  formatDuration,
   formatUptimePct,
 } from "../../lib/index.ts";
 
@@ -20,6 +22,7 @@ const props = defineProps<{
   monitor: MonitorSummary | PublicMonitorSummary;
   window: MonitorWindow;
   now: number;
+  incidents?: readonly PublicIncidentSummary[];
 }>();
 
 interface BarTooltip {
@@ -31,6 +34,7 @@ interface BarTooltip {
   ok?: number;
   failed?: number;
   total?: number;
+  incidentNote?: string | null;
 }
 
 interface BarSlot {
@@ -138,6 +142,23 @@ const slots = computed<BarSlot[]>(() => {
     const state =
       bucket.ok === bucket.total ? "ok" : pct >= 90 ? "warn" : "fail";
     const tone = SLOT_TONE[state];
+    const bucketEnd = ts + step;
+    const overlapping =
+      props.incidents?.filter((inc) => {
+        const end = inc.resolved_at ?? props.now;
+
+        return inc.started_at < bucketEnd && end >= ts;
+      }) ?? [];
+    let incidentNote: string | null = null;
+    if (overlapping.length === 1) {
+      const inc = overlapping[0];
+      const dur = formatDuration(
+        Math.max(0, (inc.resolved_at ?? props.now) - inc.started_at),
+      );
+      incidentNote = `${inc.reason} (${dur})`;
+    } else if (overlapping.length > 1) {
+      incidentNote = `${overlapping.length} incidents (${overlapping[0].reason})`;
+    }
 
     return {
       colorClass: tone.dot,
@@ -151,6 +172,7 @@ const slots = computed<BarSlot[]>(() => {
         ok: bucket.ok,
         failed: bucket.total - bucket.ok,
         total: bucket.total,
+        incidentNote,
       },
     };
   });
@@ -210,6 +232,12 @@ const slots = computed<BarSlot[]>(() => {
                 {{ slot.tip.failed }} failed
               </span>
               <span v-else class="text-dimmed">All passed</span>
+            </div>
+            <div
+              v-if="slot.tip.incidentNote"
+              class="border-t border-default pt-1.5 font-mono text-[11px] text-amber-600 dark:text-amber-400"
+            >
+              {{ slot.tip.incidentNote }}
             </div>
           </div>
         </template>
