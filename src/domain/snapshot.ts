@@ -33,6 +33,7 @@ import {
   parseMonitorRollups,
   parseMonitorSamples,
 } from "./monitors.ts";
+import { parseNodeSpark } from "./nodes.ts";
 import type { SettingRow } from "./settings.ts";
 import { SELECT_SETTINGS_SQL, parseRuntimeSettings } from "./settings.ts";
 
@@ -47,6 +48,7 @@ interface NodeCoreRow {
   mounts_json: string;
   checks_json: string;
   series_json: string;
+  spark_json: string;
   primary_mount: string | null;
 }
 
@@ -67,10 +69,9 @@ interface RawNodeSample {
   values_json: string;
 }
 
-const SPARK_WINDOW_SECS = 6 * 3600;
-const MAX_SERIES_POINTS = 48;
 const MAX_DETAIL_POINTS = 72;
 const BUILTIN_SERIES_KEYS = ["_cpu", "_mem", "_rx_bps", "_tx_bps"] as const;
+const PUBLIC_SPARK_KEYS = new Set<string>(["_cpu", "_mem"]);
 
 function parseNodeCore(row: NodeCoreRow, now: number) {
   const system = row.system_json
@@ -98,7 +99,7 @@ function parseNodeCore(row: NodeCoreRow, now: number) {
 
 function downsampleSeries(
   pts: SeriesPoint[],
-  maxPoints = MAX_SERIES_POINTS,
+  maxPoints = MAX_DETAIL_POINTS,
 ): SeriesPoint[] {
   if (pts.length <= maxPoints) {
     return pts;
@@ -145,7 +146,7 @@ function downsampleSeries(
 function groupNodeSamples(
   rows: readonly RawNodeSample[],
   allowedKeysByNode: Map<string, Set<string>>,
-  maxPoints = MAX_SERIES_POINTS,
+  maxPoints = MAX_DETAIL_POINTS,
 ): Map<string, Record<string, SeriesPoint[]>> {
   const byNode = new Map<string, Record<string, SeriesPoint[]>>();
   for (const row of rows) {
@@ -224,7 +225,6 @@ export async function getDashboardSnapshot(
     jobRows,
     incidents,
     eventRows,
-    nodeSampleRows,
   ] = (await db.allBatch([
     { sql: SELECT_SETTINGS_SQL },
     {
@@ -232,7 +232,7 @@ export async function getDashboardSnapshot(
     },
     {
       sql: `SELECT id, label, group_name, is_public, public_managed, primary_mount, interval_secs, grace_secs, muted_until, created_at,
-                   last_seen_at, rx_bps, tx_bps, system_json, mounts_json, checks_json, series_json, info_json, agent_version
+                   last_seen_at, rx_bps, tx_bps, system_json, mounts_json, checks_json, series_json, info_json, spark_json, agent_version
             FROM nodes ORDER BY sort_order ASC, id ASC`,
     },
     { sql: "SELECT * FROM monitors ORDER BY sort_order ASC, name ASC" },
@@ -245,10 +245,6 @@ export async function getDashboardSnapshot(
       sql: `SELECT id, incident_key, target_type, target_id, label, kind, summary, created_at, delivery_json
             FROM alert_events ORDER BY created_at DESC LIMIT 40`,
     },
-    {
-      sql: "SELECT s.node_id, s.ts, s.values_json FROM nodes n CROSS JOIN node_samples s ON s.node_id = n.id AND s.ts >= ?1",
-      params: [now - SPARK_WINDOW_SECS],
-    },
   ])) as [
     SettingRow[],
     (Omit<PasskeySummary, "backed_up"> & { backed_up: number })[],
@@ -257,7 +253,6 @@ export async function getDashboardSnapshot(
     JobRow[],
     IncidentSummary[],
     (Omit<AlertEventSummary, "delivery"> & { delivery_json: string })[],
-    RawNodeSample[],
   ];
 
   const settings = parseRuntimeSettings(settingRows, config);
@@ -268,23 +263,13 @@ export async function getDashboardSnapshot(
     }),
   );
 
-  const parsedNodes = nodeRows.map((row) => ({
-    row,
-    ...parseNodeCore(row, now),
-    info: JSON.parse(row.info_json) as InfoSnapshot[],
-  }));
-  const historyByNode = groupNodeSamples(
-    nodeSampleRows,
-    new Map(
-      parsedNodes.map(({ row, series }) => [
-        row.id,
-        buildAllowedSeriesKeys(series),
-      ]),
-    ),
-  );
+  const nodes: NodeSummary[] = nodeRows.map((row) => {
+    const { system, mounts, checks, series, overallStatus } = parseNodeCore(
+      row,
+      now,
+    );
 
-  const nodes: NodeSummary[] = parsedNodes.map(
-    ({ row, system, mounts, checks, series, info, overallStatus }) => ({
+    return {
       id: row.id,
       label: row.label,
       group: row.group_name ?? null,
@@ -304,10 +289,14 @@ export async function getDashboardSnapshot(
       mounts,
       checks,
       series,
-      info,
-      history: historyByNode.get(row.id) ?? {},
-    }),
-  );
+      info: JSON.parse(row.info_json) as InfoSnapshot[],
+      history: parseNodeSpark(
+        row.spark_json,
+        buildAllowedSeriesKeys(series),
+        now,
+      ),
+    };
+  });
 
   const monitors: MonitorSummary[] = monitorRows.map((row) => {
     const samples = parseMonitorSamples(row.samples_json);
@@ -413,30 +402,17 @@ export async function getPublicStatusSnapshot(
   config: LoadedConfig,
 ): Promise<PublicStatusSnapshot> {
   const now = unixNow();
-  const [passkeyCountRows, monitorRows, nodeRows, nodeSampleRows] =
-    (await db.allBatch([
-      { sql: "SELECT COUNT(*) AS count FROM admin_passkeys" },
-      {
-        sql: `SELECT id, name, group_name, probe_json, public_url, enabled, last_checked_at, last_status, last_http_status, last_latency_ms, samples_json, rollup_json
+  const [passkeyCountRows, monitorRows, nodeRows] = (await db.allBatch([
+    { sql: "SELECT COUNT(*) AS count FROM admin_passkeys" },
+    {
+      sql: `SELECT id, name, group_name, probe_json, public_url, enabled, last_checked_at, last_status, last_http_status, last_latency_ms, samples_json, rollup_json
             FROM monitors WHERE is_public = 1 ORDER BY sort_order ASC, name ASC`,
-      },
-      {
-        sql: `SELECT id, label, group_name, primary_mount, interval_secs, grace_secs, last_seen_at, system_json, mounts_json, checks_json, series_json
+    },
+    {
+      sql: `SELECT id, label, group_name, primary_mount, interval_secs, grace_secs, last_seen_at, system_json, mounts_json, checks_json, series_json, spark_json
             FROM nodes WHERE is_public = 1 ORDER BY sort_order ASC, label ASC`,
-      },
-      {
-        sql: `SELECT s.node_id, s.ts, s.values_json FROM nodes n
-            CROSS JOIN node_samples s ON s.node_id = n.id AND s.ts >= ?1
-            WHERE n.is_public = 1`,
-        params: [now - SPARK_WINDOW_SECS],
-      },
-    ])) as [{ count: number }[], MonitorRow[], NodeCoreRow[], RawNodeSample[]];
-
-  const publicKeys = new Set<string>(["_cpu", "_mem"]);
-  const historyByNode = groupNodeSamples(
-    nodeSampleRows,
-    new Map(nodeRows.map((row) => [row.id, publicKeys])),
-  );
+    },
+  ])) as [{ count: number }[], MonitorRow[], NodeCoreRow[]];
 
   return {
     now,
@@ -471,7 +447,7 @@ export async function getPublicStatusSnapshot(
     }),
     nodes: nodeRows.map((row, idx) => {
       const { system, mounts, overallStatus } = parseNodeCore(row, now);
-      const hist = historyByNode.get(row.id) ?? {};
+      const hist = parseNodeSpark(row.spark_json, PUBLIC_SPARK_KEYS, now);
       const rawMemPct = memPercent(system);
       const memPct = rawMemPct === null ? null : round1(rawMemPct);
 

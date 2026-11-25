@@ -10,6 +10,7 @@ import type {
   MonitorProbe,
   NodeMonitorSpec,
   NodeReportPayload,
+  SeriesPoint,
 } from "../shared/index.ts";
 import {
   formatSeriesWithLoss,
@@ -31,6 +32,98 @@ import {
 import type { SettingRow } from "./settings.ts";
 import { SELECT_SETTINGS_SQL, parseRuntimeSettings } from "./settings.ts";
 
+const SPARK_STEP_SECS = 450;
+const MAX_SPARK_BUCKETS = 48;
+
+type CompactSparkEntry =
+  [sum: number, count: number] | [sum: number, count: number, maxAux: number];
+type CompactSparkBucket = [
+  ts: number,
+  values: Record<string, CompactSparkEntry>,
+];
+
+export function appendNodeSpark(
+  raw: string | null | undefined,
+  sampleValues: Record<string, number | [number, number]>,
+  now: number,
+): string {
+  const bucketTs = Math.floor(now / SPARK_STEP_SECS) * SPARK_STEP_SECS;
+  const minTs = bucketTs - (MAX_SPARK_BUCKETS - 1) * SPARK_STEP_SECS;
+  const buckets = (raw ? (JSON.parse(raw) as CompactSparkBucket[]) : []).filter(
+    (b) => b[0] >= minTs,
+  );
+  const entries = Object.entries(sampleValues);
+  if (entries.length === 0) {
+    return JSON.stringify(buckets);
+  }
+
+  let bucket = buckets.find((b) => b[0] === bucketTs);
+  if (!bucket) {
+    bucket = [bucketTs, {}];
+    buckets.push(bucket);
+  }
+  const values = bucket[1];
+  for (const [key, entry] of entries) {
+    const val = Array.isArray(entry) ? entry[0] : entry;
+    const aux = Array.isArray(entry) ? entry[1] : undefined;
+    const prev = values[key];
+    if (prev) {
+      const nextSum = round1(prev[0] + val);
+      const nextCount = prev[1] + 1;
+      const prevAux = prev[2];
+      const nextAux =
+        aux === undefined
+          ? prevAux
+          : prevAux === undefined
+            ? aux
+            : Math.max(prevAux, aux);
+      values[key] =
+        nextAux === undefined
+          ? [nextSum, nextCount]
+          : [nextSum, nextCount, nextAux];
+    } else {
+      values[key] = aux === undefined ? [val, 1] : [val, 1, aux];
+    }
+  }
+  buckets.sort((a, b) => a[0] - b[0]);
+
+  return JSON.stringify(buckets.slice(-MAX_SPARK_BUCKETS));
+}
+
+export function parseNodeSpark(
+  raw: string | null | undefined,
+  allowedKeys: ReadonlySet<string>,
+  now: number,
+): Record<string, SeriesPoint[]> {
+  if (!raw || allowedKeys.size === 0) {
+    return {};
+  }
+  const minTs =
+    Math.floor(now / SPARK_STEP_SECS) * SPARK_STEP_SECS -
+    (MAX_SPARK_BUCKETS - 1) * SPARK_STEP_SECS;
+  const buckets = JSON.parse(raw) as CompactSparkBucket[];
+  const hist: Record<string, SeriesPoint[]> = {};
+  for (const [ts, values] of buckets) {
+    if (ts < minTs) {
+      continue;
+    }
+    for (const [key, entry] of Object.entries(values)) {
+      if (allowedKeys.has(key)) {
+        (hist[key] ??= []).push({
+          ts,
+          value: round1(entry[0] / entry[1]),
+          aux: entry[2] ?? null,
+        });
+      }
+    }
+  }
+  for (const pts of Object.values(hist)) {
+    pts.sort((a, b) => a.ts - b.ts);
+  }
+
+  return hist;
+}
+
 interface NodeIngestRow {
   id: string;
   label: string;
@@ -44,6 +137,7 @@ interface NodeIngestRow {
   prev_net_at: number | null;
   rx_bps: number | null;
   tx_bps: number | null;
+  spark_json: string;
 }
 
 async function issueNodeToken() {
@@ -310,7 +404,7 @@ export async function ingestNodeReport(
     { sql: SELECT_SETTINGS_SQL },
     {
       sql: `SELECT id, label, token_hash, interval_secs, grace_secs, muted_until, is_public,
-                   prev_rx_bytes, prev_tx_bytes, prev_net_at, rx_bps, tx_bps
+                   prev_rx_bytes, prev_tx_bytes, prev_net_at, rx_bps, tx_bps, spark_json
             FROM nodes WHERE id = ?1`,
       params: [payload.node_id],
     },
@@ -403,13 +497,34 @@ export async function ingestNodeReport(
         ? 1
         : 0;
 
+  const sampleValues: Record<string, number | [number, number]> = {};
+  if (payload.system?.cpu_pct !== undefined) {
+    sampleValues._cpu = round1(payload.system.cpu_pct);
+  }
+  const memPct = memPercent(payload.system ?? null);
+  if (memPct !== null) {
+    sampleValues._mem = round1(memPct);
+  }
+  if (rxBps !== null) {
+    sampleValues._rx_bps = round1(rxBps);
+  }
+  if (txBps !== null) {
+    sampleValues._tx_bps = round1(txBps);
+  }
+  for (const item of series) {
+    const val = round1(item.value);
+    sampleValues[item.key] =
+      item.loss_pct === undefined ? val : [val, round1(item.loss_pct)];
+  }
+  const sparkJson = appendNodeSpark(existing?.spark_json, sampleValues, now);
+
   const statements: SqlStatement[] = [
     {
       sql: `INSERT INTO nodes (
               id, label, token_hash, interval_secs, grace_secs, is_public, public_managed, sort_order, created_at,
               last_seen_at, prev_rx_bytes, prev_tx_bytes, prev_net_at,
-              rx_bps, tx_bps, system_json, mounts_json, checks_json, series_json, info_json, agent_version
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, COALESCE((SELECT MAX(sort_order) + 1 FROM nodes), 0), ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+              rx_bps, tx_bps, system_json, mounts_json, checks_json, series_json, info_json, spark_json, agent_version
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, COALESCE((SELECT MAX(sort_order) + 1 FROM nodes), 0), ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
             ON CONFLICT(id) DO UPDATE SET
               label = excluded.label,
               interval_secs = excluded.interval_secs,
@@ -427,6 +542,7 @@ export async function ingestNodeReport(
               checks_json = excluded.checks_json,
               series_json = excluded.series_json,
               info_json = excluded.info_json,
+              spark_json = excluded.spark_json,
               agent_version = COALESCE(excluded.agent_version, nodes.agent_version)`,
       params: [
         nodeId,
@@ -448,6 +564,7 @@ export async function ingestNodeReport(
         JSON.stringify(checks),
         JSON.stringify(series),
         JSON.stringify(info),
+        sparkJson,
         payload.agent_version ?? null,
       ],
     },
@@ -467,25 +584,6 @@ export async function ingestNodeReport(
     monitorObservations = managed.observations;
   }
 
-  const sampleValues: Record<string, number | [number, number]> = {};
-  if (payload.system?.cpu_pct !== undefined) {
-    sampleValues._cpu = round1(payload.system.cpu_pct);
-  }
-  const memPct = memPercent(payload.system ?? null);
-  if (memPct !== null) {
-    sampleValues._mem = round1(memPct);
-  }
-  if (rxBps !== null) {
-    sampleValues._rx_bps = round1(rxBps);
-  }
-  if (txBps !== null) {
-    sampleValues._tx_bps = round1(txBps);
-  }
-  for (const item of series) {
-    const val = round1(item.value);
-    sampleValues[item.key] =
-      item.loss_pct === undefined ? val : [val, round1(item.loss_pct)];
-  }
   if (Object.keys(sampleValues).length > 0) {
     statements.push({
       sql: "INSERT OR REPLACE INTO node_samples (node_id, ts, values_json) VALUES (?1, ?2, ?3)",

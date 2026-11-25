@@ -1,0 +1,1 @@
+ALTER TABLE nodes ADD COLUMN spark_json TEXT NOT NULL DEFAULT '[]';

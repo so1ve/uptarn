@@ -1696,4 +1696,86 @@ describe("uptarn portable server", () => {
       snapAfterSync.monitors.find((m) => m.id === "homelab:yanqi")?.group,
     ).toBeNull();
   });
+
+  it("serves 6h node sparklines from embedded nodes.spark_json without reading node_samples", async () => {
+    vi.useFakeTimers();
+    const config = loadConfig({
+      PUBLIC_BASE_URL: "https://status.example.com",
+      ADMIN_TOKEN: "admin-tok",
+    });
+    const app = createApp(db, config);
+    const adminHeaders = {
+      "Authorization": "Bearer admin-tok",
+      "Content-Type": "application/json",
+    };
+
+    const nodeRes = await app.request("/api/v1/admin/nodes", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({ id: "edge", label: "Edge", is_public: true }),
+    });
+    const { token } = await nodeRes.json<{ token: string }>();
+
+    // Two reports in the same 450s bucket (t=900, 960) and one in the next bucket (t=1400).
+    for (const [ts, cpu, ping, loss] of [
+      [900, 10, 40, 0],
+      [960, 20, 60, 25],
+      [1400, 30, 50, 0],
+    ] as const) {
+      vi.setSystemTime(ts * 1000);
+      await ingestNodeReport(
+        db,
+        config,
+        {
+          node_id: "edge",
+          label: "Edge",
+          system: {
+            uptime_secs: ts,
+            cpu_pct: cpu,
+            mem_used_bytes: 500,
+            mem_total_bytes: 1000,
+          },
+          series: [
+            {
+              key: "tcp.relay",
+              label: "Relay",
+              unit: "ms",
+              value: ping,
+              loss_pct: loss,
+              status: "ok",
+            },
+          ],
+        },
+        token,
+      );
+    }
+
+    // Wipe node_samples to prove snapshots read exclusively from nodes.spark_json.
+    await db.run("DELETE FROM node_samples");
+
+    const snap = await (
+      await app.request("/api/v1/admin/snapshot", { headers: adminHeaders })
+    ).json<DashboardSnapshot>();
+    const edge = snap.nodes.find((n) => n.id === "edge")!;
+
+    expect(edge.history._cpu).toEqual([
+      { ts: 900, value: 15, aux: null },
+      { ts: 1350, value: 30, aux: null },
+    ]);
+    expect(edge.history["tcp.relay"]).toEqual([
+      { ts: 900, value: 50, aux: 25 },
+      { ts: 1350, value: 50, aux: 0 },
+    ]);
+
+    const pub = await (
+      await app.request("/api/v1/public/status")
+    ).json<{
+      nodes: { cpu_history: { ts: number; value: number }[] }[];
+    }>();
+
+    expect(pub.nodes[0].cpu_history).toEqual([
+      { ts: 900, value: 15, aux: null },
+      { ts: 1350, value: 30, aux: null },
+    ]);
+  });
 });
