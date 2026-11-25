@@ -26,7 +26,6 @@ export interface IssuedToken {
   graceSecs?: number;
 }
 
-const IS_DEMO = import.meta.env.VITE_DEMO === "true";
 const LIVE_PING_MS = 25_000;
 const LIVE_MIN_BACKOFF_MS = 1500;
 const LIVE_MAX_BACKOFF_MS = 30_000;
@@ -364,8 +363,11 @@ export function useLiveRefresh(
   focusDebounceMs = 3000,
 ) {
   const refresher = kind === "admin" ? adminRefresher : publicRefresher;
-  const liveEnabled = !IS_DEMO && typeof WebSocket !== "undefined";
+  const wsEnabled = typeof WebSocket !== "undefined";
   let socket: WebSocket | null = null;
+  let demoUnsub: (() => void) | null = null;
+  let demoPending = false;
+  let liveSession = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let pingTimer: ReturnType<typeof setInterval> | null = null;
   let backoffMs = LIVE_MIN_BACKOFF_MS;
@@ -383,8 +385,14 @@ export function useLiveRefresh(
   }
 
   function disconnectLive() {
+    liveSession += 1;
     clearTimers();
     liveConnected.value = false;
+    demoPending = false;
+    if (demoUnsub) {
+      demoUnsub();
+      demoUnsub = null;
+    }
     if (socket) {
       const ws = socket;
       socket = null;
@@ -394,7 +402,7 @@ export function useLiveRefresh(
     }
   }
 
-  function connectLive() {
+  function connectWebSocketLive() {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     const suffix = kind === "public" ? "?scope=public" : "";
     const ws = new WebSocket(`${proto}//${location.host}/api/v1/live${suffix}`);
@@ -432,7 +440,7 @@ export function useLiveRefresh(
         reconnectTimer = setTimeout(() => {
           reconnectTimer = null;
           if (!disposed && !document.hidden && socket === null) {
-            connectLive();
+            connectWebSocketLive();
           }
         }, delay);
       }
@@ -444,8 +452,33 @@ export function useLiveRefresh(
     });
   }
 
-  if (liveEnabled && !document.hidden) {
-    connectLive();
+  function startLive() {
+    if (import.meta.env.VITE_DEMO === "true") {
+      if (demoUnsub || demoPending) {
+        return;
+      }
+      demoPending = true;
+      const session = liveSession;
+      void import("./demo.ts").then(({ subscribeDemoLive }) => {
+        if (disposed || document.hidden || session !== liveSession) {
+          return;
+        }
+        demoPending = false;
+        liveConnected.value = true;
+        demoUnsub = subscribeDemoLive(kind, (msg) => {
+          applyLiveMessage(kind, msg);
+        });
+      });
+
+      return;
+    }
+    if (wsEnabled && socket === null) {
+      connectWebSocketLive();
+    }
+  }
+
+  if (!document.hidden) {
+    startLive();
   }
 
   useIntervalFn(() => {
@@ -468,9 +501,7 @@ export function useLiveRefresh(
 
       return;
     }
-    if (liveEnabled && socket === null) {
-      connectLive();
-    }
+    startLive();
     if (Date.now() - refresher.lastFetchedAt() >= focusDebounceMs) {
       void refresher.refresh();
     }

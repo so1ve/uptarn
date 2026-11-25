@@ -1,9 +1,11 @@
 import manifest from "../../../package.json" with { type: "json" };
 import type {
+  AdminLiveMessage,
   AlertEventSummary,
   BootPayload,
   DashboardSnapshot,
   JobSummary,
+  LiveNodeSample,
   MaintenanceInput,
   MaintenanceSummary,
   MonitorInput,
@@ -14,6 +16,8 @@ import type {
   NodeHistoryResponse,
   NodeSummary,
   PublicIncidentSummary,
+  PublicLiveMessage,
+  PublicLiveNodeSample,
   PublicMaintenanceSummary,
   PublicMonitorSummary,
   PublicNodeSummary,
@@ -22,6 +26,7 @@ import type {
   SiteLink,
 } from "../../../src/shared/index.ts";
 import {
+  MAX_LIVE_POINTS,
   memPercent,
   round1,
   summarizeDisk,
@@ -47,6 +52,7 @@ function buildNodeHistory(
   const seed = [...node.id].reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
   const hist: Record<string, SeriesPoint[]> = {};
   const cpuBase = node.system?.cpu_pct ?? null;
+  const loadBase = node.system?.load_1m ?? null;
   const memBase = memPercent(node.system);
 
   for (let i = points - 1; i >= 0; i--) {
@@ -65,6 +71,19 @@ function buildNodeHistory(
       (hist._mem ??= []).push({
         ts,
         value: Math.min(98, wave(seed + 11, i, memBase, 3.5)),
+        aux: null,
+      });
+    }
+    if (loadBase !== null) {
+      const rawLoad = wave(
+        seed + 17,
+        i,
+        loadBase,
+        Math.max(0.12, loadBase * 0.35),
+      );
+      (hist._load ??= []).push({
+        ts,
+        value: Math.max(0.05, Math.round(rawLoad * 100) / 100),
         aux: null,
       });
     }
@@ -158,10 +177,152 @@ function buildMonitorHistory(
   };
 }
 
+interface DemoLiveBaseline {
+  cpu: number;
+  load: number;
+  memUsed: number;
+  memTotal: number;
+  rxBps: number;
+  txBps: number;
+  seed: number;
+}
+
 interface DemoState {
   signedIn: boolean;
   bootedAt: number;
   snapshot: DashboardSnapshot;
+  liveBaselines: Map<string, DemoLiveBaseline>;
+  liveSamples: Map<string, LiveNodeSample[]>;
+}
+
+const DEMO_LIVE_INTERVAL_MS = 3000;
+const DEMO_LIVE_SEED_POINTS = 45;
+
+const round2 = (n: number): number => Math.round(n * 100) / 100;
+
+function computeDemoLiveSample(
+  nodeId: string,
+  base: DemoLiveBaseline,
+  prev: LiveNodeSample | undefined,
+  ts: number,
+  uptimeSecs: number,
+  step: number,
+): LiveNodeSample {
+  const s = base.seed;
+  const waveA = Math.sin(s * 0.7 + step * 0.28);
+  const waveB = Math.cos(s * 1.3 + step * 0.13);
+  const burst = Math.max(0, Math.sin(s * 0.4 + step * 0.09) - 0.78) * 3.2;
+
+  const targetCpu = Math.min(
+    96,
+    Math.max(
+      1.2,
+      base.cpu +
+        (waveA * 0.55 + waveB * 0.45) * Math.max(2.5, base.cpu * 0.34) +
+        burst * Math.max(3, base.cpu * 0.25),
+    ),
+  );
+  const cpuPct = round1(
+    prev?.cpu_pct === undefined
+      ? targetCpu
+      : prev.cpu_pct +
+          (targetCpu - prev.cpu_pct) * 0.55 +
+          (Math.random() - 0.5) * 1.4,
+  );
+  const clampedCpu = Math.min(98, Math.max(0.8, round1(cpuPct)));
+
+  const cpuRatio = base.cpu > 0 ? clampedCpu / base.cpu : 1;
+  const targetLoad = Math.max(
+    0.04,
+    base.load * (0.65 + 0.35 * cpuRatio) +
+      waveB * Math.max(0.06, base.load * 0.18),
+  );
+  const load1m = round2(
+    Math.max(
+      0.04,
+      prev?.load_1m === undefined
+        ? targetLoad
+        : prev.load_1m +
+            (targetLoad - prev.load_1m) * 0.35 +
+            (Math.random() - 0.5) * 0.04,
+    ),
+  );
+
+  const memDrift =
+    (waveB * 0.018 + (Math.random() - 0.5) * 0.008) * base.memTotal;
+  const targetMem = Math.min(
+    base.memTotal * 0.96,
+    Math.max(base.memTotal * 0.12, base.memUsed + memDrift),
+  );
+  const memUsed = Math.round(
+    prev?.mem_used_bytes === undefined
+      ? targetMem
+      : prev.mem_used_bytes + (targetMem - prev.mem_used_bytes) * 0.3,
+  );
+
+  const netFactorRx = Math.max(
+    0.15,
+    1 +
+      waveA * 0.38 +
+      waveB * 0.22 +
+      burst * 0.65 +
+      (Math.random() - 0.5) * 0.18,
+  );
+  const netFactorTx = Math.max(
+    0.15,
+    1 -
+      waveA * 0.24 +
+      waveB * 0.34 +
+      burst * 0.5 +
+      (Math.random() - 0.5) * 0.18,
+  );
+  const rxBps = Math.max(
+    400,
+    Math.round(
+      prev?.rx_bps !== null && prev?.rx_bps !== undefined
+        ? prev.rx_bps + (base.rxBps * netFactorRx - prev.rx_bps) * 0.5
+        : base.rxBps * netFactorRx,
+    ),
+  );
+  const txBps = Math.max(
+    400,
+    Math.round(
+      prev?.tx_bps !== null && prev?.tx_bps !== undefined
+        ? prev.tx_bps + (base.txBps * netFactorTx - prev.tx_bps) * 0.5
+        : base.txBps * netFactorTx,
+    ),
+  );
+
+  return {
+    node_id: nodeId,
+    ts,
+    uptime_secs: uptimeSecs,
+    cpu_pct: clampedCpu,
+    load_1m: load1m,
+    mem_used_bytes: memUsed,
+    mem_total_bytes: base.memTotal,
+    rx_bps: rxBps,
+    tx_bps: txBps,
+  };
+}
+
+function toPublicLiveSample(
+  key: string,
+  sample: LiveNodeSample,
+): PublicLiveNodeSample {
+  const mem = memPercent({
+    uptime_secs: sample.uptime_secs,
+    mem_used_bytes: sample.mem_used_bytes,
+    mem_total_bytes: sample.mem_total_bytes,
+  });
+
+  return {
+    key,
+    ts: sample.ts,
+    uptime_secs: sample.uptime_secs,
+    cpu_pct: sample.cpu_pct ?? null,
+    mem_pct: mem === null ? null : round1(mem),
+  };
 }
 
 function createInitialState(): DemoState {
@@ -183,6 +344,9 @@ function createInitialState(): DemoState {
       last_seen_at: now - 14,
       rx_bps: 680_000,
       tx_bps: 1_940_000,
+      month_rx_bytes: 184 * 1024 ** 3,
+      month_tx_bytes: 512 * 1024 ** 3,
+      traffic_reset_day: 1,
       agent_version: manifest.version,
       system: {
         uptime_secs: 54 * 86_400 + 14_200,
@@ -258,6 +422,9 @@ function createInitialState(): DemoState {
       last_seen_at: now - 19,
       rx_bps: 290_000,
       tx_bps: 510_000,
+      month_rx_bytes: 92 * 1024 ** 3,
+      month_tx_bytes: 164 * 1024 ** 3,
+      traffic_reset_day: 15,
       agent_version: manifest.version,
       system: {
         uptime_secs: 89 * 86_400 + 7800,
@@ -310,6 +477,9 @@ function createInitialState(): DemoState {
       last_seen_at: now - 11,
       rx_bps: 2_840_000,
       tx_bps: 2_910_000,
+      month_rx_bytes: 742 * 1024 ** 3,
+      month_tx_bytes: 768 * 1024 ** 3,
+      traffic_reset_day: 1,
       agent_version: manifest.version,
       system: {
         uptime_secs: 23 * 86_400 + 19_400,
@@ -367,6 +537,9 @@ function createInitialState(): DemoState {
       last_seen_at: now - 9,
       rx_bps: 1_850_000,
       tx_bps: 940_000,
+      month_rx_bytes: 428 * 1024 ** 3,
+      month_tx_bytes: 215 * 1024 ** 3,
+      traffic_reset_day: 1,
       agent_version: manifest.version,
       system: {
         uptime_secs: 37 * 86_400 + 18_600,
@@ -493,6 +666,9 @@ function createInitialState(): DemoState {
       last_seen_at: now - 23,
       rx_bps: 720_000,
       tx_bps: 3_480_000,
+      month_rx_bytes: 312 * 1024 ** 3,
+      month_tx_bytes: 1180 * 1024 ** 3,
+      traffic_reset_day: 1,
       agent_version: manifest.version,
       system: {
         uptime_secs: 118 * 86_400 + 5100,
@@ -552,6 +728,9 @@ function createInitialState(): DemoState {
       last_seen_at: now - 16,
       rx_bps: 6_250_000,
       tx_bps: 2_140_000,
+      month_rx_bytes: 1420 * 1024 ** 3,
+      month_tx_bytes: 496 * 1024 ** 3,
+      traffic_reset_day: 1,
       agent_version: manifest.version,
       system: {
         uptime_secs: 74 * 86_400 + 3200,
@@ -591,9 +770,64 @@ function createInitialState(): DemoState {
     },
   ];
 
+  const liveBaselines = new Map<string, DemoLiveBaseline>();
+  const liveSamples = new Map<string, LiveNodeSample[]>();
+
   const nodes: NodeSummary[] = rawNodes.map((n) => {
     const full: NodeSummary = { ...n, history: {} };
     full.history = buildNodeHistory(full, now, 21_600, 48);
+
+    if (
+      full.system?.cpu_pct !== undefined &&
+      full.system.load_1m !== undefined &&
+      full.system.mem_used_bytes !== undefined &&
+      full.system.mem_total_bytes !== undefined &&
+      full.rx_bps !== null &&
+      full.tx_bps !== null
+    ) {
+      const seed = [...full.id].reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+      const base: DemoLiveBaseline = {
+        cpu: full.system.cpu_pct,
+        load: full.system.load_1m,
+        memUsed: full.system.mem_used_bytes,
+        memTotal: full.system.mem_total_bytes,
+        rxBps: full.rx_bps,
+        txBps: full.tx_bps,
+        seed,
+      };
+      liveBaselines.set(full.id, base);
+
+      const seeded: LiveNodeSample[] = [];
+      const baseUptime = full.system.uptime_secs;
+      for (let i = DEMO_LIVE_SEED_POINTS - 1; i >= 0; i--) {
+        const ts = now - i * 3;
+        const step = DEMO_LIVE_SEED_POINTS - 1 - i;
+        seeded.push(
+          computeDemoLiveSample(
+            full.id,
+            base,
+            seeded.at(-1),
+            ts,
+            Math.max(0, baseUptime - i * 3),
+            step,
+          ),
+        );
+      }
+      liveSamples.set(full.id, seeded);
+      const latest = seeded.at(-1);
+      if (latest) {
+        full.last_seen_at = latest.ts;
+        full.rx_bps = latest.rx_bps;
+        full.tx_bps = latest.tx_bps;
+        full.system = {
+          ...full.system,
+          uptime_secs: latest.uptime_secs,
+          cpu_pct: latest.cpu_pct,
+          load_1m: latest.load_1m,
+          mem_used_bytes: latest.mem_used_bytes,
+        };
+      }
+    }
 
     return full;
   });
@@ -906,6 +1140,8 @@ function createInitialState(): DemoState {
   return {
     signedIn: true,
     bootedAt: now,
+    liveBaselines,
+    liveSamples,
     snapshot: {
       now,
       version: manifest.version,
@@ -919,7 +1155,7 @@ function createInitialState(): DemoState {
           { label: "GitHub", url: "https://github.com/so1ve/uptarn" },
           { label: "Docs", url: "https://github.com/so1ve/uptarn#readme" },
         ],
-        channels: { telegram: true, matrix: true },
+        channels: { telegram: true, matrix: true, webhook: true },
         auth: {
           password_enabled: true,
           cf_access_enabled: false,
@@ -1200,6 +1436,9 @@ export async function demoApiFetch<T = Record<string, unknown>>(
       last_seen_at: null,
       rx_bps: null,
       tx_bps: null,
+      month_rx_bytes: null,
+      month_tx_bytes: null,
+      traffic_reset_day: 1,
       agent_version: null,
       system: null,
       mounts: [],
@@ -1260,11 +1499,19 @@ export async function demoApiFetch<T = Record<string, unknown>>(
             ? payload.group.trim()
             : null;
       }
+      if (typeof payload.traffic_reset_day === "number") {
+        node.traffic_reset_day = Math.min(
+          31,
+          Math.max(1, Math.floor(payload.traffic_reset_day)),
+        );
+      }
 
       return { ok: true, ...payload } as T;
     }
     if (method === "DELETE") {
       snap.nodes.splice(idx, 1);
+      st.liveBaselines.delete(nodeId);
+      st.liveSamples.delete(nodeId);
 
       return { ok: true } as T;
     }
@@ -1493,8 +1740,148 @@ export async function demoApiFetch<T = Record<string, unknown>>(
   }
 
   if (pathname === "/api/v1/admin/notifications/test" && method === "POST") {
-    return { ok: true, delivery: { telegram: "ok", matrix: "ok" } } as T;
+    return {
+      ok: true,
+      delivery: { telegram: "ok", matrix: "ok", webhook: "ok" },
+    } as T;
   }
 
   throw new ApiError(404, `Demo endpoint not found: ${method} ${pathname}`);
+}
+
+interface DemoLiveSubscriber {
+  kind: "admin" | "public";
+  onMessage: (msg: AdminLiveMessage | PublicLiveMessage) => void;
+}
+
+const liveSubscribers = new Set<DemoLiveSubscriber>();
+let liveTickTimer: ReturnType<typeof setInterval> | null = null;
+let liveStep = DEMO_LIVE_SEED_POINTS;
+
+function publicNodeKeyMap(st: DemoState): Map<string, string> {
+  const map = new Map<string, string>();
+  let idx = 0;
+  for (const node of st.snapshot.nodes) {
+    if (node.is_public) {
+      map.set(node.id, `n${idx}`);
+      idx += 1;
+    }
+  }
+
+  return map;
+}
+
+function buildDemoInitMessage(
+  st: DemoState,
+  kind: "admin" | "public",
+): AdminLiveMessage | PublicLiveMessage {
+  if (kind === "admin") {
+    const nodes: Record<string, LiveNodeSample[]> = {};
+    for (const node of st.snapshot.nodes) {
+      const samples = st.liveSamples.get(node.id);
+      if (samples && samples.length > 0) {
+        nodes[node.id] = samples.map((sample) => ({ ...sample }));
+      }
+    }
+
+    return { type: "init", nodes };
+  }
+
+  const pubKeys = publicNodeKeyMap(st);
+  const nodes: Record<string, PublicLiveNodeSample[]> = {};
+  for (const [nodeId, key] of pubKeys) {
+    const samples = st.liveSamples.get(nodeId);
+    if (samples && samples.length > 0) {
+      nodes[key] = samples.map((sample) => toPublicLiveSample(key, sample));
+    }
+  }
+
+  return { type: "init", nodes };
+}
+
+function emitDemoLiveTick(): void {
+  const st = getState();
+  const now = unixNow();
+  st.snapshot.now = now;
+  const pubKeys = publicNodeKeyMap(st);
+  const step = liveStep++;
+
+  for (const node of st.snapshot.nodes) {
+    const base = st.liveBaselines.get(node.id);
+    if (!base || !node.system || node.overall_status === "offline") {
+      continue;
+    }
+    const list = st.liveSamples.get(node.id) ?? [];
+    const prev = list.at(-1);
+    const nextUptime = (prev?.uptime_secs ?? node.system.uptime_secs) + 3;
+    const sample = computeDemoLiveSample(
+      node.id,
+      base,
+      prev,
+      now,
+      nextUptime,
+      step,
+    );
+
+    list.push(sample);
+    if (list.length > MAX_LIVE_POINTS) {
+      list.splice(0, list.length - MAX_LIVE_POINTS);
+    }
+    st.liveSamples.set(node.id, list);
+
+    node.last_seen_at = now;
+    node.rx_bps = sample.rx_bps;
+    node.tx_bps = sample.tx_bps;
+    if (
+      node.month_rx_bytes !== null &&
+      node.month_rx_bytes !== undefined &&
+      sample.rx_bps !== null
+    ) {
+      node.month_rx_bytes += Math.round(sample.rx_bps * 3);
+    }
+    if (
+      node.month_tx_bytes !== null &&
+      node.month_tx_bytes !== undefined &&
+      sample.tx_bps !== null
+    ) {
+      node.month_tx_bytes += Math.round(sample.tx_bps * 3);
+    }
+    node.system = {
+      ...node.system,
+      uptime_secs: sample.uptime_secs,
+      cpu_pct: sample.cpu_pct,
+      load_1m: sample.load_1m,
+      mem_used_bytes: sample.mem_used_bytes,
+    };
+
+    const pubKey = pubKeys.get(node.id);
+    const pubSample = pubKey ? toPublicLiveSample(pubKey, sample) : null;
+    for (const sub of liveSubscribers) {
+      if (sub.kind === "admin") {
+        sub.onMessage({ type: "tick", sample: { ...sample } });
+      } else if (pubSample) {
+        sub.onMessage({ type: "tick", sample: pubSample });
+      }
+    }
+  }
+}
+
+export function subscribeDemoLive(
+  kind: "admin" | "public",
+  onMessage: (msg: AdminLiveMessage | PublicLiveMessage) => void,
+): () => void {
+  const st = getState();
+  const sub: DemoLiveSubscriber = { kind, onMessage };
+  liveSubscribers.add(sub);
+  onMessage(buildDemoInitMessage(st, kind));
+
+  liveTickTimer ??= setInterval(emitDemoLiveTick, DEMO_LIVE_INTERVAL_MS);
+
+  return () => {
+    liveSubscribers.delete(sub);
+    if (liveSubscribers.size === 0 && liveTickTimer !== null) {
+      clearInterval(liveTickTimer);
+      liveTickTimer = null;
+    }
+  };
 }
