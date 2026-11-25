@@ -22,6 +22,12 @@ import {
 } from "../shared/index.ts";
 import type { AlertObservation, AlertStateRow } from "./alerts.ts";
 import { ALERT_STATE_COLUMNS, buildAlertStatements } from "./alerts.ts";
+import type { MaintenanceRow } from "./maintenances.ts";
+import {
+  SELECT_ACTIVE_MAINTENANCES_SQL,
+  maintenanceMuteUntil,
+  parseActiveMaintenances,
+} from "./maintenances.ts";
 import type { MonitorConfigFields, ProbeResult } from "./monitors.ts";
 import {
   MONITOR_CONFIG_KEYS,
@@ -251,6 +257,7 @@ function buildManagedMonitorStatements(
   failureThreshold: number,
   specs: readonly NodeMonitorSpec[],
   existing: readonly ManagedMonitorRow[],
+  activeMaintenances: ReturnType<typeof parseActiveMaintenances>,
   now: number,
 ): { statements: SqlStatement[]; observations: AlertObservation[] } {
   const statements: SqlStatement[] = [];
@@ -341,7 +348,10 @@ function buildManagedMonitorStatements(
           ? monitorOkSummary(spec.type, probeRes)
           : (probeRes.error ?? "Check failed"),
         threshold: failureThreshold,
-        targetMutedUntil: prev?.muted_until ?? 0,
+        targetMutedUntil: Math.max(
+          prev?.muted_until ?? 0,
+          maintenanceMuteUntil(activeMaintenances, "monitor", id),
+        ),
       });
     }
   }
@@ -412,6 +422,7 @@ export async function ingestNodeReport(
       sql: `SELECT ${ALERT_STATE_COLUMNS} FROM alert_states WHERE target_type = 'node' AND target_id = ?1`,
       params: [payload.node_id],
     },
+    { sql: SELECT_ACTIVE_MAINTENANCES_SQL, params: [now] },
   ];
   if (payload.monitors !== undefined) {
     batchQueries.push(
@@ -438,15 +449,18 @@ export async function ingestNodeReport(
     settingRows,
     nodeRows,
     existingAlertStates,
+    activeMaintenanceRows,
     managedMonitorRows = [],
     existingMonitorAlertStates = [],
   ] = batchResults as [
     SettingRow[],
     NodeIngestRow[],
     AlertStateRow[],
+    MaintenanceRow[],
     ManagedMonitorRow[]?,
     AlertStateRow[]?,
   ];
+  const activeMaintenances = parseActiveMaintenances(activeMaintenanceRows);
 
   const settings = parseRuntimeSettings(settingRows, config);
   const existing = nodeRows[0] ?? null;
@@ -480,7 +494,10 @@ export async function ingestNodeReport(
   const label = payload.label ?? existing?.label ?? nodeId;
   const intervalSecs = payload.interval_secs ?? existing?.interval_secs ?? 60;
   const graceSecs = payload.grace_secs ?? existing?.grace_secs ?? 120;
-  const mutedUntil = existing?.muted_until ?? 0;
+  const mutedUntil = Math.max(
+    existing?.muted_until ?? 0,
+    maintenanceMuteUntil(activeMaintenances, "node", nodeId),
+  );
   const rxBytes = payload.system?.rx_bytes ?? null;
   const txBytes = payload.system?.tx_bytes ?? null;
   const { rxBps, txBps } = computeNetworkRates(existing, rxBytes, txBytes, now);
@@ -578,6 +595,7 @@ export async function ingestNodeReport(
       config.failureThreshold,
       payload.monitors,
       managedMonitorRows,
+      activeMaintenances,
       now,
     );
     statements.push(...managed.statements);

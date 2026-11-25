@@ -2030,4 +2030,157 @@ describe("uptarn portable server", () => {
       { label: "Blog", url: "https://blog.example.com/" },
     ]);
   });
+
+  it("supports scheduled maintenances with alert suppression, public redaction, and declarative sync", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(20_000 * 1000);
+    const config = loadConfig({
+      PUBLIC_BASE_URL: "https://status.example.com",
+      ADMIN_TOKEN: "admin-tok",
+      FAILURE_THRESHOLD: "1",
+    });
+    const app = createApp(db, config);
+    const adminHeaders = {
+      "Authorization": "Bearer admin-tok",
+      "Content-Type": "application/json",
+    };
+
+    await upsertMonitor(db, {
+      id: "pub-web",
+      name: "Public Web",
+      url: "https://web.example.com",
+      is_public: true,
+    });
+    await upsertMonitor(db, {
+      id: "priv-db",
+      name: "Secret DB",
+      url: "https://10.0.0.2/health",
+      is_public: false,
+    });
+
+    // Reject window shorter than 60s
+    const badRes = await app.request("/api/v1/admin/maintenances", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({
+        title: "Too short",
+        starts_at: 20_000,
+        ends_at: 20_010,
+      }),
+    });
+
+    expect(badRes.status).toBe(400);
+
+    // Active maintenance covering both a public and private monitor
+    const activeRes = await app.request("/api/v1/admin/maintenances", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({
+        id: "upgrade-1",
+        title: "Storage Upgrade",
+        body: "Brief restarts expected.",
+        starts_at: 19_900,
+        ends_at: 20_900,
+        targets: [
+          { type: "monitor", id: "pub-web" },
+          { type: "monitor", id: "priv-db" },
+        ],
+      }),
+    });
+
+    expect(activeRes.status).toBe(200);
+
+    // Private-only maintenance must never leak to public status
+    await app.request("/api/v1/admin/maintenances", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({
+        id: "priv-only",
+        title: "Internal Secret Maintenance",
+        starts_at: 20_500,
+        ends_at: 21_500,
+        targets: [{ type: "monitor", id: "priv-db" }],
+      }),
+    });
+
+    // Failing probes during active maintenance must suppress alert notifications/events
+    vi.stubGlobal(
+      "fetch",
+      (async () => new Response("err", { status: 503 })) satisfies typeof fetch,
+    );
+    await runTick(db, config, { forceMonitors: true });
+
+    const snap = await (
+      await app.request("/api/v1/admin/snapshot", { headers: adminHeaders })
+    ).json<DashboardSnapshot>();
+
+    expect(snap.events).toHaveLength(0);
+    expect(snap.maintenances).toHaveLength(2);
+
+    const pubRes = await app.request("/api/v1/public/status");
+    const raw = await pubRes.text();
+
+    expect(raw).not.toContain("Internal Secret Maintenance");
+    expect(raw).not.toContain("Secret DB");
+    expect(raw).not.toContain("priv-db");
+
+    const pub = JSON.parse(raw) as {
+      maintenances: {
+        title: string;
+        state: string;
+        targets: string[];
+      }[];
+    };
+
+    expect(pub.maintenances).toEqual([
+      expect.objectContaining({
+        title: "Storage Upgrade",
+        state: "active",
+        targets: ["Public Web"],
+      }),
+    ]);
+
+    // Declarative sync updates existing maintenance and prunes undeclared ones
+    const spec = parseSyncSpec({
+      maintenances: [
+        {
+          id: "upgrade-1",
+          title: "Storage Upgrade v2",
+          starts_at: 19_900,
+          ends_at: 21_200,
+          targets: [],
+        },
+      ],
+    });
+    const plan = computeSyncPlan(snap, spec, { prune: true });
+
+    expect(plan.maintenancesUpdate).toHaveLength(1);
+    expect(plan.maintenancesDelete).toEqual([
+      { id: "priv-only", title: "Internal Secret Maintenance" },
+    ]);
+
+    await applySyncPlan(async (method, apiPath, body) => {
+      const res = await app.request(apiPath, {
+        method,
+        headers: adminHeaders,
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+
+      expect(res.ok).toBeTruthy();
+
+      return await res.json();
+    }, plan);
+
+    const snapAfter = await (
+      await app.request("/api/v1/admin/snapshot", { headers: adminHeaders })
+    ).json<DashboardSnapshot>();
+
+    expect(snapAfter.maintenances).toHaveLength(1);
+    expect(snapAfter.maintenances[0]).toMatchObject({
+      id: "upgrade-1",
+      title: "Storage Upgrade v2",
+      ends_at: 21_200,
+      targets: [],
+    });
+  });
 });

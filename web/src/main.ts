@@ -5,6 +5,7 @@ import { createRouter, createWebHistory } from "vue-router";
 import App from "./App.vue";
 import IncidentsView from "./views/IncidentsView.vue";
 import JobsView from "./views/JobsView.vue";
+import MaintenancesView from "./views/MaintenancesView.vue";
 import MonitorsView from "./views/MonitorsView.vue";
 import NodeDetailView from "./views/NodeDetailView.vue";
 import NodesView from "./views/NodesView.vue";
@@ -30,6 +31,11 @@ const router = createRouter({
     { path: "/admin/monitors", name: "monitors", component: MonitorsView },
     { path: "/admin/jobs", name: "jobs", component: JobsView },
     { path: "/admin/incidents", name: "incidents", component: IncidentsView },
+    {
+      path: "/admin/maintenances",
+      name: "maintenances",
+      component: MaintenancesView,
+    },
     { path: "/admin/settings", name: "settings", component: SettingsView },
     { path: "/:pathMatch(.*)*", redirect: "/" },
   ],

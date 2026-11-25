@@ -3,6 +3,8 @@ import { httpError } from "./http.ts";
 import type {
   HealthStatus,
   JobReportPayload,
+  MaintenanceInput,
+  MaintenanceTarget,
   MonitorInput,
   MonitorKind,
   MonitorResult,
@@ -284,15 +286,15 @@ export function parseJobReportPayload(raw: unknown): JobReportPayload {
   };
 }
 
-function generateMonitorId(name: string): string {
+function generateSlugId(fallbackPrefix: string, name: string): string {
   const base = name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 40);
-  const suffix = generateRandomToken("m", 4).slice(2);
+  const suffix = generateRandomToken("x", 4).slice(2);
 
-  return base ? `${base}-${suffix}` : `mon-${suffix}`;
+  return base ? `${base}-${suffix}` : `${fallbackPrefix}-${suffix}`;
 }
 
 function parseMonitorResult(
@@ -385,7 +387,7 @@ export function parseMonitorInput(raw: MonitorInput | unknown) {
   const obj = asObj(raw, "monitor input");
   const name = reqStr(obj.name, "name", 80);
   const rawId = str(obj.id, "id", 64);
-  const id = rawId ? slug(rawId, "id") : generateMonitorId(name);
+  const id = rawId ? slug(rawId, "id") : generateSlugId("mon", name);
   const url = httpUrl(obj.url, "url") ?? bad("url is required");
   const publicUrl = httpUrl(obj.public_url, "public_url");
   const expectedStatusMin =
@@ -541,6 +543,59 @@ export const normalizeSiteLinks = (
     label: reqStr(item.label, `${p}.label`, 32),
     url: httpUrl(item.url, `${p}.url`) ?? bad(`${p}.url is required`),
   }));
+
+const MAINTENANCE_TARGET_TYPES = ["node", "monitor"] as const;
+
+export function parseTimestampSecs(val: unknown, field: string): number {
+  if (typeof val === "number") {
+    return reqInt(val, field, 1);
+  }
+  if (typeof val === "string") {
+    const trimmed = val.trim();
+    if (/^\d+$/.test(trimmed)) {
+      return reqInt(Number(trimmed), field, 1);
+    }
+    const ms = Date.parse(trimmed);
+    if (Number.isFinite(ms) && ms > 0) {
+      return Math.floor(ms / 1000);
+    }
+  }
+  bad(`${field} must be a Unix timestamp (seconds) or ISO-8601 date string`);
+}
+
+export function parseMaintenanceInput(raw: MaintenanceInput | unknown) {
+  const obj = asObj(raw, "maintenance input");
+  const title = reqStr(obj.title, "title", 100);
+  const rawId = str(obj.id, "id", 64);
+  const id = rawId ? slug(rawId, "id") : generateSlugId("maint", title);
+  const body = str(obj.body, "body", 1000) ?? "";
+  const startsAt = parseTimestampSecs(obj.starts_at, "starts_at");
+  const endsAt = parseTimestampSecs(obj.ends_at, "ends_at");
+  if (endsAt < startsAt + 60) {
+    bad("ends_at must be at least 60 seconds after starts_at");
+  }
+  const seen = new Set<string>();
+  const targets: MaintenanceTarget[] = [];
+  for (const item of list(obj.targets, "targets", 100, (t, p) => ({
+    type: reqOneOf(t.type, `${p}.type`, MAINTENANCE_TARGET_TYPES),
+    id: slug(t.id, `${p}.id`),
+  }))) {
+    const key = `${item.type}:${item.id}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      targets.push(item);
+    }
+  }
+
+  return {
+    id,
+    title,
+    body,
+    starts_at: startsAt,
+    ends_at: endsAt,
+    targets,
+  };
+}
 
 export function parseSettingsPatch(raw: unknown) {
   const obj = asObj(raw, "settings patch");

@@ -2,6 +2,7 @@
 import { computed, reactive, ref, watchEffect } from "vue";
 import { useRouter } from "vue-router";
 
+import MaintenanceNotice from "../components/incidents/MaintenanceNotice.vue";
 import PublicIncidentsSection from "../components/incidents/PublicIncidentsSection.vue";
 import SignInForm from "../components/modals/SignInForm.vue";
 import MonitorItem from "../components/monitors/MonitorItem.vue";
@@ -151,6 +152,11 @@ async function onSignedIn() {
 
     <div v-else class="space-y-8">
       <StatusBanner :title="banner.text" :tone="banner.tone" />
+
+      <MaintenanceNotice
+        :maintenances="status.maintenances"
+        :now="status.now"
+      />
 
       <PublicIncidentsSection
         highlight

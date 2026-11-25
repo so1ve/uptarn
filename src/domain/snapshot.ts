@@ -29,6 +29,11 @@ import {
   worstHealthStatus,
 } from "../shared/index.ts";
 import type { JobRow } from "./jobs.ts";
+import type { MaintenanceRow } from "./maintenances.ts";
+import {
+  buildPublicMaintenances,
+  toMaintenanceSummary,
+} from "./maintenances.ts";
 import type { MonitorRow } from "./monitors.ts";
 import {
   parseMonitorProbe,
@@ -361,6 +366,7 @@ export async function getDashboardSnapshot(
     jobRows,
     incidents,
     eventRows,
+    maintenanceRows,
   ] = (await db.allBatch([
     { sql: SELECT_SETTINGS_SQL },
     {
@@ -381,6 +387,9 @@ export async function getDashboardSnapshot(
       sql: `SELECT id, incident_key, target_type, target_id, label, kind, summary, created_at, delivery_json
             FROM alert_events ORDER BY created_at DESC LIMIT 40`,
     },
+    {
+      sql: "SELECT id, title, body, starts_at, ends_at, targets_json, created_at FROM maintenances ORDER BY starts_at DESC",
+    },
   ])) as [
     SettingRow[],
     (Omit<PasskeySummary, "backed_up"> & { backed_up: number })[],
@@ -389,6 +398,7 @@ export async function getDashboardSnapshot(
     JobRow[],
     IncidentSummary[],
     (Omit<AlertEventSummary, "delivery"> & { delivery_json: string })[],
+    MaintenanceRow[],
   ];
 
   const settings = parseRuntimeSettings(settingRows, config);
@@ -491,6 +501,7 @@ export async function getDashboardSnapshot(
       auth: buildAuthSummary(config, passkeys.length),
     },
     incidents,
+    maintenances: maintenanceRows.map((row) => toMaintenanceSummary(row, now)),
     nodes,
     monitors,
     jobs,
@@ -547,6 +558,7 @@ export async function getPublicStatusSnapshot(
     nodeRows,
     openAlertStates,
     recentAlertEvents,
+    maintenanceRows,
   ] = (await db.allBatch([
     { sql: SELECT_SETTINGS_SQL },
     { sql: "SELECT COUNT(*) AS count FROM admin_passkeys" },
@@ -566,6 +578,10 @@ export async function getPublicStatusSnapshot(
       sql: `SELECT incident_key, target_type, target_id, kind, summary, created_at
             FROM alert_events WHERE target_type IN ('monitor', 'node') ORDER BY created_at DESC LIMIT 60`,
     },
+    {
+      sql: "SELECT id, title, body, starts_at, ends_at, targets_json, created_at FROM maintenances WHERE ends_at > ?1 ORDER BY starts_at ASC",
+      params: [now],
+    },
   ])) as [
     SettingRow[],
     { count: number }[],
@@ -573,6 +589,7 @@ export async function getPublicStatusSnapshot(
     NodeCoreRow[],
     PublicAlertStateRow[],
     PublicAlertEventRow[],
+    MaintenanceRow[],
   ];
 
   const settings = parseRuntimeSettings(settingRows, config);
@@ -651,6 +668,12 @@ export async function getPublicStatusSnapshot(
     incidents: buildPublicIncidents(
       openAlertStates,
       recentAlertEvents,
+      publicMonitorsById,
+      publicNodesById,
+    ),
+    maintenances: buildPublicMaintenances(
+      maintenanceRows,
+      now,
       publicMonitorsById,
       publicNodesById,
     ),

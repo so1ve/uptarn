@@ -4,6 +4,12 @@ import { formatAge, unixNow } from "../shared/index.ts";
 import type { AlertObservation, AlertStateRow } from "./alerts.ts";
 import { ALERT_STATE_COLUMNS, buildAlertStatements } from "./alerts.ts";
 import type { JobRow } from "./jobs.ts";
+import type { MaintenanceRow } from "./maintenances.ts";
+import {
+  SELECT_ACTIVE_MAINTENANCES_SQL,
+  maintenanceMuteUntil,
+  parseActiveMaintenances,
+} from "./maintenances.ts";
 import type { MonitorRow, ProbeResult } from "./monitors.ts";
 import {
   buildMonitorResultStatement,
@@ -84,30 +90,39 @@ export async function runTick(
   }
 
   const now = unixNow();
-  const [settingRows, allMonitors, nodes, jobs, existingAlertStates] =
-    (await db.allBatch([
-      { sql: SELECT_SETTINGS_SQL },
-      {
-        sql: `SELECT id, name, probe_from, probe_json, managed_by_node_id, interval_secs,
-                     enabled, muted_until, last_checked_at, last_status, samples_json, rollup_json
-              FROM monitors`,
-      },
-      {
-        sql: "SELECT id, label, interval_secs, grace_secs, muted_until, last_seen_at FROM nodes WHERE last_seen_at IS NOT NULL",
-      },
-      {
-        sql: "SELECT key, label, interval_secs, grace_secs, muted_until, last_run_at FROM jobs WHERE last_status = 'ok'",
-      },
-      { sql: `SELECT ${ALERT_STATE_COLUMNS} FROM alert_states` },
-    ])) as [
-      SettingRow[],
-      MonitorRow[],
-      TickNodeRow[],
-      JobRow[],
-      AlertStateRow[],
-    ];
+  const [
+    settingRows,
+    allMonitors,
+    nodes,
+    jobs,
+    existingAlertStates,
+    activeMaintenanceRows,
+  ] = (await db.allBatch([
+    { sql: SELECT_SETTINGS_SQL },
+    {
+      sql: `SELECT id, name, probe_from, probe_json, managed_by_node_id, interval_secs,
+                   enabled, muted_until, last_checked_at, last_status, samples_json, rollup_json
+            FROM monitors`,
+    },
+    {
+      sql: "SELECT id, label, interval_secs, grace_secs, muted_until, last_seen_at FROM nodes WHERE last_seen_at IS NOT NULL",
+    },
+    {
+      sql: "SELECT key, label, interval_secs, grace_secs, muted_until, last_run_at FROM jobs WHERE last_status = 'ok'",
+    },
+    { sql: `SELECT ${ALERT_STATE_COLUMNS} FROM alert_states` },
+    { sql: SELECT_ACTIVE_MAINTENANCES_SQL, params: [now] },
+  ])) as [
+    SettingRow[],
+    MonitorRow[],
+    TickNodeRow[],
+    JobRow[],
+    AlertStateRow[],
+    MaintenanceRow[],
+  ];
 
   const settings = parseRuntimeSettings(settingRows, config);
+  const activeMaintenances = parseActiveMaintenances(activeMaintenanceRows);
   const observations: AlertObservation[] = [];
   const writeStatements: SqlStatement[] = [];
   let appliedProbes = 0;
@@ -158,7 +173,10 @@ export async function runTick(
           failing: true,
           summary: staleSummary,
           threshold: 1,
-          targetMutedUntil: m.muted_until,
+          targetMutedUntil: Math.max(
+            m.muted_until,
+            maintenanceMuteUntil(activeMaintenances, "monitor", m.id),
+          ),
         });
       }
 
@@ -180,7 +198,10 @@ export async function runTick(
         ? monitorOkSummary(probe.type, res)
         : (res.error ?? "Request failed"),
       threshold: config.failureThreshold,
-      targetMutedUntil: m.muted_until,
+      targetMutedUntil: Math.max(
+        m.muted_until,
+        maintenanceMuteUntil(activeMaintenances, "monitor", m.id),
+      ),
     });
   }
 
@@ -194,7 +215,10 @@ export async function runTick(
         failing: true,
         summary: `No report since ${formatAge(node.last_seen_at, now)} (expected every ${node.interval_secs}s)`,
         threshold: 1,
-        targetMutedUntil: node.muted_until,
+        targetMutedUntil: Math.max(
+          node.muted_until,
+          maintenanceMuteUntil(activeMaintenances, "node", node.id),
+        ),
       });
     }
   }
@@ -237,6 +261,10 @@ export async function runTick(
     writeStatements.push(
       {
         sql: "DELETE FROM alert_events WHERE created_at < ?1",
+        params: [now - config.retentionDays * 86_400],
+      },
+      {
+        sql: "DELETE FROM maintenances WHERE ends_at < ?1",
         params: [now - config.retentionDays * 86_400],
       },
       {

@@ -448,6 +448,41 @@ describe("uptarn CLI commands", () => {
     expect(dupOrder.ok).toBeFalsy();
     expect(dupOrderTerminal.stderrText()).toContain("duplicate value 'a'");
 
+    // Verify maintenance CLI add / ls / rm
+    await runCli([
+      "maint",
+      "add",
+      "Kernel Patch",
+      "--id",
+      "patch-1",
+      "--start",
+      "2026-12-01T00:00:00Z",
+      "--end",
+      "2026-12-01T02:00:00Z",
+      "--target",
+      "node:alpha",
+    ]);
+    const maintList = JSON.parse(
+      (await runCli(["maint", "--json"])).stdoutText(),
+    ) as {
+      id: string;
+      title: string;
+      targets: { type: string; id: string }[];
+    }[];
+
+    expect(maintList).toHaveLength(1);
+    expect(maintList[0]).toMatchObject({
+      id: "patch-1",
+      title: "Kernel Patch",
+      targets: [{ type: "node", id: "alpha" }],
+    });
+
+    await runCli(["maint", "rm", "patch-1"]);
+
+    expect(
+      JSON.parse((await runCli(["maint", "--json"])).stdoutText()),
+    ).toEqual([]);
+
     // Verify default subcommand & alias dispatch (mon -> monitor ls)
     const defaultMon = await runCli(["mon", "--json"]);
 

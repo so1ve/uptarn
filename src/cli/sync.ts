@@ -2,6 +2,7 @@ import type { Theme } from "clerc";
 
 import type {
   DashboardSnapshot,
+  MaintenanceSummary,
   MonitorSummary,
   SiteLink,
 } from "../shared/index.ts";
@@ -10,12 +11,16 @@ import {
   normalizePrimaryMount,
   normalizeSiteLinks,
   normalizeSiteTitle,
+  parseMaintenanceInput,
   parseMonitorInput,
   parseMonitorPatch,
 } from "../validation.ts";
 import { renderSection } from "./format.ts";
 
 export type NormalizedSyncMonitor = ReturnType<typeof parseMonitorInput>;
+export type NormalizedSyncMaintenance = ReturnType<
+  typeof parseMaintenanceInput
+>;
 
 export type SyncMonitorEntry =
   | ({ kind: "hub" } & NormalizedSyncMonitor)
@@ -39,6 +44,7 @@ export interface SyncSpec {
     group?: string | null;
   }[];
   monitors?: SyncMonitorEntry[];
+  maintenances?: NormalizedSyncMaintenance[];
 }
 
 export interface SyncPlan {
@@ -75,6 +81,13 @@ export interface SyncPlan {
   unmanagedMonitors: { id: string; name: string }[];
   managedMonitorConflicts: { id: string; nodeId: string; reason: string }[];
   monitorOrder: string[] | null;
+  maintenancesCreate: NormalizedSyncMaintenance[];
+  maintenancesUpdate: {
+    maintenance: NormalizedSyncMaintenance;
+    changes: string[];
+  }[];
+  maintenancesDelete: { id: string; title: string }[];
+  unmanagedMaintenances: { id: string; title: string }[];
   hasChanges: boolean;
   hasConflicts: boolean;
 }
@@ -189,6 +202,18 @@ export function parseSyncSpec(raw: unknown): SyncSpec {
     },
   );
 
+  spec.maintenances = parseUniqueArray(
+    obj.maintenances,
+    "maintenances",
+    (maint, label) => {
+      if (typeof maint.id !== "string" || !maint.id.trim()) {
+        throw new Error(`${label}.id is required for declarative sync`);
+      }
+
+      return parseMaintenanceInput(maint);
+    },
+  );
+
   return spec;
 }
 
@@ -235,6 +260,34 @@ function diffMonitor(
   return HUB_MONITOR_DIFF_KEYS.filter((f) => flat[f] !== desired[f]).map(
     (f) => `${f}: ${JSON.stringify(flat[f])} -> ${JSON.stringify(desired[f])}`,
   );
+}
+
+function diffMaintenance(
+  current: MaintenanceSummary,
+  desired: NormalizedSyncMaintenance,
+): string[] {
+  const changes: string[] = [];
+  if (current.title !== desired.title) {
+    changes.push(
+      `title: ${JSON.stringify(current.title)} -> ${JSON.stringify(desired.title)}`,
+    );
+  }
+  if (current.body !== desired.body) {
+    changes.push("body updated");
+  }
+  if (current.starts_at !== desired.starts_at) {
+    changes.push(`starts_at: ${current.starts_at} -> ${desired.starts_at}`);
+  }
+  if (current.ends_at !== desired.ends_at) {
+    changes.push(`ends_at: ${current.ends_at} -> ${desired.ends_at}`);
+  }
+  if (JSON.stringify(current.targets) !== JSON.stringify(desired.targets)) {
+    changes.push(
+      `targets: ${current.targets.length} -> ${desired.targets.length}`,
+    );
+  }
+
+  return changes;
 }
 
 function computeReorder(
@@ -473,6 +526,40 @@ export function computeSyncPlan(
     );
   }
 
+  const maintenancesCreate: NormalizedSyncMaintenance[] = [];
+  const maintenancesUpdate: SyncPlan["maintenancesUpdate"] = [];
+  const maintenancesDelete: SyncPlan["maintenancesDelete"] = [];
+  const unmanagedMaintenances: SyncPlan["unmanagedMaintenances"] = [];
+
+  if (spec.maintenances !== undefined) {
+    const byId = new Map(current.maintenances.map((m) => [m.id, m]));
+    const declaredSet = new Set<string>();
+    for (const desired of spec.maintenances) {
+      declaredSet.add(desired.id);
+      const existing = byId.get(desired.id);
+      if (!existing) {
+        maintenancesCreate.push(desired);
+
+        continue;
+      }
+      const changes = diffMaintenance(existing, desired);
+      if (changes.length > 0) {
+        maintenancesUpdate.push({ maintenance: desired, changes });
+      }
+    }
+    for (const existing of current.maintenances) {
+      if (declaredSet.has(existing.id)) {
+        continue;
+      }
+      const ref = { id: existing.id, title: existing.title };
+      if (prune) {
+        maintenancesDelete.push(ref);
+      } else {
+        unmanagedMaintenances.push(ref);
+      }
+    }
+  }
+
   return {
     settingsPatch,
     nodePatches,
@@ -487,6 +574,10 @@ export function computeSyncPlan(
     unmanagedMonitors,
     managedMonitorConflicts,
     monitorOrder,
+    maintenancesCreate,
+    maintenancesUpdate,
+    maintenancesDelete,
+    unmanagedMaintenances,
     hasChanges:
       settingsPatch !== null ||
       nodePatches.length > 0 ||
@@ -495,7 +586,10 @@ export function computeSyncPlan(
       monitorsUpdate.length > 0 ||
       monitorPatches.length > 0 ||
       monitorsDelete.length > 0 ||
-      monitorOrder !== null,
+      monitorOrder !== null ||
+      maintenancesCreate.length > 0 ||
+      maintenancesUpdate.length > 0 ||
+      maintenancesDelete.length > 0,
     hasConflicts:
       managedNodeConflicts.length > 0 || managedMonitorConflicts.length > 0,
   };
@@ -617,20 +711,45 @@ export function renderSyncPlan(
     ),
   ]);
 
+  pushSection("Maintenances", [
+    ...plan.maintenancesCreate.map((m) =>
+      row(theme.success("+"), theme.bold(m.id), m.title),
+    ),
+    ...plan.maintenancesUpdate.flatMap(({ maintenance: m, changes }) => [
+      row(theme.warn("~"), theme.bold(m.id), m.title),
+      ...changes.map((c) => `      ${theme.muted(c)}`),
+    ]),
+    ...plan.maintenancesDelete.map((m) =>
+      row(theme.error("-"), theme.bold(m.id), theme.muted(m.title)),
+    ),
+    ...plan.unmanagedMaintenances.map((m) =>
+      row(
+        theme.muted("?"),
+        theme.muted(m.id),
+        theme.muted(`${m.title} (unmanaged; pass --prune to remove)`),
+      ),
+    ),
+  ]);
+
   if (!plan.hasChanges && !plan.hasConflicts) {
     lines.push(
       `\n  ${theme.success("✓")} ${theme.bold("In sync")} ${theme.muted("(0 changes)")}`,
     );
   } else if (options.dryRun) {
+    const createCount =
+      plan.monitorsCreate.length + plan.maintenancesCreate.length;
     const updateCount =
       plan.monitorsUpdate.length +
       plan.monitorPatches.length +
       plan.nodePatches.length +
+      plan.maintenancesUpdate.length +
       (plan.settingsPatch ? 1 : 0);
+    const deleteCount =
+      plan.monitorsDelete.length + plan.maintenancesDelete.length;
     const parts = [
-      plan.monitorsCreate.length > 0 && `+${plan.monitorsCreate.length} create`,
+      createCount > 0 && `+${createCount} create`,
       updateCount > 0 && `~${updateCount} update`,
-      plan.monitorsDelete.length > 0 && `-${plan.monitorsDelete.length} delete`,
+      deleteCount > 0 && `-${deleteCount} delete`,
       (plan.nodeOrder !== null || plan.monitorOrder !== null) && "reorder",
     ].filter(Boolean);
     lines.push(
@@ -696,5 +815,17 @@ export async function applySyncPlan(
     await request("PUT", "/api/v1/admin/monitors/order", {
       ids: plan.monitorOrder,
     });
+  }
+  for (const maint of [
+    ...plan.maintenancesCreate,
+    ...plan.maintenancesUpdate.map((u) => u.maintenance),
+  ]) {
+    await request("POST", "/api/v1/admin/maintenances", maint);
+  }
+  for (const maint of plan.maintenancesDelete) {
+    await request(
+      "DELETE",
+      `/api/v1/admin/maintenances/${encodeURIComponent(maint.id)}`,
+    );
   }
 }

@@ -15,16 +15,20 @@ import type { TickReport } from "../domain/tick.ts";
 import { runDatabaseMigrations, startNodeServer } from "../node.ts";
 import type {
   DashboardSnapshot,
+  MaintenanceInput,
+  MaintenanceTarget,
   MonitorInput,
   TargetType,
 } from "../shared/index.ts";
 import { unixNow } from "../shared/index.ts";
+import { parseTimestampSecs } from "../validation.ts";
 import {
   renderBanner,
   renderIncidentEventsTable,
   renderIncidentsList,
   renderJobDetail,
   renderJobsTable,
+  renderMaintenancesTable,
   renderMonitorDetail,
   renderMonitorsTable,
   renderNodeDetail,
@@ -1077,6 +1081,90 @@ export function createCli() {
           res.global_muted_until === 0
             ? "Unmuted global notifications."
             : `Muted all notifications globally for ${ctx.flags.duration}s.`,
+        );
+      });
+    },
+  });
+
+  // ── maintenance ──
+  const maintenance = admin.subcommand("maintenance", {
+    aliases: ["maint"],
+    description: "Manage scheduled maintenance windows",
+  });
+  addResourceCmds(maintenance, {
+    label: "maintenance",
+    apiBase: "/api/v1/admin/maintenances",
+    argDesc: "Maintenance identifier",
+    listDesc: "List scheduled maintenance windows",
+    empty: "No maintenance windows scheduled.",
+    pick: (d) => d.maintenances,
+    renderList: (theme, items) => renderMaintenancesTable(theme, items),
+    rmDesc: "Delete a scheduled maintenance window",
+  });
+  maintenance.command("add <title>", {
+    description: "Schedule a maintenance window",
+    args: { title: { description: "Maintenance title" } },
+    flags: {
+      id: {
+        type: nonEmptyString,
+        description: "Optional custom maintenance identifier",
+      },
+      start: {
+        type: nonEmptyString,
+        required: true,
+        placeholder: "<iso|unix>",
+        description: "Start time (ISO-8601 or Unix timestamp in seconds)",
+      },
+      end: {
+        type: nonEmptyString,
+        required: true,
+        placeholder: "<iso|unix>",
+        description: "End time (ISO-8601 or Unix timestamp in seconds)",
+      },
+      body: {
+        type: String,
+        description: "Optional maintenance notes shown on the status page",
+      },
+      target: {
+        type: nonEmptyString,
+        multiple: true,
+        placeholder: "<type:id>",
+        description:
+          "Affected target as monitor:<id> or node:<id> (repeatable; omit for all)",
+      },
+      ...jsonFlag,
+    },
+    async run(ctx) {
+      const targets: MaintenanceTarget[] = (ctx.flags.target ?? []).map(
+        (raw) => {
+          const sep = raw.indexOf(":");
+          const kind = sep > 0 ? raw.slice(0, sep) : "";
+          const id = sep > 0 ? raw.slice(sep + 1).trim() : "";
+          if ((kind !== "monitor" && kind !== "node") || !id) {
+            throw new RuleError(
+              `invalid --target '${raw}'; expected monitor:<id> or node:<id>`,
+            );
+          }
+
+          return { type: kind, id };
+        },
+      );
+      const payload: MaintenanceInput = {
+        id: ctx.flags.id,
+        title: ctx.args.title,
+        body: ctx.flags.body,
+        starts_at: parseTimestampSecs(ctx.flags.start, "start"),
+        ends_at: parseTimestampSecs(ctx.flags.end, "end"),
+        targets,
+      };
+      const res = await ctx.state.request<{ ok: boolean; id: string }>(
+        "POST",
+        "/api/v1/admin/maintenances",
+        payload,
+      );
+      emitJsonOr(ctx, res, () => {
+        ctx.log.success(
+          `Scheduled maintenance ${ctx.log.theme.bold(res.id)} (${ctx.args.title}).`,
         );
       });
     },

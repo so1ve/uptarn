@@ -9,6 +9,7 @@ import type {
   DashboardSnapshot,
   IncidentSummary,
   JobSummary,
+  MaintenanceSummary,
   MonitorSummary,
   MountSnapshot,
   NodeSummary,
@@ -22,6 +23,7 @@ import {
   formatMs,
   formatRemaining,
   formatSeriesValue,
+  formatTimestamp,
   formatUsage,
   memPercent,
   percent,
@@ -121,6 +123,8 @@ const STATUS_STYLE: Record<string, "success" | "warn" | "error"> = {
   resolved: "success",
   warn: "warn",
   pending: "warn",
+  active: "warn",
+  upcoming: "warn",
   fail: "error",
   firing: "error",
   offline: "error",
@@ -549,6 +553,31 @@ export const renderIncidentEventsTable = (
       col("SUMMARY", (e) => theme.muted(e.summary)),
     ],
     events,
+  );
+
+export const renderMaintenancesTable = (
+  theme: Theme,
+  maintenances: readonly MaintenanceSummary[],
+): string =>
+  renderTable<MaintenanceSummary>(
+    theme,
+    [
+      col("ID", (m) => theme.bold(m.id)),
+      col("STATE", (m) => formatStatus(theme, m.state)),
+      col("START", (m) => theme.muted(formatTimestamp(m.starts_at, true))),
+      col(
+        "DURATION",
+        (m) => theme.muted(formatDuration(m.ends_at - m.starts_at)),
+        "right",
+      ),
+      col("SCOPE", (m) =>
+        m.targets.length === 0
+          ? theme.muted("all")
+          : m.targets.map((t) => `${t.type}:${t.id}`).join(", "),
+      ),
+      col("TITLE", (m) => m.title),
+    ],
+    maintenances,
   );
 
 export const renderPasskeysTable = (

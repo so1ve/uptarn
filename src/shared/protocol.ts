@@ -288,12 +288,48 @@ export interface AdminSettingsSummary {
   auth: AuthMethodsSummary;
 }
 
+export interface MaintenanceTarget {
+  type: "node" | "monitor";
+  id: string;
+}
+
+export interface MaintenanceInput {
+  id?: string;
+  title: string;
+  body?: string;
+  starts_at: number;
+  ends_at: number;
+  targets?: MaintenanceTarget[];
+}
+
+export interface MaintenanceSummary {
+  id: string;
+  title: string;
+  body: string;
+  starts_at: number;
+  ends_at: number;
+  targets: MaintenanceTarget[];
+  state: "upcoming" | "active" | "completed";
+  created_at: number;
+}
+
+export interface PublicMaintenanceSummary {
+  key: string;
+  title: string;
+  body: string;
+  starts_at: number;
+  ends_at: number;
+  state: "upcoming" | "active";
+  targets: string[];
+}
+
 export interface DashboardSnapshot {
   now: number;
   version: string;
   public_base_url: string;
   settings: AdminSettingsSummary;
   incidents: IncidentSummary[];
+  maintenances: MaintenanceSummary[];
   nodes: NodeSummary[];
   monitors: MonitorSummary[];
   jobs: JobSummary[];
@@ -350,6 +386,7 @@ export interface PublicStatusSnapshot {
   monitors: PublicMonitorSummary[];
   nodes: PublicNodeSummary[];
   incidents: PublicIncidentSummary[];
+  maintenances: PublicMaintenanceSummary[];
 }
 
 export type BootPayload =

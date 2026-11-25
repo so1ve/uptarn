@@ -17,6 +17,7 @@ import type { LoadedConfig } from "./config.ts";
 import type { SqlDatabase } from "./db/index.ts";
 import {
   createNode,
+  deleteMaintenance,
   deleteTarget,
   getDashboardSnapshot,
   getNodeHistory,
@@ -31,6 +32,7 @@ import {
   updateMonitor,
   updateNode,
   updateRuntimeSettings,
+  upsertMaintenance,
   upsertMonitor,
 } from "./domain/index.ts";
 import { extractBearer, httpError, readJson } from "./http.ts";
@@ -224,6 +226,18 @@ export function createApp(db: SqlDatabase, config: LoadedConfig): Hono {
   app.delete("/api/v1/admin/jobs/:key", (c) =>
     removeOr404(c, db, "job", c.req.param("key")),
   );
+
+  app.post("/api/v1/admin/maintenances", async (c) =>
+    c.json({ ok: true, id: await upsertMaintenance(db, await readJson(c)) }),
+  );
+
+  app.delete("/api/v1/admin/maintenances/:id", async (c) => {
+    if (!(await deleteMaintenance(db, c.req.param("id")))) {
+      throw httpError(404, "Not found");
+    }
+
+    return c.json({ ok: true });
+  });
 
   app.post("/api/v1/admin/mute", async (c) => {
     const body = parseMuteInput(await readJson(c));

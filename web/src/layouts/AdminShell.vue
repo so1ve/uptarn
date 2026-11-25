@@ -19,6 +19,7 @@ const ROUTE_TITLES: Record<string, string> = {
   monitors: "Monitors",
   jobs: "Jobs",
   incidents: "Incidents",
+  maintenances: "Maintenances",
   settings: "Settings",
 };
 
@@ -28,6 +29,9 @@ const { busy, run } = useAction();
 const { signOutState } = useUptarnStore();
 
 const totalIncidents = computed(() => snap.value.incidents.length);
+const activeMaintenancesCount = computed(
+  () => snap.value.maintenances.filter((m) => m.state !== "completed").length,
+);
 const openIncidents = computed(
   () => snap.value.incidents.filter((i) => i.state === "open").length,
 );
@@ -79,6 +83,13 @@ const navItems = computed(() => [
     active: route.name === "incidents",
     count: totalIncidents.value,
     urgent: totalIncidents.value > 0,
+  },
+  {
+    to: "/admin/maintenances",
+    label: "Maintenances",
+    active: route.name === "maintenances",
+    count: activeMaintenancesCount.value,
+    urgent: false,
   },
 ]);
 
