@@ -15,6 +15,9 @@ export interface ServerRuntimeEnv {
   WEBHOOK_URL?: string;
   WEBHOOK_SECRET?: string;
   WEBHOOK_HEADERS?: string;
+  TURNSTILE_SITE_KEY?: string;
+  TURNSTILE_SECRET?: string;
+  TURNSTILE_HOSTNAMES?: string;
   RETENTION_DAYS?: string;
   FAILURE_THRESHOLD?: string;
 }
@@ -41,6 +44,12 @@ export interface WebhookConfig {
   headers: Record<string, string>;
 }
 
+export interface TurnstileConfig {
+  siteKey: string;
+  secret: string;
+  hostnames: string[];
+}
+
 export interface LoadedConfig {
   publicBaseUrl: string;
   adminPassword: string | null;
@@ -52,6 +61,7 @@ export interface LoadedConfig {
   telegram: TelegramConfig | null;
   matrix: MatrixConfig | null;
   webhook: WebhookConfig | null;
+  turnstile: TurnstileConfig | null;
   retentionDays: number;
   failureThreshold: number;
 }
@@ -137,6 +147,13 @@ export function loadConfig(env: ServerRuntimeEnv): LoadedConfig {
 
   const webhookUrl = parseHttpUrl(env.WEBHOOK_URL);
 
+  const turnstileSiteKey = envStr(env.TURNSTILE_SITE_KEY);
+  const turnstileSecret = envStr(env.TURNSTILE_SECRET);
+  const turnstileHostnames = (envStr(env.TURNSTILE_HOSTNAMES) ?? "")
+    .split(",")
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean);
+
   return {
     publicBaseUrl,
     adminPassword: envStr(env.ADMIN_PASSWORD),
@@ -158,6 +175,14 @@ export function loadConfig(env: ServerRuntimeEnv): LoadedConfig {
           headers: parseHeaderRecord(env.WEBHOOK_HEADERS),
         }
       : null,
+    turnstile:
+      turnstileSiteKey && turnstileSecret
+        ? {
+            siteKey: turnstileSiteKey,
+            secret: turnstileSecret,
+            hostnames: turnstileHostnames,
+          }
+        : null,
     retentionDays: envInt(env.RETENTION_DAYS, 14, 1, 365),
     failureThreshold: envInt(env.FAILURE_THRESHOLD, 2, 1, 10),
   };

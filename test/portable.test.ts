@@ -2466,4 +2466,95 @@ describe("uptarn portable server", () => {
     expect(plan.nodePatches).toHaveLength(1);
     expect(plan.nodePatches[0].patch).toEqual({ traffic_reset_day: 20 });
   });
+
+  it("enforces optional Turnstile siteverify on password login when configured", async () => {
+    const config = loadConfig({
+      PUBLIC_BASE_URL: "https://status.example.com",
+      ADMIN_PASSWORD: "correct-horse-battery",
+      TURNSTILE_SITE_KEY: "0x4AAAAAAA-test-sitekey",
+      TURNSTILE_SECRET: "0x4AAAAAAA-test-secret",
+    });
+    const app = createApp(db, config);
+
+    // Public status exposes only the sitekey, never the secret.
+    const pubRes = await app.request("/api/v1/public/status");
+
+    expect(pubRes.status).toBe(200);
+
+    const pubText = await pubRes.text();
+
+    expect(pubText).toContain("0x4AAAAAAA-test-sitekey");
+    expect(pubText).not.toContain("0x4AAAAAAA-test-secret");
+
+    const login = (token?: string) =>
+      app.request("https://status.example.com/api/v1/auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "CF-Connecting-IP": "203.0.113.10",
+        },
+        body: JSON.stringify({
+          password: "correct-horse-battery",
+          ...(token === undefined ? {} : { "cf-turnstile-response": token }),
+        }),
+      });
+
+    // Missing token is rejected before touching siteverify or password.
+    expect((await login()).status).toBe(403);
+
+    // Action mismatch and hostname mismatch are rejected (fail closed).
+    const calls: string[] = [];
+    let nextResponse: Response = Response.json(
+      {
+        success: true,
+        action: "signup",
+        hostname: "status.example.com",
+      },
+      { status: 200 },
+    );
+    vi.stubGlobal(
+      "fetch",
+      (_input: string | URL | Request, init?: RequestInit) => {
+        calls.push(String(init?.body ?? ""));
+
+        return Promise.resolve(nextResponse.clone());
+      },
+    );
+
+    expect((await login("tok-wrong-action")).status).toBe(403);
+
+    nextResponse = Response.json(
+      {
+        success: true,
+        action: "login",
+        hostname: "evil.example",
+      },
+      { status: 200 },
+    );
+
+    expect((await login("tok-wrong-host")).status).toBe(403);
+
+    nextResponse = new Response("upstream error", { status: 500 });
+
+    expect((await login("tok-upstream-500")).status).toBe(403);
+
+    nextResponse = Response.json(
+      {
+        success: true,
+        action: "login",
+        hostname: "status.example.com",
+      },
+      { status: 200 },
+    );
+    const okRes = await login("tok-valid");
+
+    expect(okRes.status).toBe(200);
+    expect(okRes.headers.get("Set-Cookie")).toContain("uptarn_session=");
+
+    const lastBody = new URLSearchParams(calls.at(-1));
+
+    expect(lastBody.get("secret")).toBe("0x4AAAAAAA-test-secret");
+    expect(lastBody.get("response")).toBe("tok-valid");
+    expect(lastBody.get("remoteip")).toBe("203.0.113.10");
+  });
 });

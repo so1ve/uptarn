@@ -271,6 +271,7 @@ export interface AuthMethodsSummary {
   password_enabled: boolean;
   cf_access_enabled: boolean;
   passkey_count: number;
+  turnstile_site_key?: string | null;
 }
 
 export interface SiteLink {

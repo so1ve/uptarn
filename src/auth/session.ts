@@ -11,6 +11,7 @@ import {
   sha256Hex,
   timingSafeEqualText,
 } from "./crypto.ts";
+import { verifyTurnstileToken } from "./turnstile.ts";
 
 const SESSION_COOKIE = "uptarn_session";
 const SESSION_TTL_SECS = 30 * 86_400;
@@ -166,7 +167,10 @@ export async function handlePasswordLogin(
   db: SqlDatabase,
   config: LoadedConfig,
 ): Promise<Response> {
-  const body = await readJson<{ password?: unknown }>(c);
+  const body = await readJson<{
+    "password"?: unknown;
+    "cf-turnstile-response"?: unknown;
+  }>(c);
   const password = typeof body.password === "string" ? body.password : "";
   if (!password) {
     throw httpError(400, "Password is required");
@@ -174,6 +178,7 @@ export async function handlePasswordLogin(
   if (!hasPasswordLogin(config)) {
     throw httpError(403, "Password login is not configured on this server");
   }
+  await verifyTurnstileToken(c, config, body["cf-turnstile-response"], "login");
   if (!(await verifyPassword(password, config))) {
     throw httpError(401, "Incorrect password");
   }

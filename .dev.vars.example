@@ -13,3 +13,7 @@ ADMIN_TOKEN=uptarn-dev-admin-token
 # WEBHOOK_URL=https://hooks.example.com/uptarn
 # WEBHOOK_SECRET=
 # WEBHOOK_HEADERS={"Authorization":"Bearer example"}
+# Optional Cloudflare Turnstile on password login
+# TURNSTILE_SITE_KEY=
+# TURNSTILE_SECRET=
+# TURNSTILE_HOSTNAMES=status.example.com

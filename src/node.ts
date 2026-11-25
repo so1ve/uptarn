@@ -24,6 +24,7 @@ const FILE_BACKED_ENV_KEYS = [
   "WEBHOOK_URL",
   "WEBHOOK_SECRET",
   "WEBHOOK_HEADERS",
+  "TURNSTILE_SECRET",
 ] as const;
 
 export interface NodeServerOptions {

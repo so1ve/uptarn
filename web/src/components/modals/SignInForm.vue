@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 
 import type { AuthMethodsSummary } from "../../lib/index.ts";
 import { apiFetch, signInWithPasskey, useAction } from "../../lib/index.ts";
+import TurnstileWidget from "../ui/TurnstileWidget.vue";
 
 const emit = defineEmits<{
   authenticated: [];
@@ -14,6 +15,10 @@ const props = defineProps<{
 
 const { busy, run } = useAction();
 const password = ref("");
+const turnstileToken = ref("");
+const turnstileRef = ref<InstanceType<typeof TurnstileWidget> | null>(null);
+
+const turnstileSiteKey = computed(() => props.auth.turnstile_site_key ?? null);
 
 const unconfigured = computed(
   () =>
@@ -26,11 +31,21 @@ async function onPasswordSubmit() {
   if (!password.value) {
     return;
   }
+  if (turnstileSiteKey.value && !turnstileToken.value) {
+    return;
+  }
   const ok = await run("password", "Sign-in failed", async () => {
-    await apiFetch("/api/v1/auth/login", "POST", { password: password.value });
+    await apiFetch("/api/v1/auth/login", "POST", {
+      password: password.value,
+      ...(turnstileSiteKey.value
+        ? { "cf-turnstile-response": turnstileToken.value }
+        : {}),
+    });
   });
   if (ok) {
     emit("authenticated");
+  } else if (turnstileSiteKey.value) {
+    turnstileRef.value?.reset();
   }
 }
 
@@ -86,9 +101,19 @@ async function onPasskeySignIn() {
           type="password"
         />
       </UFormField>
+
+      <TurnstileWidget
+        v-if="turnstileSiteKey"
+        v-model="turnstileToken"
+        ref="turnstileRef"
+        action="login"
+        :site-key="turnstileSiteKey"
+      />
+
       <UButton
         block
         :color="auth.passkey_count > 0 ? 'neutral' : 'primary'"
+        :disabled="Boolean(turnstileSiteKey && !turnstileToken)"
         :loading="busy === 'password'"
         type="submit"
         :variant="auth.passkey_count > 0 ? 'soft' : 'solid'"

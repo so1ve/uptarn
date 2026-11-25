@@ -341,6 +341,7 @@ const buildAuthSummary = (config: LoadedConfig, passkeyCount: number) => ({
   password_enabled: hasPasswordLogin(config),
   cf_access_enabled: config.cfAccess !== null,
   passkey_count: passkeyCount,
+  turnstile_site_key: config.turnstile?.siteKey ?? null,
 });
 
 function publicStoragePct(

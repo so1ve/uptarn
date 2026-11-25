@@ -21,6 +21,7 @@ let
     (lib.optionalString (cfg.webhookUrlFile != null) "webhook-url:${cfg.webhookUrlFile}")
     (lib.optionalString (cfg.webhookSecretFile != null) "webhook-secret:${cfg.webhookSecretFile}")
     (lib.optionalString (cfg.webhookHeadersFile != null) "webhook-headers:${cfg.webhookHeadersFile}")
+    (lib.optionalString (cfg.turnstileSecretFile != null) "turnstile-secret:${cfg.turnstileSecretFile}")
   ];
 in
 {
@@ -146,6 +147,24 @@ in
       description = "Optional file containing WEBHOOK_HEADERS JSON object.";
     };
 
+    turnstileSiteKey = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "Optional Cloudflare Turnstile site key for password login.";
+    };
+
+    turnstileSecretFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = "Optional file containing TURNSTILE_SECRET.";
+    };
+
+    turnstileHostnames = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      description = "Optional explicit allowed hostnames for Turnstile Siteverify.";
+    };
+
     environmentFile = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       default = null;
@@ -207,6 +226,15 @@ in
       }
       // lib.optionalAttrs (cfg.webhookHeadersFile != null) {
         WEBHOOK_HEADERS_FILE = "/run/credentials/uptarn.service/webhook-headers";
+      }
+      // lib.optionalAttrs (cfg.turnstileSiteKey != null) {
+        TURNSTILE_SITE_KEY = cfg.turnstileSiteKey;
+      }
+      // lib.optionalAttrs (cfg.turnstileSecretFile != null) {
+        TURNSTILE_SECRET_FILE = "/run/credentials/uptarn.service/turnstile-secret";
+      }
+      // lib.optionalAttrs (cfg.turnstileHostnames != [ ]) {
+        TURNSTILE_HOSTNAMES = lib.concatStringsSep "," cfg.turnstileHostnames;
       };
 
       serviceConfig = {
