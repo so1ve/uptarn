@@ -118,10 +118,11 @@ export function formatAge(ts: number | null | undefined, now: number): string {
 export const formatRemaining = (untilTs: number, now: number): string =>
   untilTs <= now ? "expired" : formatDuration(untilTs - now);
 
-export const formatClock = (ts: number): string =>
+export const formatClock = (ts: number, showSeconds = false): string =>
   new Date(ts * 1000).toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
+    ...(showSeconds ? { second: "2-digit" } : {}),
   });
 
 export function formatDateShort(ts: number): string {
@@ -132,8 +133,14 @@ export function formatDateShort(ts: number): string {
   return `${mm}/${dd}`;
 }
 
-export const formatTimestamp = (ts: number, showDate = false): string =>
-  showDate ? `${formatDateShort(ts)} ${formatClock(ts)}` : formatClock(ts);
+export const formatTimestamp = (
+  ts: number,
+  showDate = false,
+  showSeconds = false,
+): string =>
+  showDate
+    ? `${formatDateShort(ts)} ${formatClock(ts, showSeconds)}`
+    : formatClock(ts, showSeconds);
 
 export function formatSeriesValue(value: number, unit: SeriesUnit): string {
   if (!Number.isFinite(value)) {

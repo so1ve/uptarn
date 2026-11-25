@@ -11,6 +11,7 @@ import {
   buildNetworkChartOption,
   formatBps,
   formatSeriesWithLoss,
+  hasLiveNodeSamples,
   memPercent,
   useUptarnStore,
 } from "../../lib/index.ts";
@@ -27,21 +28,27 @@ const props = defineProps<{
 
 const windowSecs = defineModel<number>("windowSecs", { required: true });
 
-const WINDOWS = [
+const HISTORY_WINDOWS = [
   { label: "1h", value: 3600 },
   { label: "6h", value: 21_600 },
   { label: "24h", value: 86_400 },
   { label: "7d", value: 604_800 },
 ] as const;
 
-const { isDark } = useUptarnStore();
+const { isDark, liveConnected } = useUptarnStore();
 
-const windowOptions = computed(() =>
-  WINDOWS.map((w) => ({
+const hasLive = computed(() => hasLiveNodeSamples(props.node.id));
+const isLiveWindow = computed(() => windowSecs.value === 0);
+const windowOptions = computed(() => {
+  const items = hasLive.value
+    ? [{ label: "Live", value: 0 }, ...HISTORY_WINDOWS]
+    : [...HISTORY_WINDOWS];
+
+  return items.map((w) => ({
     ...w,
     loading: Boolean(props.loadingWindow && windowSecs.value === w.value),
-  })),
-);
+  }));
+});
 const showDate = computed(() => windowSecs.value > 86_400);
 const memPct = computed(() => memPercent(props.node.system));
 const computeChartOption = computed(() =>
@@ -50,6 +57,7 @@ const computeChartOption = computed(() =>
     isDark.value,
     props.history,
     showDate.value,
+    isLiveWindow.value,
   ),
 );
 const networkChartOption = computed(() =>
@@ -58,6 +66,7 @@ const networkChartOption = computed(() =>
     isDark.value,
     props.history,
     showDate.value,
+    isLiveWindow.value,
   ),
 );
 const totalCharts = computed(
@@ -71,7 +80,23 @@ const totalCharts = computed(
 <template>
   <section v-if="totalCharts > 0" class="space-y-3">
     <div class="flex items-center justify-between gap-3">
-      <h2 class="text-sm font-semibold">Metrics</h2>
+      <div class="flex items-center gap-2.5">
+        <h2 class="text-sm font-semibold">Metrics</h2>
+        <span
+          v-if="liveConnected && hasLive && isLiveWindow"
+          class="inline-flex items-center gap-1.5 font-mono text-[11px] text-emerald-600 dark:text-emerald-400"
+        >
+          <span class="relative flex size-1.5">
+            <span
+              class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75"
+            />
+            <span
+              class="relative inline-flex size-1.5 rounded-full bg-emerald-500"
+            />
+          </span>
+          3s live
+        </span>
+      </div>
       <SegmentedControl
         v-model="windowSecs"
         aria-label="Metrics time window"
@@ -84,7 +109,11 @@ const totalCharts = computed(
       class="grid grid-cols-1 gap-5"
       :class="totalCharts >= 2 ? 'lg:grid-cols-2' : ''"
     >
-      <ChartCard v-if="computeChartOption" :option="computeChartOption">
+      <ChartCard
+        v-if="computeChartOption"
+        :live="isLiveWindow"
+        :option="computeChartOption"
+      >
         <template #title>
           <h3 class="text-sm font-semibold">CPU &amp; Memory</h3>
         </template>
@@ -110,7 +139,11 @@ const totalCharts = computed(
         </template>
       </ChartCard>
 
-      <ChartCard v-if="networkChartOption" :option="networkChartOption">
+      <ChartCard
+        v-if="networkChartOption"
+        :live="isLiveWindow"
+        :option="networkChartOption"
+      >
         <template #title>
           <h3 class="text-sm font-semibold">Network</h3>
         </template>

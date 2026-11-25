@@ -1,12 +1,22 @@
 import { useColorMode, useEventListener, useIntervalFn } from "@vueuse/core";
-import { computed, ref } from "vue";
+import { computed, onScopeDispose, ref } from "vue";
 
 import type {
+  AdminLiveMessage,
   BootPayload,
   DashboardSnapshot,
+  LiveNodeSample,
+  PublicLiveMessage,
+  PublicLiveNodeSample,
   PublicStatusSnapshot,
+  SeriesPoint,
 } from "../../../src/shared/index.ts";
-import { errorMessage } from "../../../src/shared/index.ts";
+import {
+  MAX_LIVE_POINTS,
+  errorMessage,
+  memPercent,
+  round1,
+} from "../../../src/shared/index.ts";
 import { ApiError, apiFetch } from "./api.ts";
 
 export interface IssuedToken {
@@ -16,17 +26,198 @@ export interface IssuedToken {
   graceSecs?: number;
 }
 
+const IS_DEMO = import.meta.env.VITE_DEMO === "true";
+const LIVE_PING_MS = 25_000;
+const LIVE_MIN_BACKOFF_MS = 1500;
+const LIVE_MAX_BACKOFF_MS = 30_000;
+const LIVE_POLL_FALLBACK_MS = 30_000;
+
 const publicStatus = ref<PublicStatusSnapshot | null>(null);
 const snapshot = ref<DashboardSnapshot | null>(null);
 const loadError = ref<string | null>(null);
 const issuedToken = ref<IssuedToken | null>(null);
 const tokenModalOpen = ref(false);
 const syncGeneration = ref(0);
+const liveConnected = ref(false);
+const liveHistory = ref<Record<string, Record<string, SeriesPoint[]>>>({});
 
 const colorMode = useColorMode();
 const isDark = computed(() => colorMode.value === "dark");
 function toggleTheme() {
   colorMode.value = colorMode.value === "dark" ? "light" : "dark";
+}
+
+function appendSeriesPoint(
+  points: readonly SeriesPoint[] | undefined,
+  ts: number,
+  value: number,
+): SeriesPoint[] {
+  const next = points ? [...points] : [];
+  const last = next.at(-1);
+  if (last?.ts === ts) {
+    next[next.length - 1] = { ts, value };
+  } else {
+    next.push({ ts, value });
+    if (next.length > MAX_LIVE_POINTS) {
+      next.splice(0, next.length - MAX_LIVE_POINTS);
+    }
+  }
+
+  return next;
+}
+
+function samplesToSeries(
+  samples: readonly LiveNodeSample[],
+): Record<string, SeriesPoint[]> {
+  const hist: Record<string, SeriesPoint[]> = {};
+  for (const s of samples) {
+    if (s.cpu_pct !== undefined) {
+      (hist._cpu ??= []).push({ ts: s.ts, value: s.cpu_pct });
+    }
+    const mem = memPercent({
+      uptime_secs: s.uptime_secs,
+      mem_used_bytes: s.mem_used_bytes,
+      mem_total_bytes: s.mem_total_bytes,
+    });
+    if (mem !== null) {
+      (hist._mem ??= []).push({ ts: s.ts, value: round1(mem) });
+    }
+    if (s.rx_bps !== null) {
+      (hist._rx_bps ??= []).push({ ts: s.ts, value: s.rx_bps });
+    }
+    if (s.tx_bps !== null) {
+      (hist._tx_bps ??= []).push({ ts: s.ts, value: s.tx_bps });
+    }
+  }
+
+  return hist;
+}
+
+function recordAdminSample(sample: LiveNodeSample): void {
+  const prev = liveHistory.value[sample.node_id] ?? {};
+  const next: Record<string, SeriesPoint[]> = { ...prev };
+  if (sample.cpu_pct !== undefined) {
+    next._cpu = appendSeriesPoint(prev._cpu, sample.ts, sample.cpu_pct);
+  }
+  const mem = memPercent({
+    uptime_secs: sample.uptime_secs,
+    mem_used_bytes: sample.mem_used_bytes,
+    mem_total_bytes: sample.mem_total_bytes,
+  });
+  if (mem !== null) {
+    next._mem = appendSeriesPoint(prev._mem, sample.ts, round1(mem));
+  }
+  if (sample.rx_bps !== null) {
+    next._rx_bps = appendSeriesPoint(prev._rx_bps, sample.ts, sample.rx_bps);
+  }
+  if (sample.tx_bps !== null) {
+    next._tx_bps = appendSeriesPoint(prev._tx_bps, sample.ts, sample.tx_bps);
+  }
+  liveHistory.value = { ...liveHistory.value, [sample.node_id]: next };
+}
+
+function patchAdminNode(sample: LiveNodeSample): void {
+  const snap = snapshot.value;
+  if (!snap) {
+    return;
+  }
+  const idx = snap.nodes.findIndex((n) => n.id === sample.node_id);
+  if (idx === -1) {
+    return;
+  }
+  const cur = snap.nodes[idx];
+  const nextSystem = {
+    ...(cur.system ?? { uptime_secs: sample.uptime_secs }),
+    uptime_secs: sample.uptime_secs,
+    ...(sample.cpu_pct === undefined ? {} : { cpu_pct: sample.cpu_pct }),
+    ...(sample.load_1m === undefined ? {} : { load_1m: sample.load_1m }),
+    ...(sample.mem_used_bytes === undefined
+      ? {}
+      : { mem_used_bytes: sample.mem_used_bytes }),
+    ...(sample.mem_total_bytes === undefined
+      ? {}
+      : { mem_total_bytes: sample.mem_total_bytes }),
+  };
+  const nextNodes = [...snap.nodes];
+  nextNodes[idx] = {
+    ...cur,
+    last_seen_at: Math.max(cur.last_seen_at ?? 0, sample.ts),
+    rx_bps: sample.rx_bps ?? cur.rx_bps,
+    tx_bps: sample.tx_bps ?? cur.tx_bps,
+    system: nextSystem,
+  };
+  snapshot.value = {
+    ...snap,
+    now: Math.max(snap.now, sample.ts),
+    nodes: nextNodes,
+  };
+}
+
+function patchPublicNode(sample: PublicLiveNodeSample): void {
+  const status = publicStatus.value;
+  if (!status) {
+    return;
+  }
+  const idx = status.nodes.findIndex((n) => n.key === sample.key);
+  if (idx === -1) {
+    return;
+  }
+  const cur = status.nodes[idx];
+  const nextNodes = [...status.nodes];
+  nextNodes[idx] = {
+    ...cur,
+    uptime_secs: sample.uptime_secs,
+    cpu_pct: sample.cpu_pct ?? cur.cpu_pct,
+    mem_pct: sample.mem_pct ?? cur.mem_pct,
+  };
+  publicStatus.value = {
+    ...status,
+    now: Math.max(status.now, sample.ts),
+    nodes: nextNodes,
+  };
+}
+
+function handleLiveMessage(kind: "admin" | "public", raw: string): void {
+  if (raw === "pong") {
+    return;
+  }
+  let msg: AdminLiveMessage | PublicLiveMessage;
+  try {
+    msg = JSON.parse(raw) as AdminLiveMessage | PublicLiveMessage;
+  } catch {
+    return;
+  }
+  if (kind === "admin") {
+    const adminMsg = msg as AdminLiveMessage;
+    if (adminMsg.type === "init") {
+      const nextHist: Record<string, Record<string, SeriesPoint[]>> = {};
+      for (const [nodeId, samples] of Object.entries(adminMsg.nodes)) {
+        nextHist[nodeId] = samplesToSeries(samples);
+        const latest = samples.at(-1);
+        if (latest) {
+          patchAdminNode(latest);
+        }
+      }
+      liveHistory.value = nextHist;
+    } else if (adminMsg.type === "tick") {
+      recordAdminSample(adminMsg.sample);
+      patchAdminNode(adminMsg.sample);
+    }
+
+    return;
+  }
+
+  const pubMsg = msg as PublicLiveMessage;
+  if (pubMsg.type === "init") {
+    for (const samples of Object.values(pubMsg.nodes)) {
+      const latest = samples.at(-1);
+      if (latest) {
+        patchPublicNode(latest);
+      }
+    }
+  } else if (pubMsg.type === "tick") {
+    patchPublicNode(pubMsg.sample);
+  }
 }
 
 function createRefresher<T>(
@@ -129,23 +320,127 @@ export function useLiveRefresh(
   focusDebounceMs = 3000,
 ) {
   const refresher = kind === "admin" ? adminRefresher : publicRefresher;
-  useIntervalFn(() => {
-    if (!document.hidden) {
-      void refresher.refresh();
+  let socket: WebSocket | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let pingTimer: ReturnType<typeof setInterval> | null = null;
+  let backoffMs = LIVE_MIN_BACKOFF_MS;
+  let disposed = false;
+
+  function clearTimers() {
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
     }
+    if (pingTimer !== null) {
+      clearInterval(pingTimer);
+      pingTimer = null;
+    }
+  }
+
+  function disconnectLive() {
+    clearTimers();
+    liveConnected.value = false;
+    if (socket) {
+      const ws = socket;
+      socket = null;
+      if (ws.readyState === 0 || ws.readyState === 1) {
+        ws.close();
+      }
+    }
+  }
+
+  function scheduleReconnect() {
+    if (disposed || document.hidden || reconnectTimer !== null) {
+      return;
+    }
+    const delay = backoffMs;
+    backoffMs = Math.min(LIVE_MAX_BACKOFF_MS, backoffMs * 2);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connectLive();
+    }, delay);
+  }
+
+  function connectLive() {
+    if (
+      IS_DEMO ||
+      disposed ||
+      document.hidden ||
+      socket !== null ||
+      typeof WebSocket === "undefined"
+    ) {
+      return;
+    }
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(`${proto}//${location.host}/api/v1/live`);
+    socket = ws;
+
+    ws.addEventListener("open", () => {
+      if (socket !== ws) {
+        return;
+      }
+      liveConnected.value = true;
+      backoffMs = LIVE_MIN_BACKOFF_MS;
+      pingTimer = setInterval(() => {
+        if (ws.readyState === 1) {
+          ws.send("ping");
+        }
+      }, LIVE_PING_MS);
+    });
+    ws.addEventListener("message", (event) => {
+      if (socket === ws && typeof event.data === "string") {
+        handleLiveMessage(kind, event.data);
+      }
+    });
+    ws.addEventListener("close", () => {
+      if (socket !== ws) {
+        return;
+      }
+      disconnectLive();
+      scheduleReconnect();
+    });
+    ws.addEventListener("error", () => {
+      if (socket === ws) {
+        ws.close();
+      }
+    });
+  }
+
+  connectLive();
+
+  useIntervalFn(() => {
+    if (document.hidden) {
+      return;
+    }
+    // Relax full HTTP polling to 30s while WebSocket live stream is active.
+    if (
+      liveConnected.value &&
+      Date.now() - refresher.lastFetchedAt() < LIVE_POLL_FALLBACK_MS
+    ) {
+      return;
+    }
+    void refresher.refresh();
   }, intervalMs);
 
   function onVisible() {
-    if (
-      !document.hidden &&
-      Date.now() - refresher.lastFetchedAt() >= focusDebounceMs
-    ) {
+    if (document.hidden) {
+      disconnectLive();
+
+      return;
+    }
+    connectLive();
+    if (Date.now() - refresher.lastFetchedAt() >= focusDebounceMs) {
       void refresher.refresh();
     }
   }
 
   useEventListener(document, "visibilitychange", onVisible);
   useEventListener(window, "focus", onVisible);
+
+  onScopeDispose(() => {
+    disposed = true;
+    disconnectLive();
+  });
 }
 
 function showIssuedToken(payload: IssuedToken) {
@@ -156,6 +451,7 @@ function showIssuedToken(payload: IssuedToken) {
 
 async function signOutState() {
   snapshot.value = null;
+  liveHistory.value = {};
   await loadState();
 }
 
@@ -215,6 +511,20 @@ async function persistOrder<K extends "nodes" | "monitors">(
   }
 }
 
+export function hasLiveNodeSamples(nodeId: string): boolean {
+  const live = liveHistory.value[nodeId];
+  if (!live) {
+    return false;
+  }
+
+  return (
+    (live._cpu?.length ?? 0) >= 2 ||
+    (live._mem?.length ?? 0) >= 2 ||
+    (live._rx_bps?.length ?? 0) >= 2 ||
+    (live._tx_bps?.length ?? 0) >= 2
+  );
+}
+
 export const useUptarnStore = () => ({
   publicStatus,
   snapshot,
@@ -222,6 +532,8 @@ export const useUptarnStore = () => ({
   issuedToken,
   tokenModalOpen,
   syncGeneration,
+  liveConnected,
+  liveHistory,
   isDark,
   toggleTheme,
   loadState,

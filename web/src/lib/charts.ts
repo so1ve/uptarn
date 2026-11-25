@@ -97,22 +97,41 @@ const valueAxis = (
   axisLabel: formatter ? { ...AXIS_LABEL, formatter } : AXIS_LABEL,
 });
 
+const areaGradient = (color: string, topOpacity: number) => ({
+  type: "linear",
+  x: 0,
+  y: 0,
+  x2: 0,
+  y2: 1,
+  colorStops: [
+    { offset: 0, color },
+    { offset: 1, color: "rgba(0, 0, 0, 0)" },
+  ],
+  opacity: topOpacity,
+});
+
 const areaLine = (
   name: string,
   color: string,
   data: readonly (number | null)[],
   areaOpacity: number,
   connectNulls = false,
+  smooth = 0.25,
 ) => ({
   name,
   type: "line",
-  smooth: 0.2,
+  smooth,
   showSymbol: false,
+  symbol: "circle",
+  symbolSize: 5,
   connectNulls,
   data,
   lineStyle: { width: 2, color },
   itemStyle: { color },
-  areaStyle: { color, opacity: areaOpacity },
+  areaStyle: {
+    color: areaGradient(color, areaOpacity),
+    opacity: areaOpacity * 1.45,
+  },
 });
 
 const cartesianOption = (opts: {
@@ -120,18 +139,25 @@ const cartesianOption = (opts: {
   gridLeft: number;
   timestamps: readonly number[];
   showDate: boolean;
+  showSeconds?: boolean;
+  live?: boolean;
   yAxis: unknown;
   series: unknown[];
   tooltipFmt: (v: unknown, idx?: number) => string;
   duration?: number;
 }): EChartsCoreOption => ({
-  animationDuration: opts.duration ?? 220,
+  animationDuration: opts.live ? 160 : (opts.duration ?? 220),
+  ...(opts.live
+    ? { animationDurationUpdate: 260, animationEasingUpdate: "linear" }
+    : {}),
   grid: { left: opts.gridLeft, right: 14, top: 14, bottom: 24 },
   tooltip: baseTooltip(opts.p, opts.tooltipFmt),
   xAxis: {
     type: "category",
     boundaryGap: false,
-    data: opts.timestamps.map((ts) => formatTimestamp(ts, opts.showDate)),
+    data: opts.timestamps.map((ts) =>
+      formatTimestamp(ts, opts.showDate, Boolean(opts.showSeconds)),
+    ),
     axisLine: { show: false },
     axisTick: { show: false },
     axisLabel: AXIS_LABEL,
@@ -174,6 +200,7 @@ function buildDualAreaOption(
   yAxisExtra: Record<string, unknown>,
   yAxisFmt: string | ((v: number) => string),
   tooltipFmt: (v: number) => string,
+  live = false,
 ): EChartsCoreOption | null {
   const active = channels.filter(([, , pts]) => pts.length >= 2);
   if (active.length === 0) {
@@ -188,6 +215,8 @@ function buildDualAreaOption(
     gridLeft,
     timestamps,
     showDate,
+    showSeconds: live,
+    live,
     yAxis: valueAxis(p.gridColor, yAxisExtra, yAxisFmt),
     tooltipFmt: (v) => (typeof v === "number" ? tooltipFmt(v) : "-"),
     series: active.map(([name, color, pts]) => {
@@ -199,6 +228,7 @@ function buildDualAreaOption(
         timestamps.map((ts) => byTs.get(ts) ?? null),
         p.areaOpacity,
         true,
+        live ? 0.35 : 0.25,
       );
     }),
   });
@@ -209,6 +239,7 @@ export function buildComputeChartOption(
   isDark: boolean,
   history: Record<string, SeriesPoint[]> = node.history,
   showDate = false,
+  live = false,
 ): EChartsCoreOption | null {
   const p = chartPalette(isDark);
 
@@ -223,6 +254,7 @@ export function buildComputeChartOption(
     { min: 0, max: 100, interval: 25 },
     "{value}%",
     (v) => `${v.toFixed(1)}%`,
+    live,
   );
 }
 
@@ -231,6 +263,7 @@ export function buildNetworkChartOption(
   isDark: boolean,
   history: Record<string, SeriesPoint[]> = node.history,
   showDate = false,
+  live = false,
 ): EChartsCoreOption | null {
   const p = chartPalette(isDark);
 
@@ -245,6 +278,7 @@ export function buildNetworkChartOption(
     { min: 0, splitNumber: 3 },
     formatBps,
     formatBps,
+    live,
   );
 }
 
