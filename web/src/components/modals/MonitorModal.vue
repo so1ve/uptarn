@@ -4,9 +4,11 @@ import { computed } from "vue";
 import type { MonitorSummary } from "../../lib/index.ts";
 import { apiFetch, useAction, useModalForm } from "../../lib/index.ts";
 import ConfirmPopover from "../ui/ConfirmPopover.vue";
+import MuteButton from "../ui/MuteButton.vue";
 
 const props = defineProps<{
   monitor: MonitorSummary | null;
+  now: number;
 }>();
 
 const open = defineModel<boolean>("open", { default: false });
@@ -249,7 +251,7 @@ async function onDelete() {
 
     <template #footer>
       <div class="flex w-full items-center justify-between gap-2">
-        <div>
+        <div class="flex items-center gap-2">
           <ConfirmPopover
             v-if="isEdit && !managedByNode"
             color="error"
@@ -263,6 +265,15 @@ async function onDelete() {
             <strong>{{ props.monitor?.name }}</strong>
             and its history?
           </ConfirmPopover>
+          <MuteButton
+            v-if="props.monitor && props.monitor.probe.type === 'exec'"
+            :label="props.monitor.name"
+            :muted-until="props.monitor.muted_until"
+            :now
+            :target-id="props.monitor.id"
+            target-type="monitor"
+            variant="soft"
+          />
         </div>
         <div class="flex items-center gap-2">
           <UButton color="neutral" variant="ghost" @click="open = false">

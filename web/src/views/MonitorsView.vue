@@ -31,14 +31,15 @@ const rows = computed(() =>
   snap.value.monitors.map((mon) => ({
     mon,
     stats: monitorLatencyStats(mon, monitorWindow.value, snap.value.now),
-    chartOption: expandedIds.has(mon.id)
-      ? buildMonitorLatencyOption(
-          mon,
-          isDark.value,
-          monitorWindow.value,
-          snap.value.now,
-        )
-      : null,
+    chartOption:
+      mon.probe.type !== "exec" && expandedIds.has(mon.id)
+        ? buildMonitorLatencyOption(
+            mon,
+            isDark.value,
+            monitorWindow.value,
+            snap.value.now,
+          )
+        : null,
   })),
 );
 
@@ -47,11 +48,14 @@ const { dragAttrs, moveBy } = usePersistedReorder("monitors", () =>
   snap.value.monitors.map((m) => m.id),
 );
 
-function toggleExpand(id: string) {
-  if (expandedIds.has(id)) {
-    expandedIds.delete(id);
+function toggleExpand(mon: MonitorSummary) {
+  if (mon.probe.type === "exec") {
+    return;
+  }
+  if (expandedIds.has(mon.id)) {
+    expandedIds.delete(mon.id);
   } else {
-    expandedIds.add(id);
+    expandedIds.add(mon.id);
   }
 }
 
@@ -98,18 +102,14 @@ function openMonitorModal(mon: MonitorSummary | null) {
           @edit="openMonitorModal(mon)"
           @move-down="moveBy(mon.id, 1)"
           @move-up="moveBy(mon.id, -1)"
-          @toggle="toggleExpand(mon.id)"
+          @toggle="toggleExpand(mon)"
         />
 
         <ChartCard
-          v-if="expandedIds.has(mon.id)"
+          v-if="mon.probe.type !== 'exec' && expandedIds.has(mon.id)"
           class="mb-4 sm:ml-6"
           compact
-          :empty-text="
-            mon.samples.length > 0 && mon.probe.type === 'exec'
-              ? 'No latency data for command checks.'
-              : 'No samples yet.'
-          "
+          empty-text="No samples yet."
           height="180px"
           :option="chartOption"
         >
@@ -132,6 +132,10 @@ function openMonitorModal(mon: MonitorSummary | null) {
       </div>
     </div>
 
-    <MonitorModal v-model:open="monitorModalOpen" :monitor="editingMonitor" />
+    <MonitorModal
+      v-model:open="monitorModalOpen"
+      :monitor="editingMonitor"
+      :now="snap.now"
+    />
   </div>
 </template>

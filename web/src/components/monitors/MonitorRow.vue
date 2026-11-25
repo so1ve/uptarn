@@ -44,6 +44,10 @@ const adminMon = computed<MonitorSummary | null>(() =>
   "probe" in props.monitor ? props.monitor : null,
 );
 
+const expandable = computed(
+  () => adminMon.value !== null && adminMon.value.probe.type !== "exec",
+);
+
 const dotStatus = computed<DotStatus>(() =>
   !props.monitor.enabled || props.monitor.last_status === "pending"
     ? "pending"
@@ -111,15 +115,16 @@ const errorText = computed(() =>
 
 <template>
   <div
-    :aria-expanded="adminMon ? Boolean(expanded) : undefined"
+    :aria-expanded="expandable ? Boolean(expanded) : undefined"
     class="grid items-center gap-x-3 gap-y-2 py-3.5 lg:gap-x-5 lg:gap-y-2.5"
     :class="[
       adminMon
-        ? 'cursor-pointer grid-cols-[minmax(0,1fr)_auto_auto] px-2 transition-colors hover:bg-elevated/60 lg:grid-cols-[minmax(13rem,1.2fr)_minmax(13rem,1.65fr)_4.5rem_minmax(9rem,0.9fr)_auto]'
+        ? 'grid-cols-[minmax(0,1fr)_auto_auto] px-2 lg:grid-cols-[minmax(13rem,1.2fr)_minmax(13rem,1.65fr)_4.5rem_minmax(9rem,0.9fr)_auto]'
         : 'grid-cols-[minmax(0,1fr)_auto] px-1 lg:grid-cols-[minmax(12rem,1.1fr)_minmax(14rem,1.8fr)_4.5rem_minmax(7rem,0.8fr)]',
+      expandable ? 'cursor-pointer transition-colors hover:bg-elevated/60' : '',
       !monitor.enabled ? 'opacity-60' : '',
     ]"
-    @click="adminMon && emit('toggle')"
+    @click="expandable && emit('toggle')"
   >
     <div class="order-1 flex min-w-0 items-start gap-2">
       <div class="flex h-5 shrink-0 items-center gap-2">
@@ -131,10 +136,15 @@ const errorText = computed(() =>
           @move-up="emit('moveUp')"
         />
         <UIcon
-          v-if="adminMon"
+          v-if="expandable"
           class="size-3.5 shrink-0 text-dimmed transition-transform duration-150"
           :class="expanded ? 'rotate-90 text-default' : ''"
           name="i-lucide-chevron-right"
+        />
+        <span
+          v-else-if="adminMon"
+          aria-hidden="true"
+          class="size-3.5 shrink-0"
         />
         <StatusDot :status="dotStatus" />
       </div>
