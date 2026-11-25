@@ -491,10 +491,16 @@ export function parseMonitorPatch(raw: unknown): {
   };
 }
 
+export const parseTrafficResetDay = (
+  val: unknown,
+  field = "traffic_reset_day",
+): number | undefined => int(val, field, 1, 31);
+
 export function parseNodePatch(raw: unknown): {
   is_public?: boolean;
   primary_mount?: string | null;
   group?: string | null;
+  traffic_reset_day?: number;
 } {
   const obj = asObj(raw, "node patch");
   const isPublic = bool(obj.is_public, "is_public");
@@ -504,18 +510,25 @@ export function parseNodePatch(raw: unknown): {
   const group = Object.hasOwn(obj, "group")
     ? normalizeGroup(obj.group)
     : undefined;
+  const trafficResetDay = parseTrafficResetDay(obj.traffic_reset_day);
   if (
     isPublic === undefined &&
     primaryMount === undefined &&
-    group === undefined
+    group === undefined &&
+    trafficResetDay === undefined
   ) {
-    bad("At least one of is_public, primary_mount, or group is required");
+    bad(
+      "At least one of is_public, primary_mount, group, or traffic_reset_day is required",
+    );
   }
 
   return {
     ...(isPublic === undefined ? {} : { is_public: isPublic }),
     ...(primaryMount === undefined ? {} : { primary_mount: primaryMount }),
     ...(group === undefined ? {} : { group }),
+    ...(trafficResetDay === undefined
+      ? {}
+      : { traffic_reset_day: trafficResetDay }),
   };
 }
 

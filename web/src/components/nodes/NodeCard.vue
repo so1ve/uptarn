@@ -5,6 +5,7 @@ import type { NodeSummary } from "../../lib/index.ts";
 import {
   formatAge,
   formatBps,
+  formatBytes,
   formatDuration,
   formatMountText,
   formatUsage,
@@ -38,6 +39,14 @@ const hasMem = computed(() => memPct.value !== null);
 const hasCompute = computed(() => hasCpu.value || hasMem.value);
 const hasNet = computed(
   () => props.node.rx_bps !== null && props.node.tx_bps !== null,
+);
+const monthlyTrafficTitle = computed(() =>
+  props.node.month_rx_bytes !== null &&
+  props.node.month_rx_bytes !== undefined &&
+  props.node.month_tx_bytes !== null &&
+  props.node.month_tx_bytes !== undefined
+    ? `Monthly: ↓ ${formatBytes(props.node.month_rx_bytes)} · ↑ ${formatBytes(props.node.month_tx_bytes)} (resets day ${props.node.traffic_reset_day ?? 1} UTC)`
+    : undefined,
 );
 
 const issue = computed(() =>
@@ -135,7 +144,11 @@ const memCaption = computed(() =>
                 </span>
               </span>
             </div>
-            <span v-if="hasNet" class="inline-flex items-center gap-3">
+            <span
+              v-if="hasNet"
+              class="inline-flex items-center gap-3"
+              :title="monthlyTrafficTitle"
+            >
               <span class="text-blue-600 dark:text-blue-400">
                 ↓ {{ formatBps(node.rx_bps!) }}
               </span>

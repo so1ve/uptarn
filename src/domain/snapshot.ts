@@ -40,7 +40,7 @@ import {
   parseMonitorRollups,
   parseMonitorSamples,
 } from "./monitors.ts";
-import { parseNodeSpark } from "./nodes.ts";
+import { parseNodeSpark, trafficPeriodStart } from "./nodes.ts";
 import type { SettingRow } from "./settings.ts";
 import { SELECT_SETTINGS_SQL, parseRuntimeSettings } from "./settings.ts";
 
@@ -64,8 +64,13 @@ interface SnapshotNodeRow extends NodeCoreRow {
   public_managed: number;
   muted_until: number;
   created_at: number;
+  prev_net_at: number | null;
   rx_bps: number | null;
   tx_bps: number | null;
+  month_rx_bytes: number;
+  month_tx_bytes: number;
+  traffic_reset_day: number;
+  traffic_period_start: number;
   info_json: string;
   agent_version: string | null;
 }
@@ -374,7 +379,8 @@ export async function getDashboardSnapshot(
     },
     {
       sql: `SELECT id, label, group_name, is_public, public_managed, primary_mount, interval_secs, grace_secs, muted_until, created_at,
-                   last_seen_at, rx_bps, tx_bps, system_json, mounts_json, checks_json, series_json, info_json, spark_json, agent_version
+                   last_seen_at, prev_net_at, rx_bps, tx_bps, month_rx_bytes, month_tx_bytes, traffic_reset_day, traffic_period_start,
+                   system_json, mounts_json, checks_json, series_json, info_json, spark_json, agent_version
             FROM nodes ORDER BY sort_order ASC, id ASC`,
     },
     { sql: "SELECT * FROM monitors ORDER BY sort_order ASC, name ASC" },
@@ -414,6 +420,11 @@ export async function getDashboardSnapshot(
       row,
       now,
     );
+    const hasTraffic = row.prev_net_at !== null;
+    const sameTrafficPeriod =
+      hasTraffic &&
+      row.traffic_period_start ===
+        trafficPeriodStart(now, row.traffic_reset_day);
 
     return {
       id: row.id,
@@ -430,6 +441,17 @@ export async function getDashboardSnapshot(
       last_seen_at: row.last_seen_at,
       rx_bps: row.rx_bps,
       tx_bps: row.tx_bps,
+      month_rx_bytes: hasTraffic
+        ? sameTrafficPeriod
+          ? row.month_rx_bytes
+          : 0
+        : null,
+      month_tx_bytes: hasTraffic
+        ? sameTrafficPeriod
+          ? row.month_tx_bytes
+          : 0
+        : null,
+      traffic_reset_day: row.traffic_reset_day,
       agent_version: row.agent_version,
       system,
       mounts,

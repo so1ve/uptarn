@@ -143,6 +143,10 @@ interface NodeIngestRow {
   prev_net_at: number | null;
   rx_bps: number | null;
   tx_bps: number | null;
+  month_rx_bytes: number;
+  month_tx_bytes: number;
+  traffic_reset_day: number;
+  traffic_period_start: number;
   spark_json: string;
 }
 
@@ -193,6 +197,7 @@ export async function updateNode(
     is_public?: boolean;
     primary_mount?: string | null;
     group?: string | null;
+    traffic_reset_day?: number;
   },
 ): Promise<boolean> {
   const existing = await db.first<{ public_managed: number }>(
@@ -218,6 +223,12 @@ export async function updateNode(
   if (patch.group !== undefined) {
     params.push(patch.group);
     sets.push(`group_name = ?${params.length}`);
+  }
+  if (patch.traffic_reset_day !== undefined) {
+    params.push(patch.traffic_reset_day);
+    sets.push(`traffic_reset_day = ?${params.length}`);
+    params.push(trafficPeriodStart(unixNow(), patch.traffic_reset_day));
+    sets.push(`traffic_period_start = ?${params.length}`);
   }
   params.push(nodeId);
   const res = await db.run(
@@ -402,6 +413,70 @@ function computeNetworkRates(
   return { rxBps: node.rx_bps, txBps: node.tx_bps };
 }
 
+const utcDaysInMonth = (year: number, monthIndex: number): number =>
+  new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
+
+export function trafficPeriodStart(nowSecs: number, resetDay: number): number {
+  const day = Math.min(31, Math.max(1, Math.floor(resetDay)));
+  const date = new Date(nowSecs * 1000);
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth();
+  const current = Math.floor(
+    Date.UTC(year, month, Math.min(day, utcDaysInMonth(year, month))) / 1000,
+  );
+  if (nowSecs >= current) {
+    return current;
+  }
+  const prevYear = month === 0 ? year - 1 : year;
+  const prevMonth = month === 0 ? 11 : month - 1;
+
+  return Math.floor(
+    Date.UTC(
+      prevYear,
+      prevMonth,
+      Math.min(day, utcDaysInMonth(prevYear, prevMonth)),
+    ) / 1000,
+  );
+}
+
+function computeMonthlyTraffic(
+  node: NodeIngestRow | null,
+  rxBytes: number | null,
+  txBytes: number | null,
+  now: number,
+): { monthRx: number; monthTx: number; periodStart: number } {
+  const periodStart = trafficPeriodStart(now, node?.traffic_reset_day ?? 1);
+  const samePeriod = node !== null && node.traffic_period_start === periodStart;
+  if (rxBytes === null || txBytes === null) {
+    return {
+      monthRx: samePeriod ? node.month_rx_bytes : 0,
+      monthTx: samePeriod ? node.month_tx_bytes : 0,
+      periodStart,
+    };
+  }
+  if (!samePeriod) {
+    return { monthRx: 0, monthTx: 0, periodStart };
+  }
+  const deltaRx =
+    node.prev_rx_bytes === null
+      ? 0
+      : rxBytes >= node.prev_rx_bytes
+        ? rxBytes - node.prev_rx_bytes
+        : rxBytes;
+  const deltaTx =
+    node.prev_tx_bytes === null
+      ? 0
+      : txBytes >= node.prev_tx_bytes
+        ? txBytes - node.prev_tx_bytes
+        : txBytes;
+
+  return {
+    monthRx: node.month_rx_bytes + deltaRx,
+    monthTx: node.month_tx_bytes + deltaTx,
+    periodStart,
+  };
+}
+
 export async function ingestNodeReport(
   db: SqlDatabase,
   config: LoadedConfig,
@@ -414,7 +489,8 @@ export async function ingestNodeReport(
     { sql: SELECT_SETTINGS_SQL },
     {
       sql: `SELECT id, label, token_hash, interval_secs, grace_secs, muted_until, is_public,
-                   prev_rx_bytes, prev_tx_bytes, prev_net_at, rx_bps, tx_bps, spark_json
+                   prev_rx_bytes, prev_tx_bytes, prev_net_at, rx_bps, tx_bps,
+                   month_rx_bytes, month_tx_bytes, traffic_reset_day, traffic_period_start, spark_json
             FROM nodes WHERE id = ?1`,
       params: [payload.node_id],
     },
@@ -501,6 +577,12 @@ export async function ingestNodeReport(
   const rxBytes = payload.system?.rx_bytes ?? null;
   const txBytes = payload.system?.tx_bytes ?? null;
   const { rxBps, txBps } = computeNetworkRates(existing, rxBytes, txBytes, now);
+  const { monthRx, monthTx, periodStart } = computeMonthlyTraffic(
+    existing,
+    rxBytes,
+    txBytes,
+    now,
+  );
 
   const mounts = payload.mounts ?? [];
   const checks = payload.checks ?? [];
@@ -540,8 +622,9 @@ export async function ingestNodeReport(
       sql: `INSERT INTO nodes (
               id, label, token_hash, interval_secs, grace_secs, is_public, public_managed, sort_order, created_at,
               last_seen_at, prev_rx_bytes, prev_tx_bytes, prev_net_at,
-              rx_bps, tx_bps, system_json, mounts_json, checks_json, series_json, info_json, spark_json, agent_version
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, COALESCE((SELECT MAX(sort_order) + 1 FROM nodes), 0), ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
+              rx_bps, tx_bps, month_rx_bytes, month_tx_bytes, traffic_period_start,
+              system_json, mounts_json, checks_json, series_json, info_json, spark_json, agent_version
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, COALESCE((SELECT MAX(sort_order) + 1 FROM nodes), 0), ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)
             ON CONFLICT(id) DO UPDATE SET
               label = excluded.label,
               interval_secs = excluded.interval_secs,
@@ -554,6 +637,9 @@ export async function ingestNodeReport(
               prev_net_at = COALESCE(excluded.prev_net_at, nodes.prev_net_at),
               rx_bps = excluded.rx_bps,
               tx_bps = excluded.tx_bps,
+              month_rx_bytes = excluded.month_rx_bytes,
+              month_tx_bytes = excluded.month_tx_bytes,
+              traffic_period_start = excluded.traffic_period_start,
               system_json = excluded.system_json,
               mounts_json = excluded.mounts_json,
               checks_json = excluded.checks_json,
@@ -576,6 +662,9 @@ export async function ingestNodeReport(
         rxBytes === null ? null : now,
         rxBps,
         txBps,
+        monthRx,
+        monthTx,
+        periodStart,
         payload.system ? JSON.stringify(payload.system) : null,
         JSON.stringify(mounts),
         JSON.stringify(checks),

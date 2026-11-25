@@ -13,6 +13,7 @@ import {
   collectGroups,
   formatAge,
   formatBps,
+  formatBytes,
   formatDuration,
   formatUsage,
   memPercent,
@@ -96,6 +97,51 @@ watch(groupPopoverOpen, (isOpen) => {
     groupDraft.value = node.value?.group ?? "";
   }
 });
+
+const trafficPopoverOpen = ref(false);
+const resetDayDraft = ref(1);
+const hasMonthlyTraffic = computed(
+  () =>
+    node.value?.month_rx_bytes !== null &&
+    node.value?.month_rx_bytes !== undefined &&
+    node.value.month_tx_bytes !== null &&
+    node.value.month_tx_bytes !== undefined,
+);
+
+watch(trafficPopoverOpen, (isOpen) => {
+  if (isOpen) {
+    resetDayDraft.value = node.value?.traffic_reset_day ?? 1;
+  }
+});
+
+async function onSaveResetDay() {
+  const n = node.value;
+  if (!n) {
+    return;
+  }
+  const day = Math.min(
+    31,
+    Math.max(1, Math.floor(Number(resetDayDraft.value))),
+  );
+  if (!Number.isFinite(day) || day === (n.traffic_reset_day ?? 1)) {
+    trafficPopoverOpen.value = false;
+
+    return;
+  }
+  const ok = await run(
+    "traffic-reset",
+    "Failed to update reset day",
+    async () => {
+      await apiFetch(nodeUrl(), "PATCH", { traffic_reset_day: day });
+
+      return `Traffic reset day set to ${day}`;
+    },
+    true,
+  );
+  if (ok) {
+    trafficPopoverOpen.value = false;
+  }
+}
 
 async function onSaveGroup(raw: string | null) {
   const n = node.value;
@@ -488,11 +534,53 @@ async function onDelete() {
       </div>
 
       <div
-        v-if="node.rx_bps !== null && node.tx_bps !== null"
+        v-if="
+          (node.rx_bps !== null && node.tx_bps !== null) || hasMonthlyTraffic
+        "
         class="space-y-1"
       >
-        <div class="text-xs text-muted">Network</div>
-        <div class="space-y-0.5 pt-0.5 font-mono tabular-nums">
+        <UPopover v-if="hasMonthlyTraffic" v-model:open="trafficPopoverOpen">
+          <button
+            class="inline-flex cursor-pointer items-center gap-1 text-xs text-muted transition-colors hover:text-default"
+            :disabled="busy === 'traffic-reset'"
+            type="button"
+          >
+            <span>Network (Day {{ node.traffic_reset_day ?? 1 }})</span>
+            <UIcon class="size-3 text-dimmed" name="i-lucide-chevron-down" />
+          </button>
+          <template #content>
+            <form class="w-56 space-y-2.5 p-3" @submit.prevent="onSaveResetDay">
+              <div class="text-xs font-medium text-default">
+                Monthly reset day (UTC)
+              </div>
+              <div class="flex items-center gap-1.5">
+                <UInput
+                  v-model.number="resetDayDraft"
+                  aria-label="Monthly traffic reset day"
+                  class="flex-1"
+                  max="31"
+                  min="1"
+                  size="xs"
+                  type="number"
+                />
+                <UButton
+                  color="primary"
+                  :loading="busy === 'traffic-reset'"
+                  size="xs"
+                  type="submit"
+                >
+                  Save
+                </UButton>
+              </div>
+            </form>
+          </template>
+        </UPopover>
+        <div v-else class="text-xs text-muted">Network</div>
+
+        <div
+          v-if="node.rx_bps !== null && node.tx_bps !== null"
+          class="space-y-0.5 pt-0.5 font-mono tabular-nums"
+        >
           <div class="text-sm font-semibold text-blue-600 dark:text-blue-400">
             ↓ {{ formatBps(node.rx_bps) }}
           </div>
@@ -501,6 +589,13 @@ async function onDelete() {
           >
             ↑ {{ formatBps(node.tx_bps) }}
           </div>
+        </div>
+        <div
+          v-if="hasMonthlyTraffic"
+          class="font-mono text-[11px] text-dimmed tabular-nums"
+        >
+          Month ↓ {{ formatBytes(node.month_rx_bytes!) }} · ↑
+          {{ formatBytes(node.month_tx_bytes!) }}
         </div>
       </div>
     </section>

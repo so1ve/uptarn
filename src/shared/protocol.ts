@@ -185,6 +185,9 @@ export interface NodeSummary {
   last_seen_at: number | null;
   rx_bps: number | null;
   tx_bps: number | null;
+  month_rx_bytes?: number | null;
+  month_tx_bytes?: number | null;
+  traffic_reset_day?: number;
   agent_version: string | null;
   system: SystemSnapshot | null;
   mounts: MountSnapshot[];

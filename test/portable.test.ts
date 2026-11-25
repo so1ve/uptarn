@@ -2358,4 +2358,112 @@ describe("uptarn portable server", () => {
 
     expect(jobRes.status).toBe(413);
   });
+
+  it("tracks monthly node traffic across reports, reboots, reset day changes, and cycle rollovers", async () => {
+    vi.useFakeTimers();
+    const config = loadConfig({
+      PUBLIC_BASE_URL: "https://status.example.com",
+      ADMIN_TOKEN: "admin-tok",
+      AUTO_REGISTER: "true",
+      ENROLLMENT_TOKEN: "enroll-tok",
+    });
+    const app = createApp(db, config);
+
+    const postReport = (rx: number, tx: number) =>
+      ingestNodeReport(
+        db,
+        config,
+        {
+          node_id: "vps-jp",
+          label: "VPS JP",
+          system: { uptime_secs: 3600, rx_bytes: rx, tx_bytes: tx },
+        },
+        "enroll-tok",
+      );
+
+    async function getNode() {
+      const res = await app.request("/api/v1/admin/snapshot", {
+        headers: { Authorization: "Bearer admin-tok" },
+      });
+      const snap = await res.json<DashboardSnapshot>();
+
+      return snap.nodes.find((n) => n.id === "vps-jp")!;
+    }
+
+    // Baseline report on March 10 sets starting counter without counting pre-Uptarn bytes.
+    vi.setSystemTime(new Date("2026-03-10T10:00:00Z"));
+    await postReport(10_000, 5000);
+
+    await expect(getNode()).resolves.toMatchObject({
+      month_rx_bytes: 0,
+      month_tx_bytes: 0,
+      traffic_reset_day: 1,
+    });
+
+    // Normal delta accumulation.
+    vi.setSystemTime(new Date("2026-03-10T10:01:00Z"));
+    await postReport(12_500, 6200);
+
+    await expect(getNode()).resolves.toMatchObject({
+      month_rx_bytes: 2500,
+      month_tx_bytes: 1200,
+    });
+
+    // Host reboot resets kernel counters below prev_rx/tx; post-reboot bytes are added cleanly.
+    vi.setSystemTime(new Date("2026-03-10T10:05:00Z"));
+    await postReport(800, 400);
+
+    await expect(getNode()).resolves.toMatchObject({
+      month_rx_bytes: 3300,
+      month_tx_bytes: 1600,
+    });
+
+    // Update reset day to 15 via PATCH (preserves current cycle counters).
+    const patchRes = await app.request("/api/v1/admin/nodes/vps-jp", {
+      method: "PATCH",
+      headers: {
+        "Authorization": "Bearer admin-tok",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ traffic_reset_day: 15 }),
+    });
+
+    expect(patchRes.status).toBe(200);
+    await expect(getNode()).resolves.toMatchObject({
+      month_rx_bytes: 3300,
+      month_tx_bytes: 1600,
+      traffic_reset_day: 15,
+    });
+
+    // Crossing March 15 00:00 UTC rolls counters over to 0 immediately in snapshot and on ingest.
+    vi.setSystemTime(new Date("2026-03-15T00:01:00Z"));
+
+    await expect(getNode()).resolves.toMatchObject({
+      month_rx_bytes: 0,
+      month_tx_bytes: 0,
+      traffic_reset_day: 15,
+    });
+
+    await postReport(1000, 500);
+    vi.setSystemTime(new Date("2026-03-15T00:02:00Z"));
+    await postReport(1600, 900);
+
+    await expect(getNode()).resolves.toMatchObject({
+      month_rx_bytes: 600,
+      month_tx_bytes: 400,
+    });
+
+    // Declarative sync reconciles traffic_reset_day.
+    const snapRes = await app.request("/api/v1/admin/snapshot", {
+      headers: { Authorization: "Bearer admin-tok" },
+    });
+    const snapBeforeSync = await snapRes.json<DashboardSnapshot>();
+    const plan = computeSyncPlan(
+      snapBeforeSync,
+      parseSyncSpec({ nodes: [{ id: "vps-jp", traffic_reset_day: 20 }] }),
+    );
+
+    expect(plan.nodePatches).toHaveLength(1);
+    expect(plan.nodePatches[0].patch).toEqual({ traffic_reset_day: 20 });
+  });
 });

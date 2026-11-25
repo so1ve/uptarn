@@ -14,6 +14,7 @@ import {
   parseMaintenanceInput,
   parseMonitorInput,
   parseMonitorPatch,
+  parseTrafficResetDay,
 } from "../validation.ts";
 import { renderSection } from "./format.ts";
 
@@ -42,6 +43,7 @@ export interface SyncSpec {
     is_public?: boolean;
     primary_mount?: string | null;
     group?: string | null;
+    traffic_reset_day?: number;
   }[];
   monitors?: SyncMonitorEntry[];
   maintenances?: NormalizedSyncMaintenance[];
@@ -59,6 +61,7 @@ export interface SyncPlan {
       is_public?: boolean;
       primary_mount?: string | null;
       group?: string | null;
+      traffic_reset_day?: number;
     };
     changes: string[];
   }[];
@@ -172,12 +175,19 @@ export function parseSyncSpec(raw: unknown): SyncSpec {
     const group = Object.hasOwn(node, "group")
       ? normalizeGroup(node.group, `${label}.group`)
       : undefined;
+    const trafficResetDay = parseTrafficResetDay(
+      node.traffic_reset_day,
+      `${label}.traffic_reset_day`,
+    );
 
     return {
       id: node.id.trim(),
       ...(isPublic === undefined ? {} : { is_public: isPublic }),
       ...(primaryMount === undefined ? {} : { primary_mount: primaryMount }),
       ...(group === undefined ? {} : { group }),
+      ...(trafficResetDay === undefined
+        ? {}
+        : { traffic_reset_day: trafficResetDay }),
     };
   });
 
@@ -361,6 +371,7 @@ export function computeSyncPlan(
         is_public?: boolean;
         primary_mount?: string | null;
         group?: string | null;
+        traffic_reset_day?: number;
       } = {};
       const changes: string[] = [];
       if (
@@ -393,6 +404,15 @@ export function computeSyncPlan(
         patch.group = declared.group;
         changes.push(
           `group: ${JSON.stringify(existing.group)} -> ${JSON.stringify(declared.group)}`,
+        );
+      }
+      if (
+        declared.traffic_reset_day !== undefined &&
+        declared.traffic_reset_day !== (existing.traffic_reset_day ?? 1)
+      ) {
+        patch.traffic_reset_day = declared.traffic_reset_day;
+        changes.push(
+          `traffic_reset_day: ${existing.traffic_reset_day ?? 1} -> ${declared.traffic_reset_day}`,
         );
       }
       if (changes.length > 0) {
