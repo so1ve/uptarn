@@ -34,6 +34,8 @@ pub struct AgentConfig {
     pub enroll_token_file: Option<String>,
     #[serde(default = "default_u64::<60>")]
     pub interval_secs: u64,
+    #[serde(default = "default_u64::<3>")]
+    pub live_interval_secs: u64,
     pub grace_secs: Option<u64>,
     pub is_public: Option<bool>,
     #[serde(default)]

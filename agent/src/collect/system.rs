@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use crate::config::SystemCollectConfig;
 use crate::protocol::{
-    CheckSnapshot, HealthStatus, InfoSnapshot, SeriesSnapshot, SeriesUnit, SystemSnapshot,
+    CheckSnapshot, HealthStatus, InfoSnapshot, LiveIngestFrame, SeriesSnapshot, SeriesUnit,
+    SystemSnapshot,
 };
 
 const VIRTUAL_IFACE_PREFIXES: &[&str] = &[
@@ -282,6 +283,23 @@ pub async fn collect_system(
         swap_total_bytes: mem.swap_total_bytes,
         rx_bytes,
         tx_bytes,
+    })
+}
+
+pub async fn collect_live_frame(
+    cfg: &SystemCollectConfig,
+    cpu_tracker: &mut CpuTracker,
+) -> Option<LiveIngestFrame> {
+    let sys = collect_system(cfg, cpu_tracker).await?;
+
+    Some(LiveIngestFrame {
+        uptime_secs: sys.uptime_secs,
+        cpu_pct: sys.cpu_pct,
+        load_1m: sys.load_1m,
+        mem_used_bytes: sys.mem_used_bytes,
+        mem_total_bytes: sys.mem_total_bytes,
+        rx_bytes: sys.rx_bytes,
+        tx_bytes: sys.tx_bytes,
     })
 }
 

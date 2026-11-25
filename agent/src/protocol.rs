@@ -43,6 +43,23 @@ pub enum MonitorProbeFrom {
 }
 
 #[derive(Debug, Serialize)]
+pub struct LiveIngestFrame {
+    pub uptime_secs: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpu_pct: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub load_1m: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mem_used_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mem_total_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rx_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tx_bytes: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct SystemSnapshot {
     pub uptime_secs: u64,
     #[serde(skip_serializing_if = "Option::is_none")]

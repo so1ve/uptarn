@@ -2,6 +2,7 @@ mod collect;
 mod config;
 mod hub;
 mod job;
+mod live;
 mod protocol;
 
 use std::io;
@@ -74,10 +75,22 @@ enum Commands {
 
 async fn run_daemon(config_path: &Path) -> Result<()> {
     let cfg = AgentConfig::load(config_path)?;
+    let token = cfg.resolved_token()?;
     let client = HubClient::from_config(&cfg)?;
     let mut cpu_tracker = CpuTracker::default();
     let mut ticker = tokio::time::interval(Duration::from_secs(cfg.interval_secs.max(10)));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+    // Push the first full report before opening the live stream so
+    // auto-registration succeeds first.
+    ticker.tick().await;
+    let first_report = collect_report(&cfg, &mut cpu_tracker).await;
+    if let Err(err) = client.post_report(&first_report).await {
+        eprintln!("uptarn-agent: report push failed: {err:#}");
+    }
+
+    let live_fut = live::run_live_loop(cfg.clone(), token);
+    tokio::pin!(live_fut);
 
     loop {
         tokio::select! {
@@ -87,6 +100,7 @@ async fn run_daemon(config_path: &Path) -> Result<()> {
                     eprintln!("uptarn-agent: report push failed: {err:#}");
                 }
             }
+            () = &mut live_fut => {}
             _ = tokio::signal::ctrl_c() => break,
         }
     }

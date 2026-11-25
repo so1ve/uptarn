@@ -11,7 +11,7 @@ use std::future::Future;
 
 use tokio::task::JoinSet;
 
-pub use self::system::CpuTracker;
+pub use self::system::{CpuTracker, collect_live_frame};
 use crate::config::{AgentConfig, CheckConfig};
 use crate::protocol::{NodeReportPayload, StructuredExecOutput};
 
