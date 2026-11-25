@@ -62,7 +62,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <UApp :toaster="{ position: 'bottom-right' }">
+  <UApp :scroll-body="false" :toaster="{ position: 'bottom-right' }">
     <div v-if="loadError" class="grid min-h-svh place-items-center px-4">
       <div class="w-full max-w-sm space-y-4">
         <UAlert
