@@ -6,6 +6,10 @@ import {
   useUptarnStore,
 } from "../../lib/index.ts";
 
+defineProps<{
+  groups?: readonly string[];
+}>();
+
 const open = defineModel<boolean>("open", { default: false });
 
 const { busy, run } = useAction();
@@ -14,6 +18,7 @@ const { showIssuedToken } = useUptarnStore();
 const form = useModalForm(open, () => ({
   id: "",
   label: "",
+  group: "",
   interval_secs: 60,
   grace_secs: 120,
   is_public: false,
@@ -29,6 +34,7 @@ const onSubmit = () =>
       {
         id: form.id.trim(),
         label: form.label.trim() || undefined,
+        group: form.group.trim() || null,
         interval_secs: intervalSecs,
         grace_secs: graceSecs,
         is_public: form.is_public,
@@ -56,6 +62,22 @@ const onSubmit = () =>
 
         <UFormField label="Display name" name="label">
           <UInput v-model="form.label" class="w-full" />
+        </UFormField>
+
+        <UFormField label="Group (optional)" name="group">
+          <UInput
+            v-model="form.group"
+            class="w-full"
+            list="node-group-suggestions"
+            :maxlength="40"
+            placeholder="Ungrouped"
+          />
+          <datalist
+            v-if="groups && groups.length > 0"
+            id="node-group-suggestions"
+          >
+            <option v-for="g in groups" :key="g" :value="g" />
+          </datalist>
         </UFormField>
 
         <div class="grid grid-cols-2 gap-3">

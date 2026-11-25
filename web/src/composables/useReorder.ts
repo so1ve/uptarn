@@ -24,9 +24,12 @@ export function useReorder(
   getIds: () => readonly string[],
   onCommit: (ids: string[]) => void,
   overClass = "bg-elevated/80 ring-1 ring-primary/50",
+  getGroup?: (id: string) => string | null,
 ) {
   const draggingId = ref<string | null>(null);
   const dragOverId = ref<string | null>(null);
+  const sameGroup = (a: string, b: string) =>
+    !getGroup || getGroup(a) === getGroup(b);
 
   function onDragEnd() {
     draggingId.value = null;
@@ -43,7 +46,7 @@ export function useReorder(
   }
 
   function onDragOver(id: string, event: DragEvent) {
-    if (!draggingId.value) {
+    if (!draggingId.value || !sameGroup(draggingId.value, id)) {
       return;
     }
     event.preventDefault();
@@ -58,7 +61,10 @@ export function useReorder(
     const sourceId =
       draggingId.value ?? event.dataTransfer?.getData("text/plain") ?? null;
     onDragEnd();
-    const next = sourceId ? reorderIds(getIds(), sourceId, targetId) : null;
+    const next =
+      sourceId && sameGroup(sourceId, targetId)
+        ? reorderIds(getIds(), sourceId, targetId)
+        : null;
     if (next) {
       onCommit(next);
     }
@@ -67,7 +73,10 @@ export function useReorder(
   function moveBy(id: string, delta: -1 | 1) {
     const ids = getIds();
     const targetId = ids[ids.indexOf(id) + delta];
-    const next = targetId ? reorderIds(ids, id, targetId) : null;
+    const next =
+      targetId && sameGroup(id, targetId)
+        ? reorderIds(ids, id, targetId)
+        : null;
     if (next) {
       onCommit(next);
     }
@@ -92,6 +101,7 @@ export function usePersistedReorder(
   kind: "nodes" | "monitors",
   getIds: () => readonly string[],
   overClass?: string,
+  getGroup?: (id: string) => string | null,
 ) {
   const { run } = useAction();
   const { persistOrder } = useUptarnStore();
@@ -102,5 +112,5 @@ export function usePersistedReorder(
     );
   }
 
-  return { ...useReorder(getIds, commit, overClass), commit };
+  return { ...useReorder(getIds, commit, overClass, getGroup), commit };
 }

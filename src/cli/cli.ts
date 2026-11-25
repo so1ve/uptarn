@@ -170,6 +170,14 @@ function probeFlags(mode: "add" | "edit") {
   const group = isAdd ? undefined : "fields";
 
   return {
+    group: {
+      type: isAdd ? nonEmptyString : String,
+      placeholder: "<name>",
+      group,
+      description: isAdd
+        ? "Optional group name"
+        : "Group name (pass empty string to clear)",
+    },
     publicUrl: {
       type: isAdd ? nonEmptyString : String,
       placeholder: "<url>",
@@ -541,6 +549,11 @@ export function createCli() {
     args: { id: { description: "Unique node identifier" } },
     flags: {
       label: { type: String, description: "Human-readable node label" },
+      group: {
+        type: nonEmptyString,
+        placeholder: "<name>",
+        description: "Optional group name",
+      },
       interval: {
         type: Types.Integer({ min: 10, max: 86_400 }),
         description: "Expected report interval in seconds",
@@ -563,6 +576,7 @@ export function createCli() {
       }>("POST", "/api/v1/admin/nodes", {
         id: ctx.args.id,
         label: ctx.flags.label,
+        group: ctx.flags.group,
         interval_secs: ctx.flags.interval,
         grace_secs: ctx.flags.grace,
         is_public: ctx.flags.public,
@@ -591,6 +605,26 @@ export function createCli() {
       );
       ctx.log.success(
         `Node ${ctx.log.theme.bold(ctx.args.id)} is now ${isPublic ? ctx.log.theme.accent("public") : ctx.log.theme.muted("private")}.`,
+      );
+    },
+  });
+  node.command("group <id> <group>", {
+    description: "Set or clear a node's group (pass empty string to ungroup)",
+    args: {
+      id: { description: "Node identifier" },
+      group: { description: "Group name, or empty string to clear" },
+    },
+    async run(ctx) {
+      const group = ctx.args.group.trim() || null;
+      await ctx.state.request(
+        "PATCH",
+        `/api/v1/admin/nodes/${encodeURIComponent(ctx.args.id)}`,
+        { group },
+      );
+      ctx.log.success(
+        group
+          ? `Node ${ctx.log.theme.bold(ctx.args.id)} assigned to group ${ctx.log.theme.accent(group)}.`
+          : `Cleared group for node ${ctx.log.theme.bold(ctx.args.id)}.`,
       );
     },
   });
@@ -684,6 +718,7 @@ export function createCli() {
       const payload: MonitorInput = {
         id: ctx.flags.id,
         name: ctx.args.name,
+        group: ctx.flags.group,
         url: ctx.args.url,
         public_url: ctx.flags.publicUrl,
         method: ctx.flags.method,
@@ -754,15 +789,22 @@ export function createCli() {
           ctx.flags.enabled !== undefined;
         if (hasHubOnlyFlag) {
           throw new Error(
-            `Monitor "${existing.id}" is managed by node "${existing.managed_by_node_id ?? "agent"}"; only --public and --public-url can be updated on the hub`,
+            `Monitor "${existing.id}" is managed by node "${existing.managed_by_node_id ?? "agent"}"; only --group, --public, and --public-url can be updated on the hub`,
           );
         }
-        const patch: { is_public?: boolean; public_url?: string | null } = {};
+        const patch: {
+          is_public?: boolean;
+          public_url?: string | null;
+          group?: string | null;
+        } = {};
         if (ctx.flags.public !== undefined) {
           patch.is_public = ctx.flags.public === "on";
         }
         if (ctx.flags.publicUrl !== undefined) {
           patch.public_url = ctx.flags.publicUrl.trim() || null;
+        }
+        if (ctx.flags.group !== undefined) {
+          patch.group = ctx.flags.group.trim() || null;
         }
         const res = await ctx.state.request<{ ok: boolean }>(
           "PATCH",
@@ -781,6 +823,10 @@ export function createCli() {
       const payload: MonitorInput = {
         id: existing.id,
         name: ctx.flags.name ?? existing.name,
+        group:
+          ctx.flags.group === undefined
+            ? existing.group
+            : ctx.flags.group.trim() || null,
         url: ctx.flags.url ?? existing.probe.url,
         public_url:
           ctx.flags.publicUrl === undefined

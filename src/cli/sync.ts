@@ -2,6 +2,7 @@ import type { Theme } from "clerc";
 
 import type { DashboardSnapshot, MonitorSummary } from "../shared/index.ts";
 import {
+  normalizeGroup,
   normalizePrimaryMount,
   parseMonitorInput,
   parseMonitorPatch,
@@ -17,12 +18,18 @@ export type SyncMonitorEntry =
       id: string;
       is_public?: boolean;
       public_url?: string | null;
+      group?: string | null;
     };
 
 export interface SyncSpec {
   hub_url?: string;
   auto_register?: boolean;
-  nodes?: { id: string; is_public?: boolean; primary_mount?: string | null }[];
+  nodes?: {
+    id: string;
+    is_public?: boolean;
+    primary_mount?: string | null;
+    group?: string | null;
+  }[];
   monitors?: SyncMonitorEntry[];
 }
 
@@ -30,7 +37,11 @@ export interface SyncPlan {
   settingsPatch: { auto_register: boolean } | null;
   nodePatches: {
     id: string;
-    patch: { is_public?: boolean; primary_mount?: string | null };
+    patch: {
+      is_public?: boolean;
+      primary_mount?: string | null;
+      group?: string | null;
+    };
     changes: string[];
   }[];
   missingNodes: string[];
@@ -40,7 +51,11 @@ export interface SyncPlan {
   monitorsUpdate: { monitor: NormalizedSyncMonitor; changes: string[] }[];
   monitorPatches: {
     id: string;
-    patch: { is_public?: boolean; public_url?: string | null };
+    patch: {
+      is_public?: boolean;
+      public_url?: string | null;
+      group?: string | null;
+    };
     changes: string[];
   }[];
   missingMonitors: string[];
@@ -123,11 +138,15 @@ export function parseSyncSpec(raw: unknown): SyncSpec {
     const primaryMount = Object.hasOwn(node, "primary_mount")
       ? normalizePrimaryMount(node.primary_mount, `${label}.primary_mount`)
       : undefined;
+    const group = Object.hasOwn(node, "group")
+      ? normalizeGroup(node.group, `${label}.group`)
+      : undefined;
 
     return {
       id: node.id.trim(),
       ...(isPublic === undefined ? {} : { is_public: isPublic }),
       ...(primaryMount === undefined ? {} : { primary_mount: primaryMount }),
+      ...(group === undefined ? {} : { group }),
     };
   });
 
@@ -140,7 +159,9 @@ export function parseSyncSpec(raw: unknown): SyncSpec {
       }
       if (mon.url === undefined || mon.url === null) {
         const hasPatch =
-          mon.is_public !== undefined || Object.hasOwn(mon, "public_url");
+          mon.is_public !== undefined ||
+          Object.hasOwn(mon, "public_url") ||
+          Object.hasOwn(mon, "group");
         const patch = hasPatch ? parseMonitorPatch(mon) : {};
 
         return { kind: "override", id: mon.id.trim(), ...patch };
@@ -155,6 +176,7 @@ export function parseSyncSpec(raw: unknown): SyncSpec {
 
 const HUB_MONITOR_DIFF_KEYS = [
   "name",
+  "group",
   "url",
   "public_url",
   "method",
@@ -175,6 +197,7 @@ function diffMonitor(
     current.probe.from === "hub"
       ? {
           name: current.name,
+          group: current.group,
           url: current.probe.url,
           public_url: current.public_url,
           method: current.probe.method,
@@ -246,7 +269,11 @@ export function computeSyncPlan(
       declaredOrder.push(declared.id);
       declaredSet.add(declared.id);
 
-      const patch: { is_public?: boolean; primary_mount?: string | null } = {};
+      const patch: {
+        is_public?: boolean;
+        primary_mount?: string | null;
+        group?: string | null;
+      } = {};
       const changes: string[] = [];
       if (
         declared.is_public !== undefined &&
@@ -272,6 +299,12 @@ export function computeSyncPlan(
         patch.primary_mount = declared.primary_mount;
         changes.push(
           `primary_mount: ${existing.primary_mount ?? "sum"} -> ${declared.primary_mount ?? "sum"}`,
+        );
+      }
+      if (declared.group !== undefined && declared.group !== existing.group) {
+        patch.group = declared.group;
+        changes.push(
+          `group: ${JSON.stringify(existing.group)} -> ${JSON.stringify(declared.group)}`,
         );
       }
       if (changes.length > 0) {
@@ -312,7 +345,11 @@ export function computeSyncPlan(
           continue;
         }
         declaredOrder.push(desired.id);
-        const patch: { is_public?: boolean; public_url?: string | null } = {};
+        const patch: {
+          is_public?: boolean;
+          public_url?: string | null;
+          group?: string | null;
+        } = {};
         const changes: string[] = [];
         if (
           desired.is_public !== undefined &&
@@ -338,6 +375,12 @@ export function computeSyncPlan(
           patch.public_url = desired.public_url;
           changes.push(
             `public_url: ${JSON.stringify(existing.public_url)} -> ${JSON.stringify(desired.public_url)}`,
+          );
+        }
+        if (desired.group !== undefined && desired.group !== existing.group) {
+          patch.group = desired.group;
+          changes.push(
+            `group: ${JSON.stringify(existing.group)} -> ${JSON.stringify(desired.group)}`,
           );
         }
         if (changes.length > 0) {

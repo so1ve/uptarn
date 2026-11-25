@@ -57,6 +57,7 @@ export async function createNode(
   input: {
     id: string;
     label?: string;
+    group?: string | null;
     interval_secs?: number;
     grace_secs?: number;
     is_public?: boolean;
@@ -65,11 +66,12 @@ export async function createNode(
   const { token, hash } = await issueNodeToken();
   const label = input.label?.trim() || input.id;
   const res = await db.run(
-    `INSERT OR IGNORE INTO nodes (id, label, token_hash, interval_secs, grace_secs, is_public, sort_order, created_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, COALESCE((SELECT MAX(sort_order) + 1 FROM nodes), 0), ?7)`,
+    `INSERT OR IGNORE INTO nodes (id, label, group_name, token_hash, interval_secs, grace_secs, is_public, sort_order, created_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, COALESCE((SELECT MAX(sort_order) + 1 FROM nodes), 0), ?8)`,
     [
       input.id,
       label,
+      input.group ?? null,
       hash,
       input.interval_secs ?? 60,
       input.grace_secs ?? 120,
@@ -87,7 +89,11 @@ export async function createNode(
 export async function updateNode(
   db: SqlDatabase,
   nodeId: string,
-  patch: { is_public?: boolean; primary_mount?: string | null },
+  patch: {
+    is_public?: boolean;
+    primary_mount?: string | null;
+    group?: string | null;
+  },
 ): Promise<boolean> {
   const existing = await db.first<{ public_managed: number }>(
     "SELECT public_managed FROM nodes WHERE id = ?1",
@@ -108,6 +114,10 @@ export async function updateNode(
   if (patch.primary_mount !== undefined) {
     params.push(patch.primary_mount);
     sets.push(`primary_mount = ?${params.length}`);
+  }
+  if (patch.group !== undefined) {
+    params.push(patch.group);
+    sets.push(`group_name = ?${params.length}`);
   }
   params.push(nodeId);
   const res = await db.run(

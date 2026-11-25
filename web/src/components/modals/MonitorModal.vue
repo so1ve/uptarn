@@ -9,6 +9,7 @@ import MuteButton from "../ui/MuteButton.vue";
 const props = defineProps<{
   monitor: MonitorSummary | null;
   now: number;
+  groups?: readonly string[];
 }>();
 
 const open = defineModel<boolean>("open", { default: false });
@@ -26,6 +27,7 @@ const form = useModalForm(open, () => {
   return {
     id: m?.id ?? "",
     name: m?.name ?? "",
+    group: m?.group ?? "",
     url: hub?.url ?? "",
     public_url: m?.public_url ?? "",
     method: hub?.method ?? "GET",
@@ -45,7 +47,12 @@ async function onSubmit() {
     "Could not save monitor",
     async () => {
       if (managedByNode.value) {
-        const patch: { is_public?: boolean; public_url?: string | null } = {
+        const patch: {
+          is_public?: boolean;
+          public_url?: string | null;
+          group?: string | null;
+        } = {
+          group: form.group.trim() || null,
           public_url: form.is_public ? form.public_url.trim() || null : null,
         };
         if (!publicManaged.value) {
@@ -63,6 +70,7 @@ async function onSubmit() {
       await apiFetch("/api/v1/admin/monitors", "POST", {
         id: form.id.trim() || undefined,
         name: form.name.trim(),
+        group: form.group.trim() || null,
         url: form.url.trim(),
         public_url: form.is_public ? form.public_url.trim() || null : null,
         method: form.method,
@@ -198,6 +206,22 @@ async function onDelete() {
             </UFormField>
           </div>
         </template>
+
+        <UFormField label="Group (optional)" name="group">
+          <UInput
+            v-model="form.group"
+            class="w-full"
+            list="monitor-group-suggestions"
+            :maxlength="40"
+            placeholder="Ungrouped"
+          />
+          <datalist
+            v-if="groups && groups.length > 0"
+            id="monitor-group-suggestions"
+          >
+            <option v-for="g in groups" :key="g" :value="g" />
+          </datalist>
+        </UFormField>
 
         <div class="flex flex-wrap items-center gap-6">
           <USwitch

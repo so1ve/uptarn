@@ -11,6 +11,9 @@ import PageHeader from "../components/ui/PageHeader.vue";
 import SegmentedControl from "../components/ui/SegmentedControl.vue";
 import StatusBanner from "../components/ui/StatusBanner.vue";
 import {
+  collectGroups,
+  groupItems,
+  reorderNamedGroups,
   splitIncident,
   usePersistedReorder,
   useSnapshot,
@@ -35,10 +38,21 @@ const filteredNodes = computed(() => {
 
   return q
     ? snap.value.nodes.filter((n) =>
-        `${n.id} ${n.label}`.toLowerCase().includes(q),
+        `${n.id} ${n.label} ${n.group ?? ""}`.toLowerCase().includes(q),
       )
     : snap.value.nodes;
 });
+
+const groupedNodes = computed(() =>
+  groupItems(filteredNodes.value, (n) => n.group),
+);
+const existingGroups = computed(() => collectGroups(snap.value.nodes));
+const namedGroupCount = computed(
+  () => groupedNodes.value.filter((g) => g.isNamed).length,
+);
+const groupById = computed(
+  () => new Map(snap.value.nodes.map((n) => [n.id, n.group])),
+);
 
 const canReorder = computed(
   () => nodeFilter.value.trim() === "" && snap.value.nodes.length > 1,
@@ -50,9 +64,29 @@ const {
   commit: onReorderNodes,
 } = usePersistedReorder(
   "nodes",
-  () => snap.value.nodes.map((n) => n.id),
+  () => groupedNodes.value.flatMap((g) => g.items.map((n) => n.id)),
   "ring-2 ring-primary/50",
+  (id) => groupById.value.get(id) ?? null,
 );
+
+function onReorderTableGroup(groupKey: string, nextGroupIds: string[]) {
+  const nextAllIds = groupedNodes.value.flatMap((g) =>
+    g.key === groupKey ? nextGroupIds : g.items.map((n) => n.id),
+  );
+  onReorderNodes(nextAllIds);
+}
+
+function moveGroup(index: number, delta: -1 | 1) {
+  const next = reorderNamedGroups(
+    groupedNodes.value,
+    index,
+    delta,
+    (n) => n.id,
+  );
+  if (next) {
+    onReorderNodes(next);
+  }
+}
 
 const incidentHeadline = computed(() => {
   const titles = snap.value.incidents
@@ -115,35 +149,70 @@ const incidentHeadline = computed(() => {
       No matching nodes.
     </EmptyState>
 
-    <div
-      v-else-if="nodesView === 'cards'"
-      class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3"
-    >
+    <div v-else class="space-y-6">
       <div
-        v-for="node in filteredNodes"
-        :key="node.id"
-        class="group/card relative flex flex-col rounded-xl transition-opacity"
-        v-bind="dragAttrs(node.id, canReorder)"
+        v-for="(group, groupIdx) in groupedNodes"
+        :key="group.key"
+        :class="nodesView === 'cards' ? 'space-y-2.5' : 'space-y-2'"
       >
-        <DragHandle
-          v-if="canReorder"
-          class="absolute top-3.5 left-1.5 z-10 text-dimmed/50 opacity-0 transition-opacity group-hover/card:opacity-100 focus-visible:opacity-100"
-          label="node"
-          @move-down="moveBy(node.id, 1)"
-          @move-up="moveBy(node.id, -1)"
+        <div v-if="group.label" class="flex items-center justify-between gap-2">
+          <h3 class="text-xs font-medium text-muted">{{ group.label }}</h3>
+          <div
+            v-if="canReorder && group.isNamed && namedGroupCount > 1"
+            class="flex items-center gap-0.5"
+          >
+            <UButton
+              :aria-label="`Move ${group.label} up`"
+              color="neutral"
+              :disabled="groupIdx === 0"
+              icon="i-lucide-chevron-up"
+              size="xs"
+              variant="ghost"
+              @click="moveGroup(groupIdx, -1)"
+            />
+            <UButton
+              :aria-label="`Move ${group.label} down`"
+              color="neutral"
+              :disabled="groupIdx >= namedGroupCount - 1"
+              icon="i-lucide-chevron-down"
+              size="xs"
+              variant="ghost"
+              @click="moveGroup(groupIdx, 1)"
+            />
+          </div>
+        </div>
+
+        <div
+          v-if="nodesView === 'cards'"
+          class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3"
+        >
+          <div
+            v-for="node in group.items"
+            :key="node.id"
+            class="group/card relative flex flex-col rounded-xl transition-opacity"
+            v-bind="dragAttrs(node.id, canReorder && group.items.length > 1)"
+          >
+            <DragHandle
+              v-if="canReorder && group.items.length > 1"
+              class="absolute top-3.5 left-1.5 z-10 text-dimmed/50 opacity-0 transition-opacity group-hover/card:opacity-100 focus-visible:opacity-100"
+              label="node"
+              @move-down="moveBy(node.id, 1)"
+              @move-up="moveBy(node.id, -1)"
+            />
+            <NodeCard class="flex-1" draggable="false" :node :now="snap.now" />
+          </div>
+        </div>
+
+        <NodeTable
+          v-else
+          :nodes="group.items"
+          :now="snap.now"
+          :reorderable="canReorder && group.items.length > 1"
+          @reorder="(ids) => onReorderTableGroup(group.key, ids)"
         />
-        <NodeCard class="flex-1" draggable="false" :node :now="snap.now" />
       </div>
     </div>
 
-    <NodeTable
-      v-else
-      :nodes="filteredNodes"
-      :now="snap.now"
-      :reorderable="canReorder"
-      @reorder="onReorderNodes"
-    />
-
-    <AddNodeModal v-model:open="addNodeOpen" />
+    <AddNodeModal v-model:open="addNodeOpen" :groups="existingGroups" />
   </div>
 </template>

@@ -39,6 +39,7 @@ import { SELECT_SETTINGS_SQL, parseRuntimeSettings } from "./settings.ts";
 interface NodeCoreRow {
   id: string;
   label: string;
+  group_name: string | null;
   interval_secs: number;
   grace_secs: number;
   last_seen_at: number | null;
@@ -230,7 +231,7 @@ export async function getDashboardSnapshot(
       sql: "SELECT id, name, device_type, backed_up, created_at, last_used_at FROM admin_passkeys ORDER BY created_at DESC",
     },
     {
-      sql: `SELECT id, label, is_public, public_managed, primary_mount, interval_secs, grace_secs, muted_until, created_at,
+      sql: `SELECT id, label, group_name, is_public, public_managed, primary_mount, interval_secs, grace_secs, muted_until, created_at,
                    last_seen_at, rx_bps, tx_bps, system_json, mounts_json, checks_json, series_json, info_json, agent_version
             FROM nodes ORDER BY sort_order ASC, id ASC`,
     },
@@ -286,6 +287,7 @@ export async function getDashboardSnapshot(
     ({ row, system, mounts, checks, series, info, overallStatus }) => ({
       id: row.id,
       label: row.label,
+      group: row.group_name ?? null,
       overall_status: overallStatus,
       is_public: row.is_public === 1,
       public_managed: row.public_managed === 1,
@@ -313,6 +315,7 @@ export async function getDashboardSnapshot(
     return {
       id: row.id,
       name: row.name,
+      group: row.group_name ?? null,
       probe: parseMonitorProbe(row.probe_json),
       public_url: row.public_url,
       interval_secs: row.interval_secs,
@@ -414,11 +417,11 @@ export async function getPublicStatusSnapshot(
     (await db.allBatch([
       { sql: "SELECT COUNT(*) AS count FROM admin_passkeys" },
       {
-        sql: `SELECT id, name, probe_json, public_url, enabled, last_checked_at, last_status, last_http_status, last_latency_ms, samples_json, rollup_json
+        sql: `SELECT id, name, group_name, probe_json, public_url, enabled, last_checked_at, last_status, last_http_status, last_latency_ms, samples_json, rollup_json
             FROM monitors WHERE is_public = 1 ORDER BY sort_order ASC, name ASC`,
       },
       {
-        sql: `SELECT id, label, primary_mount, interval_secs, grace_secs, last_seen_at, system_json, mounts_json, checks_json, series_json
+        sql: `SELECT id, label, group_name, primary_mount, interval_secs, grace_secs, last_seen_at, system_json, mounts_json, checks_json, series_json
             FROM nodes WHERE is_public = 1 ORDER BY sort_order ASC, label ASC`,
       },
       {
@@ -448,6 +451,7 @@ export async function getPublicStatusSnapshot(
       return {
         key: `m${idx}`,
         name: row.name,
+        group: row.group_name ?? null,
         public_url: row.public_url,
         enabled: row.enabled === 1,
         last_checked_at: row.last_checked_at,
@@ -474,6 +478,7 @@ export async function getPublicStatusSnapshot(
       return {
         key: `n${idx}`,
         label: row.label,
+        group: row.group_name ?? null,
         overall_status: overallStatus,
         uptime_secs:
           overallStatus === "offline" ? null : (system?.uptime_secs ?? null),

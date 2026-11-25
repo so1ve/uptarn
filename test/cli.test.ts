@@ -217,6 +217,7 @@ describe("uptarn CLI commands", () => {
     );
 
     await runCli(["node", "public", "alpha", "on"]);
+    await runCli(["node", "group", "alpha", "Cloud"]);
     await runCli(["node", "disk", "alpha", "/data"]);
     await runCli(["node", "order", "beta", "alpha"]);
 
@@ -226,9 +227,17 @@ describe("uptarn CLI commands", () => {
 
     expect(nodes.map((n) => n.id)).toEqual(["beta", "alpha"]);
     expect(nodes[1]).toMatchObject({
+      group: "Cloud",
       is_public: true,
       primary_mount: "/data",
     });
+
+    await runCli(["node", "group", "alpha", ""]);
+    const ungroupedAlpha = JSON.parse(
+      (await runCli(["node", "show", "alpha", "--json"])).stdoutText(),
+    ) as NodeSummary;
+
+    expect(ungroupedAlpha.group).toBeNull();
 
     const detail = await runCli(["node", "show", "alpha"]);
 

@@ -35,6 +35,7 @@ export const MONITOR_CONFIG_KEYS = [
 ] as const satisfies readonly (keyof MonitorConfigFields)[];
 
 export interface MonitorRow extends MonitorConfigFields {
+  group_name: string | null;
   managed_by_node_id: string | null;
   muted_until: number;
   created_at: number;
@@ -265,12 +266,13 @@ export function buildMonitorUpsertStatements(
   mon: MonitorConfigFields,
   now: number,
   managedByNodeId: string | null = null,
+  groupName: string | null = null,
 ): SqlStatement[] {
   const statements: SqlStatement[] = [
     {
       sql: `INSERT INTO monitors
-            (id, name, probe_from, probe_json, public_url, interval_secs, enabled, is_public, public_managed, managed_by_node_id, sort_order, created_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, COALESCE((SELECT MAX(sort_order) + 1 FROM monitors), 0), ?11)
+            (id, name, group_name, probe_from, probe_json, public_url, interval_secs, enabled, is_public, public_managed, managed_by_node_id, sort_order, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, COALESCE((SELECT MAX(sort_order) + 1 FROM monitors), 0), ?12)
             ON CONFLICT(id) DO UPDATE SET
               last_checked_at = CASE
                 WHEN monitors.probe_json != excluded.probe_json
@@ -278,6 +280,11 @@ export function buildMonitorUpsertStatements(
                 ELSE monitors.last_checked_at
               END,
               name = excluded.name,
+              group_name = CASE
+                WHEN excluded.managed_by_node_id IS NULL
+                THEN excluded.group_name
+                ELSE monitors.group_name
+              END,
               probe_from = excluded.probe_from,
               probe_json = excluded.probe_json,
               public_url = excluded.public_url,
@@ -293,6 +300,7 @@ export function buildMonitorUpsertStatements(
       params: [
         mon.id,
         mon.name,
+        groupName,
         mon.probe_from,
         mon.probe_json,
         mon.public_url,
@@ -361,6 +369,8 @@ export async function upsertMonitor(
         public_managed: 0,
       },
       unixNow(),
+      null,
+      parsed.group,
     ),
   );
 
@@ -370,7 +380,11 @@ export async function upsertMonitor(
 export async function updateMonitor(
   db: SqlDatabase,
   monitorId: string,
-  patch: { is_public?: boolean; public_url?: string | null },
+  patch: {
+    is_public?: boolean;
+    public_url?: string | null;
+    group?: string | null;
+  },
 ): Promise<boolean> {
   const existing = await db.first<{
     managed_by_node_id: string | null;
@@ -396,6 +410,10 @@ export async function updateMonitor(
   if (patch.public_url !== undefined) {
     params.push(patch.public_url);
     sets.push(`public_url = ?${params.length}`);
+  }
+  if (patch.group !== undefined) {
+    params.push(patch.group);
+    sets.push(`group_name = ?${params.length}`);
   }
   params.push(monitorId);
   const res = await db.run(

@@ -81,7 +81,7 @@ export interface InfoSnapshot {
 }
 
 export type NodeMonitorSpec =
-  | (Omit<MonitorInput, "id"> & { key: string; from: "hub" })
+  | (Omit<MonitorInput, "id" | "group"> & { key: string; from: "hub" })
   | {
       key: string;
       name: string;
@@ -126,6 +126,7 @@ export interface JobReportPayload {
 export interface MonitorInput {
   id?: string;
   name: string;
+  group?: string | null;
   url: string;
   public_url?: string | null;
   method?: string;
@@ -172,6 +173,7 @@ export interface NodeHistoryResponse {
 export interface NodeSummary {
   id: string;
   label: string;
+  group: string | null;
   overall_status: "ok" | "warn" | "fail" | "offline" | "pending";
   is_public: boolean;
   public_managed: boolean;
@@ -195,6 +197,7 @@ export interface NodeSummary {
 export interface MonitorSummary {
   id: string;
   name: string;
+  group: string | null;
   probe: MonitorProbe;
   public_url: string | null;
   interval_secs: number;
@@ -294,6 +297,7 @@ export interface DashboardSnapshot {
 export interface PublicMonitorSummary {
   key: string;
   name: string;
+  group: string | null;
   public_url: string | null;
   enabled: boolean;
   last_checked_at: number | null;
@@ -307,6 +311,7 @@ export interface PublicMonitorSummary {
 export interface PublicNodeSummary {
   key: string;
   label: string;
+  group: string | null;
   overall_status: "ok" | "warn" | "fail" | "offline" | "pending";
   uptime_secs: number | null;
   cpu_pct: number | null;

@@ -333,6 +333,7 @@ function parseNodeMonitorSpec(
     }
     const {
       id: _id,
+      group: _group,
       is_public: _pub,
       public_url: _pubUrl,
       ...spec
@@ -376,6 +377,9 @@ function parseNodeMonitorSpec(
   };
 }
 
+export const normalizeGroup = (val: unknown, field = "group"): string | null =>
+  str(val, field, 40) ?? null;
+
 export function parseMonitorInput(raw: MonitorInput | unknown) {
   const obj = asObj(raw, "monitor input");
   const name = reqStr(obj.name, "name", 80);
@@ -396,6 +400,7 @@ export function parseMonitorInput(raw: MonitorInput | unknown) {
   return {
     id,
     name,
+    group: normalizeGroup(obj.group),
     url,
     public_url: publicUrl,
     method: reqOneOf(
@@ -418,6 +423,7 @@ export function parseCreateNodeInput(raw: unknown) {
   return {
     id: slug(obj.id, "id"),
     label: str(obj.label, "label", 80),
+    group: normalizeGroup(obj.group),
     interval_secs: int(obj.interval_secs, "interval_secs", 10, 86_400),
     grace_secs: int(obj.grace_secs, "grace_secs", 10, 604_800),
     is_public: bool(obj.is_public, "is_public") ?? false,
@@ -457,38 +463,56 @@ export function normalizePrimaryMount(
 export function parseMonitorPatch(raw: unknown): {
   is_public?: boolean;
   public_url?: string | null;
+  group?: string | null;
 } {
   const obj = asObj(raw, "monitor patch");
   const isPublic = bool(obj.is_public, "is_public");
   const publicUrl = Object.hasOwn(obj, "public_url")
     ? httpUrl(obj.public_url, "public_url")
     : undefined;
-  if (isPublic === undefined && publicUrl === undefined) {
-    bad("At least one of is_public or public_url is required");
+  const group = Object.hasOwn(obj, "group")
+    ? normalizeGroup(obj.group)
+    : undefined;
+  if (
+    isPublic === undefined &&
+    publicUrl === undefined &&
+    group === undefined
+  ) {
+    bad("At least one of is_public, public_url, or group is required");
   }
 
   return {
     ...(isPublic === undefined ? {} : { is_public: isPublic }),
     ...(publicUrl === undefined ? {} : { public_url: publicUrl }),
+    ...(group === undefined ? {} : { group }),
   };
 }
 
 export function parseNodePatch(raw: unknown): {
   is_public?: boolean;
   primary_mount?: string | null;
+  group?: string | null;
 } {
   const obj = asObj(raw, "node patch");
   const isPublic = bool(obj.is_public, "is_public");
   const primaryMount = Object.hasOwn(obj, "primary_mount")
     ? normalizePrimaryMount(obj.primary_mount)
     : undefined;
-  if (isPublic === undefined && primaryMount === undefined) {
-    bad("At least one of is_public or primary_mount is required");
+  const group = Object.hasOwn(obj, "group")
+    ? normalizeGroup(obj.group)
+    : undefined;
+  if (
+    isPublic === undefined &&
+    primaryMount === undefined &&
+    group === undefined
+  ) {
+    bad("At least one of is_public, primary_mount, or group is required");
   }
 
   return {
     ...(isPublic === undefined ? {} : { is_public: isPublic }),
     ...(primaryMount === undefined ? {} : { primary_mount: primaryMount }),
+    ...(group === undefined ? {} : { group }),
   };
 }
 

@@ -172,6 +172,9 @@ export const renderNodesTable = (
     theme,
     [
       col("ID", (n) => theme.bold(n.id)),
+      ...(nodes.some((n) => n.group)
+        ? [col<NodeSummary>("GROUP", (n) => mutedOr(theme, n.group))]
+        : []),
       col("STATUS", (n) => formatStatus(theme, n.overall_status)),
       col("VISIBILITY", (n) =>
         formatVisibility(theme, n.is_public, n.public_managed),
@@ -215,6 +218,7 @@ export function renderNodeDetail(
     renderSection(theme, "Summary"),
     renderKv(theme, [
       ["Status", formatStatus(theme, node.overall_status)],
+      node.group ? ["Group", node.group] : false,
       [
         "Visibility",
         formatVisibility(theme, node.is_public, node.public_managed),
@@ -351,6 +355,9 @@ export const renderMonitorsTable = (
     theme,
     [
       col("ID", (m) => theme.bold(m.id)),
+      ...(monitors.some((m) => m.group)
+        ? [col<MonitorSummary>("GROUP", (m) => mutedOr(theme, m.group))]
+        : []),
       col("STATUS", (m) => formatMonitorState(theme, m)),
       col("PROBE", (m) => theme.muted(formatMonitorProbe(m))),
       col("VISIBILITY", (m) =>
@@ -407,6 +414,7 @@ export function renderMonitorDetail(
     ]),
     renderSection(theme, "Configuration"),
     renderKv(theme, [
+      mon.group ? ["Group", mon.group] : false,
       ["Probe", `${mon.probe.type} (${mon.probe.from})`],
       ...(mon.probe.from === "hub"
         ? ([

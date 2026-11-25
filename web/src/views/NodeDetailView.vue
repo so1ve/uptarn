@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import NodeChartsGrid from "../components/nodes/NodeChartsGrid.vue";
@@ -10,6 +10,7 @@ import StatusDot from "../components/ui/StatusDot.vue";
 import {
   apiFetch,
   buildProbeCharts,
+  collectGroups,
   formatAge,
   formatBps,
   formatDuration,
@@ -85,6 +86,42 @@ const scalarSeries = computed(() => {
 
 const nodeUrl = (suffix = "") =>
   `/api/v1/admin/nodes/${encodeURIComponent(node.value!.id)}${suffix}`;
+
+const groupPopoverOpen = ref(false);
+const groupDraft = ref("");
+const existingGroups = computed(() => collectGroups(snap.value.nodes));
+
+watch(groupPopoverOpen, (isOpen) => {
+  if (isOpen) {
+    groupDraft.value = node.value?.group ?? "";
+  }
+});
+
+async function onSaveGroup(raw: string | null) {
+  const n = node.value;
+  if (!n) {
+    return;
+  }
+  const next = raw?.trim() || null;
+  if (next === n.group) {
+    groupPopoverOpen.value = false;
+
+    return;
+  }
+  const ok = await run(
+    "group",
+    "Failed to update group",
+    async () => {
+      await apiFetch(nodeUrl(), "PATCH", { group: next });
+
+      return next ? `Group set to ${next}` : "Removed from group";
+    },
+    true,
+  );
+  if (ok) {
+    groupPopoverOpen.value = false;
+  }
+}
 
 const onMute = (secs: number) =>
   node.value &&
@@ -240,6 +277,84 @@ async function onDelete() {
         </div>
 
         <div class="flex flex-wrap items-center gap-2">
+          <UPopover v-model:open="groupPopoverOpen">
+            <UButton
+              color="neutral"
+              icon="i-lucide-folder"
+              :loading="busy === 'group'"
+              size="xs"
+              trailing-icon="i-lucide-chevron-down"
+              variant="soft"
+            >
+              <span class="max-w-36 truncate">{{ node.group ?? "Group" }}</span>
+            </UButton>
+            <template #content>
+              <div class="w-64 space-y-2.5 p-3">
+                <form
+                  class="flex items-center gap-1.5"
+                  @submit.prevent="onSaveGroup(groupDraft)"
+                >
+                  <UInput
+                    v-model="groupDraft"
+                    aria-label="Group name"
+                    class="flex-1"
+                    :maxlength="40"
+                    placeholder="Group name"
+                    size="xs"
+                  />
+                  <UButton
+                    color="primary"
+                    :loading="busy === 'group'"
+                    size="xs"
+                    type="submit"
+                  >
+                    Save
+                  </UButton>
+                </form>
+
+                <div
+                  v-if="existingGroups.length > 0"
+                  class="space-y-0.5 border-t border-default pt-2"
+                >
+                  <button
+                    v-for="g in existingGroups"
+                    :key="g"
+                    class="flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1 text-left text-xs transition-colors hover:bg-elevated"
+                    :class="
+                      node.group === g
+                        ? 'font-medium text-default'
+                        : 'text-muted'
+                    "
+                    type="button"
+                    @click="onSaveGroup(g)"
+                  >
+                    <span class="truncate">{{ g }}</span>
+                    <UIcon
+                      v-if="node.group === g"
+                      class="size-3.5 shrink-0 text-primary"
+                      name="i-lucide-check"
+                    />
+                  </button>
+                </div>
+
+                <div
+                  v-if="node.group !== null"
+                  class="border-t border-default pt-2"
+                >
+                  <UButton
+                    block
+                    color="neutral"
+                    size="xs"
+                    variant="ghost"
+                    @click="onSaveGroup(null)"
+                  >
+                    Remove from group
+                  </UButton>
+                </div>
+              </div>
+            </template>
+          </UPopover>
+
           <UTooltip
             :disabled="!node.public_managed"
             text="Managed by agent config"

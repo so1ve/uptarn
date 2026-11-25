@@ -1507,4 +1507,193 @@ describe("uptarn portable server", () => {
       },
     ]);
   });
+
+  it("supports hub-managed groups on nodes and monitors across admin, public status, agent reports, and sync", async () => {
+    const config = loadConfig({
+      PUBLIC_BASE_URL: "https://status.example.com",
+      ADMIN_TOKEN: "admin-tok",
+    });
+    const app = createApp(db, config);
+    const adminHeaders = {
+      "Authorization": "Bearer admin-tok",
+      "Content-Type": "application/json",
+    };
+
+    const nodeRes = await app.request("/api/v1/admin/nodes", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({
+        id: "homelab",
+        label: "Homelab",
+        group: "  Homelab  ",
+        is_public: true,
+      }),
+    });
+
+    expect(nodeRes.status).toBe(201);
+
+    const { token } = await nodeRes.json<{ token: string }>();
+
+    // Report an agent-managed monitor and verify node group is preserved.
+    await ingestNodeReport(
+      db,
+      config,
+      {
+        node_id: "homelab",
+        label: "Homelab",
+        system: { uptime_secs: 1200 },
+        monitors: [
+          {
+            key: "yanqi",
+            name: "Yanqi",
+            from: "agent",
+            type: "exec",
+            is_public: true,
+            result: { ok: true },
+          },
+        ],
+      },
+      token,
+    );
+
+    // Hub-managed monitor created with group, plus private monitor in private-only group.
+    await upsertMonitor(db, {
+      id: "blog",
+      name: "Blog",
+      group: "Sites",
+      url: "https://blog.example.com",
+      is_public: true,
+    });
+    await upsertMonitor(db, {
+      id: "vault",
+      name: "Vault",
+      group: "Internal",
+      url: "https://vault.example.com",
+      is_public: false,
+    });
+
+    // PATCH group on agent-managed monitor even when is_public is agent-managed.
+    const patchAgentMon = await app.request(
+      "/api/v1/admin/monitors/homelab%3Ayanqi",
+      {
+        method: "PATCH",
+        headers: adminHeaders,
+        body: JSON.stringify({ group: "Homelab" }),
+      },
+    );
+
+    expect(patchAgentMon.status).toBe(200);
+
+    // Subsequent agent report (even changing monitor name) must preserve hub-set groups.
+    await ingestNodeReport(
+      db,
+      config,
+      {
+        node_id: "homelab",
+        label: "Homelab",
+        system: { uptime_secs: 1260 },
+        monitors: [
+          {
+            key: "yanqi",
+            name: "Yanqi Bot",
+            from: "agent",
+            type: "exec",
+            is_public: true,
+            result: { ok: true },
+          },
+        ],
+      },
+      token,
+    );
+
+    const snap = await (
+      await app.request("/api/v1/admin/snapshot", { headers: adminHeaders })
+    ).json<DashboardSnapshot>();
+
+    expect(snap.nodes.find((n) => n.id === "homelab")?.group).toBe("Homelab");
+    expect(snap.monitors.find((m) => m.id === "blog")?.group).toBe("Sites");
+    expect(snap.monitors.find((m) => m.id === "homelab:yanqi")?.group).toBe(
+      "Homelab",
+    );
+
+    // Public status exposes groups for public items only (private-only group does not appear).
+    const pub = await (
+      await app.request("/api/v1/public/status")
+    ).json<{
+      nodes: { label: string; group: string | null }[];
+      monitors: { name: string; group: string | null }[];
+    }>();
+
+    expect(pub.nodes).toEqual([
+      expect.objectContaining({ label: "Homelab", group: "Homelab" }),
+    ]);
+    expect(pub.monitors.map((m) => ({ name: m.name, group: m.group }))).toEqual(
+      [
+        { name: "Yanqi Bot", group: "Homelab" },
+        { name: "Blog", group: "Sites" },
+      ],
+    );
+
+    // Declarative sync reconciles group on nodes, hub monitors, and agent monitor overrides.
+    const spec = parseSyncSpec({
+      nodes: [{ id: "homelab", group: "Home" }],
+      monitors: [
+        {
+          id: "blog",
+          name: "Blog",
+          group: "Public",
+          url: "https://blog.example.com",
+          is_public: true,
+        },
+        { id: "homelab:yanqi", group: null },
+      ],
+    });
+    const plan = computeSyncPlan(snap, spec);
+
+    expect(plan.hasConflicts).toBeFalsy();
+    expect(plan.nodePatches).toEqual([
+      {
+        id: "homelab",
+        patch: { group: "Home" },
+        changes: ['group: "Homelab" -> "Home"'],
+      },
+    ]);
+    expect(plan.monitorsUpdate).toHaveLength(1);
+    expect(plan.monitorsUpdate[0].changes).toEqual([
+      'group: "Sites" -> "Public"',
+    ]);
+    expect(plan.monitorPatches).toEqual([
+      {
+        id: "homelab:yanqi",
+        patch: { group: null },
+        changes: ['group: "Homelab" -> null'],
+      },
+    ]);
+
+    await applySyncPlan(async (method, apiPath, body) => {
+      const res = await app.request(apiPath, {
+        method,
+        headers: adminHeaders,
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+
+      expect(res.ok).toBeTruthy();
+
+      return await res.json();
+    }, plan);
+
+    const snapAfterSync = await (
+      await app.request("/api/v1/admin/snapshot", { headers: adminHeaders })
+    ).json<DashboardSnapshot>();
+
+    expect(snapAfterSync.nodes.find((n) => n.id === "homelab")?.group).toBe(
+      "Home",
+    );
+    expect(snapAfterSync.monitors.find((m) => m.id === "blog")?.group).toBe(
+      "Public",
+    );
+    expect(
+      snapAfterSync.monitors.find((m) => m.id === "homelab:yanqi")?.group,
+    ).toBeNull();
+  });
 });
