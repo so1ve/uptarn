@@ -91,6 +91,13 @@ const navItems = computed(() => [
     count: activeMaintenancesCount.value,
     urgent: false,
   },
+  {
+    to: "/admin/settings",
+    label: "Settings",
+    active: route.name === "settings",
+    count: 0,
+    urgent: false,
+  },
 ]);
 
 watch(
@@ -132,7 +139,7 @@ async function onSignOut() {
         <RouterLink
           v-for="item in navItems"
           :key="item.to"
-          class="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[13px] font-medium whitespace-nowrap transition-colors"
+          class="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[13px] font-medium whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-primary"
           :class="
             item.active
               ? 'bg-elevated text-highlighted'
@@ -162,54 +169,46 @@ async function onSignOut() {
         :now="snap.now"
         :until="snap.settings.global_muted_until"
       />
-      <UButton
-        aria-label="Public status page"
-        class="px-1.5 sm:px-2.5"
-        color="neutral"
-        icon="i-lucide-globe"
-        size="sm"
-        to="/"
-        variant="ghost"
-      >
-        <span class="hidden sm:inline">Public</span>
-      </UButton>
-      <UButton
-        aria-label="Check now"
-        class="px-1.5 sm:px-2.5"
-        color="neutral"
-        icon="i-lucide-refresh-cw"
-        :loading="busy === 'tick'"
-        size="sm"
-        variant="ghost"
-        @click="onCheckNow"
-      >
-        <span class="hidden sm:inline">Check now</span>
-      </UButton>
-      <UButton
-        aria-label="Settings"
-        class="px-1.5 sm:px-2.5"
-        :color="route.name === 'settings' ? 'primary' : 'neutral'"
-        icon="i-lucide-sliders-horizontal"
-        size="sm"
-        to="/admin/settings"
-        :variant="route.name === 'settings' ? 'soft' : 'ghost'"
-      >
-        <span class="hidden sm:inline">Settings</span>
-      </UButton>
+      <UTooltip text="Run monitor checks now">
+        <button
+          aria-label="Check now"
+          class="inline-flex h-8 w-8 cursor-pointer items-center justify-center gap-1.5 rounded-md text-[13px] font-medium text-muted transition-colors hover:bg-elevated/70 hover:text-default focus-visible:outline-2 focus-visible:outline-primary disabled:pointer-events-none disabled:opacity-50 sm:w-auto sm:px-2.5"
+          :disabled="busy === 'tick'"
+          type="button"
+          @click="onCheckNow"
+        >
+          <UIcon
+            class="size-4 shrink-0"
+            :class="busy === 'tick' ? 'animate-spin' : ''"
+            name="i-lucide-refresh-cw"
+          />
+          <span class="hidden sm:inline">Check now</span>
+        </button>
+      </UTooltip>
+      <UTooltip text="View public status page">
+        <RouterLink
+          aria-label="Public status page"
+          class="inline-flex h-8 w-8 items-center justify-center gap-1.5 rounded-md text-[13px] font-medium text-muted transition-colors hover:bg-elevated/70 hover:text-default focus-visible:outline-2 focus-visible:outline-primary sm:w-auto sm:px-2.5"
+          to="/"
+        >
+          <UIcon class="size-4 shrink-0" name="i-lucide-globe" />
+          <span class="hidden sm:inline">Status</span>
+        </RouterLink>
+      </UTooltip>
+      <span aria-hidden="true" class="mx-1 h-4 border-l border-default" />
     </template>
 
     <template #actions>
-      <UButton
-        aria-label="Sign out"
-        class="-mr-1.5 px-1.5 sm:mr-0 sm:px-2.5"
-        color="neutral"
-        icon="i-lucide-log-out"
-        size="sm"
-        variant="ghost"
-        @click="onSignOut"
-      >
-        <span class="hidden sm:inline">Sign out</span>
-      </UButton>
+      <UTooltip text="Sign out">
+        <button
+          aria-label="Sign out"
+          class="-mr-1.5 inline-flex size-8 cursor-pointer items-center justify-center rounded-md text-muted transition-colors hover:bg-elevated/70 hover:text-default focus-visible:outline-2 focus-visible:outline-primary"
+          type="button"
+          @click="onSignOut"
+        >
+          <UIcon class="size-4" name="i-lucide-log-out" />
+        </button>
+      </UTooltip>
     </template>
 
     <StatusBanner

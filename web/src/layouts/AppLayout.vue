@@ -21,22 +21,22 @@ const isDemo = import.meta.env.VITE_DEMO === "true";
       class="sticky top-0 z-10 border-b border-default bg-default/85 backdrop-blur-md"
     >
       <div
-        class="mx-auto flex max-w-[1160px] flex-wrap items-center justify-between gap-x-4 px-4 sm:px-5 md:h-14 md:flex-nowrap md:gap-x-6"
+        class="mx-auto flex max-w-[1160px] flex-wrap items-center justify-between gap-x-4 px-4 sm:px-5 lg:h-14 lg:flex-nowrap lg:gap-x-6"
       >
-        <div class="flex h-13 min-w-0 items-center md:h-auto">
+        <div class="flex h-13 min-w-0 items-center lg:h-auto">
           <BrandMark :host :title :to="homeTo" />
         </div>
 
         <div
           v-if="$slots.nav"
-          class="order-3 -mx-4 flex w-[calc(100%+2rem)] items-center overflow-x-auto border-t border-default/70 py-1.5 pr-4 pl-1.5 [scrollbar-width:none] sm:-mx-5 sm:w-[calc(100%+2.5rem)] sm:pr-5 sm:pl-2.5 md:order-2 md:mx-0 md:mr-auto md:w-auto md:overflow-visible md:border-t-0 md:p-0 [&::-webkit-scrollbar]:hidden"
+          class="order-3 -mx-4 flex w-[calc(100%+2rem)] items-center overflow-x-auto border-t border-default/70 py-1.5 pr-4 pl-1.5 [scrollbar-width:none] sm:-mx-5 sm:w-[calc(100%+2.5rem)] sm:pr-5 sm:pl-2.5 lg:order-2 lg:mx-0 lg:mr-auto lg:w-auto lg:overflow-visible lg:border-t-0 lg:p-0 [&::-webkit-scrollbar]:hidden"
         >
           <slot name="nav" />
         </div>
         <nav
           v-else-if="links && links.length > 0"
           aria-label="External links"
-          class="order-3 -mx-4 flex w-[calc(100%+2rem)] items-center gap-1 overflow-x-auto border-t border-default/70 py-1.5 pr-4 pl-1.5 [scrollbar-width:none] sm:-mx-5 sm:w-[calc(100%+2.5rem)] sm:pr-5 sm:pl-2.5 md:order-2 md:mx-0 md:mr-auto md:w-auto md:overflow-visible md:border-t-0 md:p-0 [&::-webkit-scrollbar]:hidden"
+          class="order-3 -mx-4 flex w-[calc(100%+2rem)] items-center gap-1 overflow-x-auto border-t border-default/70 py-1.5 pr-4 pl-1.5 [scrollbar-width:none] sm:-mx-5 sm:w-[calc(100%+2.5rem)] sm:pr-5 sm:pl-2.5 lg:order-2 lg:mx-0 lg:mr-auto lg:w-auto lg:overflow-visible lg:border-t-0 lg:p-0 [&::-webkit-scrollbar]:hidden"
         >
           <a
             v-for="link in links"
@@ -47,22 +47,32 @@ const isDemo = import.meta.env.VITE_DEMO === "true";
             target="_blank"
           >
             <span>{{ link.label }}</span>
-            <UIcon class="size-3 text-dimmed" name="i-lucide-arrow-up-right" />
+            <UIcon
+              class="size-3.5 text-dimmed"
+              name="i-lucide-arrow-up-right"
+            />
           </a>
         </nav>
 
         <div
-          class="order-2 flex h-13 shrink-0 items-center gap-1 md:order-3 md:h-auto"
+          class="order-2 flex h-13 shrink-0 items-center gap-1 lg:order-3 lg:h-auto"
         >
           <slot name="actions-prefix" />
-          <UButton
-            aria-label="Toggle theme"
-            color="neutral"
-            :icon="isDark ? 'i-lucide-sun' : 'i-lucide-moon'"
-            size="sm"
-            variant="ghost"
-            @click="toggleTheme"
-          />
+          <UTooltip
+            :text="isDark ? 'Switch to light mode' : 'Switch to dark mode'"
+          >
+            <button
+              aria-label="Toggle theme"
+              class="inline-flex size-8 cursor-pointer items-center justify-center rounded-md text-muted transition-colors hover:bg-elevated/70 hover:text-default focus-visible:outline-2 focus-visible:outline-primary"
+              type="button"
+              @click="toggleTheme"
+            >
+              <UIcon
+                class="size-4"
+                :name="isDark ? 'i-lucide-sun' : 'i-lucide-moon'"
+              />
+            </button>
+          </UTooltip>
           <slot name="actions" />
         </div>
       </div>

@@ -121,25 +121,22 @@ async function onSignedIn() {
     :version="status.version"
   >
     <template #actions>
-      <UButton
+      <RouterLink
         v-if="adminPreview"
-        color="neutral"
-        icon="i-lucide-arrow-left"
-        size="sm"
+        class="ml-1 inline-flex h-8 items-center gap-1.5 rounded-md bg-elevated px-3 text-[13px] font-medium text-highlighted transition-colors hover:bg-accented focus-visible:outline-2 focus-visible:outline-primary"
         to="/admin"
-        variant="soft"
       >
-        Dashboard
-      </UButton>
-      <UButton
+        <UIcon class="size-3.5" name="i-lucide-arrow-left" />
+        <span>Dashboard</span>
+      </RouterLink>
+      <button
         v-else
-        color="neutral"
-        size="sm"
-        variant="soft"
+        class="ml-1 inline-flex h-8 cursor-pointer items-center rounded-md bg-elevated px-3 text-[13px] font-medium text-highlighted transition-colors hover:bg-accented focus-visible:outline-2 focus-visible:outline-primary"
+        type="button"
         @click="signInOpen = true"
       >
         Sign in
-      </UButton>
+      </button>
     </template>
 
     <EmptyState v-if="!hasContent">
