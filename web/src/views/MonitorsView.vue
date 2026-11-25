@@ -14,9 +14,12 @@ import {
   groupItems,
   reorderNamedGroups,
   useMonitorWindow,
+  usePageTitle,
   usePersistedReorder,
   useSnapshot,
 } from "../lib/index.ts";
+
+usePageTitle("Monitors");
 
 const snap = useSnapshot();
 

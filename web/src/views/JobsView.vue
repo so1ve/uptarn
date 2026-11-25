@@ -14,8 +14,11 @@ import {
   formatDuration,
   formatMs,
   useAction,
+  usePageTitle,
   useSnapshot,
 } from "../lib/index.ts";
+
+usePageTitle("Jobs");
 
 const snap = useSnapshot();
 const { busy, run } = useAction();

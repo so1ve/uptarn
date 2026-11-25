@@ -13,6 +13,7 @@ import {
   collectGroups,
   groupItems,
   reorderNamedGroups,
+  usePageTitle,
   usePersistedReorder,
   useSnapshot,
 } from "../lib/index.ts";
@@ -21,6 +22,8 @@ const VIEW_MODES = [
   { value: "cards" as const, label: "Cards", icon: "i-lucide-layout-grid" },
   { value: "table" as const, label: "Table", icon: "i-lucide-list" },
 ];
+
+usePageTitle("Nodes");
 
 const snap = useSnapshot();
 const nodesView = useStorage<"cards" | "table">("uptarn:nodes-view", "cards");

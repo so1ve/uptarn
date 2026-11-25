@@ -9,8 +9,11 @@ import {
   apiFetch,
   formatRemaining,
   useAction,
+  usePageTitle,
   useSnapshot,
 } from "../lib/index.ts";
+
+usePageTitle("Settings");
 
 const toast = useToast();
 const snap = useSnapshot();

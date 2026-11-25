@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, watch } from "vue";
+import { computed } from "vue";
 import { useRoute } from "vue-router";
 
 import IssuedTokenModal from "../components/modals/IssuedTokenModal.vue";
@@ -14,14 +14,6 @@ import {
   useUptarnStore,
 } from "../lib/index.ts";
 import AppLayout from "./AppLayout.vue";
-
-const ROUTE_TITLES: Record<string, string> = {
-  monitors: "Monitors",
-  jobs: "Jobs",
-  incidents: "Incidents",
-  maintenances: "Maintenances",
-  settings: "Settings",
-};
 
 const route = useRoute();
 const snap = useSnapshot();
@@ -45,68 +37,47 @@ const incidentHeadline = computed(() => {
   return extra > 0 ? `${titles} +${extra} more` : titles;
 });
 
-const pageTitle = computed(() => {
-  if (route.name === "node-detail") {
-    const id = String(route.params.id ?? "");
-
-    return snap.value.nodes.find((n) => n.id === id)?.label ?? id;
-  }
-
-  return ROUTE_TITLES[String(route.name)] ?? "Nodes";
-});
-
 const navItems = computed(() => [
   {
-    to: "/admin",
+    to: "/admin/nodes",
     label: "Nodes",
-    active: route.name === "nodes" || route.name === "node-detail",
     count: snap.value.nodes.length,
     urgent: false,
   },
   {
     to: "/admin/monitors",
     label: "Monitors",
-    active: route.name === "monitors",
     count: snap.value.monitors.length,
     urgent: false,
   },
   {
     to: "/admin/jobs",
     label: "Jobs",
-    active: route.name === "jobs",
     count: snap.value.jobs.length,
     urgent: false,
   },
   {
     to: "/admin/incidents",
     label: "Incidents",
-    active: route.name === "incidents",
     count: totalIncidents.value,
     urgent: totalIncidents.value > 0,
   },
   {
     to: "/admin/maintenances",
     label: "Maintenances",
-    active: route.name === "maintenances",
     count: activeMaintenancesCount.value,
     urgent: false,
   },
   {
     to: "/admin/settings",
     label: "Settings",
-    active: route.name === "settings",
     count: 0,
     urgent: false,
   },
 ]);
 
-watch(
-  pageTitle,
-  (title) => {
-    document.title = `${title} - Uptarn`;
-  },
-  { immediate: true },
-);
+const isNavActive = (to: string) =>
+  route.path === to || route.path.startsWith(`${to}/`);
 
 useLiveRefresh("admin", 10_000, 3000);
 
@@ -130,7 +101,7 @@ async function onSignOut() {
 
 <template>
   <AppLayout
-    home-to="/admin"
+    home-to="/admin/nodes"
     :links="snap.settings.site_links"
     :version="snap.version"
   >
@@ -141,7 +112,7 @@ async function onSignOut() {
           :key="item.to"
           class="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[13px] font-medium whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-primary"
           :class="
-            item.active
+            isNavActive(item.to)
               ? 'bg-elevated text-highlighted'
               : 'text-muted hover:bg-elevated/70 hover:text-default'
           "
@@ -212,7 +183,7 @@ async function onSignOut() {
     </template>
 
     <StatusBanner
-      v-if="snap.incidents.length > 0 && route.name !== 'incidents'"
+      v-if="snap.incidents.length > 0 && !route.meta.hideIncidentBanner"
       class="mb-6"
       :title="`${snap.incidents.length} ${snap.incidents.length === 1 ? 'active incident' : 'active incidents'}`"
       to="/admin/incidents"

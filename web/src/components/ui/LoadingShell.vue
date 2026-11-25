@@ -5,7 +5,7 @@ defineProps<{
   variant: "public" | "admin-cards" | "admin-list";
 }>();
 
-const NAV_WIDTHS = ["w-14", "w-16", "w-11", "w-16", "w-24"] as const;
+const NAV_WIDTHS = ["w-14", "w-16", "w-11", "w-16", "w-24", "w-16"] as const;
 const MONITOR_ROWS = [
   { name: "w-24", sub: "w-32" },
   { name: "w-32", sub: "w-24" },
@@ -29,25 +29,25 @@ const LIST_ROWS = [
       class="sticky top-0 z-10 border-b border-default bg-default/85 backdrop-blur-md"
     >
       <div
-        class="mx-auto flex h-13 max-w-[1160px] items-center justify-between gap-x-4 px-4 sm:px-5 md:h-14 md:gap-x-6"
+        class="mx-auto flex h-13 max-w-[1160px] items-center justify-between gap-x-4 px-4 sm:px-5 lg:h-14 lg:gap-x-6"
       >
         <BrandMark />
 
         <div
           v-if="variant !== 'public'"
-          class="mr-auto hidden items-center gap-1 md:flex"
+          class="mr-auto hidden items-center gap-1 lg:flex"
         >
           <USkeleton
             v-for="(width, idx) in NAV_WIDTHS"
             :key="idx"
-            class="h-7 rounded-md"
+            class="h-8 rounded-md"
             :class="width"
           />
         </div>
 
         <div class="flex shrink-0 items-center gap-1.5">
-          <USkeleton class="size-7 rounded-md" />
-          <USkeleton class="h-7 w-16 rounded-md" />
+          <USkeleton class="size-8 rounded-md" />
+          <USkeleton class="h-8 w-16 rounded-md" />
         </div>
       </div>
     </header>

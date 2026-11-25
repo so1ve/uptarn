@@ -10,8 +10,11 @@ import {
   formatDuration,
   formatRemaining,
   formatTimestamp,
+  usePageTitle,
   useSnapshot,
 } from "../lib/index.ts";
+
+usePageTitle("Maintenances");
 
 const snap = useSnapshot();
 const modalOpen = ref(false);

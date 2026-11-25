@@ -21,6 +21,7 @@ import {
   summarizeDisk,
   useAction,
   useNodeHistory,
+  usePageTitle,
   useSnapshot,
   useUptarnStore,
 } from "../lib/index.ts";
@@ -40,6 +41,7 @@ const nodeId = computed(() => String(route.params.id ?? ""));
 const node = computed(
   () => snap.value.nodes.find((n) => n.id === nodeId.value) ?? null,
 );
+usePageTitle(() => node.value?.label ?? nodeId.value);
 const isMuted = computed(
   () => node.value !== null && node.value.muted_until > snap.value.now,
 );
@@ -257,7 +259,7 @@ async function onDelete() {
     true,
   );
   if (ok) {
-    await router.push("/admin");
+    await router.push("/admin/nodes");
   }
 }
 </script>
@@ -265,14 +267,16 @@ async function onDelete() {
 <template>
   <div v-if="!node" class="space-y-4 py-12 text-center">
     <p class="text-sm text-muted">Node "{{ nodeId }}" was not found.</p>
-    <UButton color="neutral" to="/admin" variant="soft">Back to nodes</UButton>
+    <UButton color="neutral" to="/admin/nodes" variant="soft">
+      Back to nodes
+    </UButton>
   </div>
 
   <div v-else class="space-y-8">
     <div class="space-y-3">
       <RouterLink
         class="inline-flex items-center gap-1.5 text-xs font-medium text-muted transition-colors hover:text-default"
-        to="/admin"
+        to="/admin/nodes"
       >
         <UIcon class="size-3.5" name="i-lucide-arrow-left" />
         Nodes

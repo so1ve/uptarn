@@ -4,7 +4,7 @@ import { useRouter } from "vue-router";
 import SignInForm from "../components/modals/SignInForm.vue";
 import BrandMark from "../components/ui/BrandMark.vue";
 import type { PublicStatusSnapshot } from "../lib/index.ts";
-import { hostOf, useUptarnStore } from "../lib/index.ts";
+import { hostOf, usePageTitle, useUptarnStore } from "../lib/index.ts";
 
 defineProps<{
   status: PublicStatusSnapshot;
@@ -12,11 +12,11 @@ defineProps<{
 
 const router = useRouter();
 const { isDark, toggleTheme, loadState } = useUptarnStore();
-document.title = "Sign in - Uptarn";
+usePageTitle("Sign in");
 
 async function onAuthenticated() {
   await loadState();
-  await router.push("/admin");
+  await router.push("/admin/nodes");
 }
 </script>
 

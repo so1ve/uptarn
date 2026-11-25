@@ -2,66 +2,41 @@
 import { computed, onMounted, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
+import ConnectionError from "./components/ui/ConnectionError.vue";
 import LoadingShell from "./components/ui/LoadingShell.vue";
-import AdminShell from "./layouts/AdminShell.vue";
 import { useUptarnStore } from "./lib/index.ts";
-import LoginView from "./views/LoginView.vue";
-import PublicStatusView from "./views/PublicStatusView.vue";
 
 const route = useRoute();
 const router = useRouter();
 const { publicStatus, snapshot, loadError, loadState, refreshPublicStatus } =
   useUptarnStore();
 
-const isAdminPublicView = computed(
-  () => snapshot.value !== null && route.name === "public-status",
+const booted = computed(
+  () => snapshot.value !== null || publicStatus.value !== null,
 );
-
-const loadingVariant = computed<"public" | "admin-cards" | "admin-list">(() => {
-  if (route.path === "/" || route.name === "public-status") {
-    return "public";
-  }
-
-  return route.name === "nodes" || route.path === "/admin"
-    ? "admin-cards"
-    : "admin-list";
-});
-
-const hasPublicContent = computed(
+const requiresAuth = computed(() => Boolean(route.meta.requiresAuth));
+const canRenderRoute = computed(
   () =>
-    publicStatus.value !== null &&
-    (publicStatus.value.monitors.length > 0 ||
-      publicStatus.value.nodes.length > 0),
+    booted.value &&
+    route.matched.length > 0 &&
+    (!requiresAuth.value || snapshot.value !== null),
 );
+const loadingVariant = computed(() => route.meta.loading ?? "public");
 
 watch(
-  [snapshot, publicStatus, () => route.path],
-  ([admin, pub, path]) => {
-    if (!admin && pub && path !== "/") {
+  [booted, snapshot, requiresAuth],
+  ([isBooted, admin, needsAuth]) => {
+    if (isBooted && needsAuth && !admin) {
       void router.replace("/");
     }
   },
   { immediate: true },
 );
 
-function loadAdminPublic() {
-  loadError.value = null;
-  void refreshPublicStatus({ force: true });
-}
-
-watch(
-  isAdminPublicView,
-  (active) => {
-    if (active) {
-      loadAdminPublic();
-    }
-  },
-  { immediate: true },
-);
-
 function onRetry() {
-  if (isAdminPublicView.value) {
-    loadAdminPublic();
+  loadError.value = null;
+  if (snapshot.value && !publicStatus.value) {
+    void refreshPublicStatus({ force: true });
   } else {
     void loadState();
   }
@@ -74,36 +49,12 @@ onMounted(() => {
 
 <template>
   <UApp :scroll-body="false" :toaster="{ position: 'bottom-right' }">
-    <div v-if="loadError" class="grid min-h-svh place-items-center px-4">
-      <div class="w-full max-w-sm space-y-4">
-        <UAlert
-          color="error"
-          :description="loadError"
-          icon="i-lucide-circle-alert"
-          title="Could not connect to Uptarn"
-          variant="subtle"
-        />
-        <UButton block color="neutral" variant="soft" @click="onRetry">
-          Retry
-        </UButton>
-      </div>
-    </div>
-
-    <PublicStatusView
-      v-else-if="
-        publicStatus && (isAdminPublicView || (!snapshot && hasPublicContent))
-      "
-      :admin-preview="isAdminPublicView"
-      :status="publicStatus"
+    <ConnectionError
+      v-if="loadError"
+      :description="loadError"
+      @retry="onRetry"
     />
-
-    <AdminShell v-else-if="snapshot && !isAdminPublicView" />
-
-    <LoginView
-      v-else-if="!isAdminPublicView && publicStatus"
-      :status="publicStatus"
-    />
-
+    <RouterView v-else-if="canRenderRoute" />
     <LoadingShell v-else :variant="loadingVariant" />
   </UApp>
 </template>

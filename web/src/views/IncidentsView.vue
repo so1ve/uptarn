@@ -13,8 +13,11 @@ import {
   incidentRoute,
   splitIncident,
   targetMutedUntil,
+  usePageTitle,
   useSnapshot,
 } from "../lib/index.ts";
+
+usePageTitle("Incidents");
 
 const snap = useSnapshot();
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watchEffect } from "vue";
+import { useTitle } from "@vueuse/core";
+import { computed, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 
 import MaintenanceNotice from "../components/incidents/MaintenanceNotice.vue";
@@ -44,11 +45,13 @@ function toggleExpand(key: string) {
   }
 }
 
-watchEffect(() => {
-  document.title = props.status.site_title
-    ? `${props.status.site_title} - Status`
-    : "Status - Uptarn";
-});
+useTitle(
+  () =>
+    props.status.site_title
+      ? `${props.status.site_title} - Status`
+      : "Status - Uptarn",
+  { restoreOnUnmount: false },
+);
 useLiveRefresh("public", 10_000, 3000);
 
 const hasContent = computed(
@@ -109,7 +112,7 @@ const banner = computed(() => {
 async function onSignedIn() {
   signInOpen.value = false;
   await loadState();
-  await router.push("/admin");
+  await router.push("/admin/nodes");
 }
 </script>
 
@@ -124,7 +127,7 @@ async function onSignedIn() {
       <RouterLink
         v-if="adminPreview"
         class="ml-1 inline-flex h-8 items-center gap-1.5 rounded-md bg-elevated px-3 text-[13px] font-medium text-highlighted transition-colors hover:bg-accented focus-visible:outline-2 focus-visible:outline-primary"
-        to="/admin"
+        to="/admin/nodes"
       >
         <UIcon class="size-3.5" name="i-lucide-arrow-left" />
         <span>Dashboard</span>
