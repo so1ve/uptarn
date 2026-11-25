@@ -47,9 +47,16 @@ export async function authenticateLiveAgent(
   };
 }
 
-export const authenticateLiveViewer = async (
+export async function authenticateLiveViewer(
   db: SqlDatabase,
   config: LoadedConfig,
   request: Request,
-): Promise<"admin" | "public"> =>
-  (await checkAdminAuthRequest(request, db, config)) ? "admin" : "public";
+): Promise<"admin" | "public"> {
+  if (new URL(request.url).searchParams.get("scope") === "public") {
+    return "public";
+  }
+
+  return (await checkAdminAuthRequest(request, db, config))
+    ? "admin"
+    : "public";
+}

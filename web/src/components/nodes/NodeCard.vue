@@ -12,8 +12,10 @@ import {
   memPercent,
   mountPercent,
   nodeIssueSummary,
+  pickSparkHistory,
   statusTextClass,
   summarizeDisk,
+  useUptarnStore,
 } from "../../lib/index.ts";
 import MutedBadge from "../ui/MutedBadge.vue";
 import SparkMetric from "../ui/SparkMetric.vue";
@@ -24,6 +26,8 @@ const props = defineProps<{
   node: NodeSummary;
   now: number;
 }>();
+
+const { liveHistory } = useUptarnStore();
 
 const offline = computed(() => props.node.overall_status === "offline");
 const pending = computed(() => props.node.overall_status === "pending");
@@ -36,6 +40,18 @@ const disk = computed(() =>
 
 const hasCpu = computed(() => cpuPct.value !== undefined);
 const hasMem = computed(() => memPct.value !== null);
+const cpuHistory = computed(() =>
+  pickSparkHistory(
+    liveHistory.value[props.node.id]?._cpu,
+    props.node.history._cpu ?? [],
+  ),
+);
+const memHistory = computed(() =>
+  pickSparkHistory(
+    liveHistory.value[props.node.id]?._mem,
+    props.node.history._mem ?? [],
+  ),
+);
 const hasCompute = computed(() => hasCpu.value || hasMem.value);
 const hasNet = computed(
   () => props.node.rx_bps !== null && props.node.tx_bps !== null,
@@ -116,14 +132,14 @@ const memCaption = computed(() =>
           >
             <SparkMetric
               v-if="hasCpu"
-              :history="node.history._cpu ?? []"
+              :history="cpuHistory"
               kind="cpu"
               :pct="cpuPct!"
             />
             <SparkMetric
               v-if="hasMem"
               :caption="memCaption"
-              :history="node.history._mem ?? []"
+              :history="memHistory"
               kind="memory"
               :pct="memPct!"
             />

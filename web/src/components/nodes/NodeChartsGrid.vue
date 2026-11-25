@@ -8,6 +8,7 @@ import type {
 } from "../../lib/index.ts";
 import {
   buildComputeChartOption,
+  buildLoadChart,
   buildNetworkChartOption,
   formatBps,
   formatSeriesWithLoss,
@@ -69,10 +70,27 @@ const networkChartOption = computed(() =>
     isLiveWindow.value,
   ),
 );
+const loadChart = computed(() =>
+  buildLoadChart(
+    props.node,
+    isDark.value,
+    props.history,
+    showDate.value,
+    isLiveWindow.value,
+  ),
+);
+const wideLoadCard = computed(
+  () =>
+    loadChart.value !== null &&
+    computeChartOption.value !== null &&
+    networkChartOption.value !== null &&
+    props.probeCharts.length === 0,
+);
 const totalCharts = computed(
   () =>
     (computeChartOption.value ? 1 : 0) +
     (networkChartOption.value ? 1 : 0) +
+    (loadChart.value ? 1 : 0) +
     props.probeCharts.length,
 );
 </script>
@@ -165,6 +183,35 @@ const totalCharts = computed(
       </ChartCard>
 
       <ChartCard
+        v-if="loadChart"
+        :class="wideLoadCard ? 'lg:col-span-2' : ''"
+        :height="wideLoadCard ? '175px' : '220px'"
+        :live="isLiveWindow"
+        :option="loadChart.option"
+      >
+        <template #title>
+          <h3 class="text-sm font-semibold">Load</h3>
+        </template>
+        <template #meta>
+          <div
+            class="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs tabular-nums"
+          >
+            <span
+              v-if="node.system?.load_1m !== undefined"
+              class="inline-flex items-center gap-1.5 text-muted"
+            >
+              <span class="size-2 rounded-xs bg-teal-500" />
+              {{ node.system.load_1m.toFixed(2) }}
+            </span>
+            <span class="text-dimmed">
+              avg {{ loadChart.avg.toFixed(2) }} · peak
+              {{ loadChart.peak.toFixed(2) }}
+            </span>
+          </div>
+        </template>
+      </ChartCard>
+
+      <ChartCard
         v-for="item in probeCharts"
         :key="item.series.key"
         :option="item.option"
@@ -173,6 +220,12 @@ const totalCharts = computed(
           <h3 class="inline-flex items-center gap-2 text-sm font-semibold">
             <StatusDot :status="item.series.status ?? 'ok'" />
             {{ item.series.label }}
+            <span
+              v-if="isLiveWindow"
+              class="font-mono text-[10.5px] font-normal text-dimmed"
+            >
+              6h
+            </span>
           </h3>
         </template>
         <template #meta>

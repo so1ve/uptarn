@@ -600,6 +600,9 @@ export async function ingestNodeReport(
   if (payload.system?.cpu_pct !== undefined) {
     sampleValues._cpu = round1(payload.system.cpu_pct);
   }
+  if (payload.system?.load_1m !== undefined) {
+    sampleValues._load = Math.round(payload.system.load_1m * 100) / 100;
+  }
   const memPct = memPercent(payload.system ?? null);
   if (memPct !== null) {
     sampleValues._mem = round1(memPct);

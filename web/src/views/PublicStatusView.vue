@@ -20,6 +20,7 @@ import {
   formatDuration,
   groupItems,
   hostOf,
+  pickSparkHistory,
   usageTextClass,
   useLiveRefresh,
   useMonitorWindow,
@@ -32,7 +33,7 @@ const props = defineProps<{
 }>();
 
 const router = useRouter();
-const { loadState } = useUptarnStore();
+const { loadState, publicLiveHistory } = useUptarnStore();
 const signInOpen = ref(false);
 const monitorWindow = useMonitorWindow();
 const expandedKeys = reactive(new Set<string>());
@@ -257,13 +258,23 @@ async function onSignedIn() {
                   >
                     <SparkMetric
                       v-if="node.cpu_pct !== null"
-                      :history="node.cpu_history"
+                      :history="
+                        pickSparkHistory(
+                          publicLiveHistory[node.key]?._cpu,
+                          node.cpu_history,
+                        )
+                      "
                       kind="cpu"
                       :pct="node.cpu_pct"
                     />
                     <SparkMetric
                       v-if="node.mem_pct !== null"
-                      :history="node.mem_history"
+                      :history="
+                        pickSparkHistory(
+                          publicLiveHistory[node.key]?._mem,
+                          node.mem_history,
+                        )
+                      "
                       kind="memory"
                       :pct="node.mem_pct"
                     />

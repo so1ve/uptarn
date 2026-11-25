@@ -40,6 +40,9 @@ const tokenModalOpen = ref(false);
 const syncGeneration = ref(0);
 const liveConnected = ref(false);
 const liveHistory = ref<Record<string, Record<string, SeriesPoint[]>>>({});
+const publicLiveHistory = ref<Record<string, Record<string, SeriesPoint[]>>>(
+  {},
+);
 
 const colorMode = useColorMode();
 const isDark = computed(() => colorMode.value === "dark");
@@ -74,6 +77,9 @@ function samplesToSeries(
     if (s.cpu_pct !== undefined) {
       (hist._cpu ??= []).push({ ts: s.ts, value: s.cpu_pct });
     }
+    if (s.load_1m !== undefined) {
+      (hist._load ??= []).push({ ts: s.ts, value: s.load_1m });
+    }
     const mem = memPercent({
       uptime_secs: s.uptime_secs,
       mem_used_bytes: s.mem_used_bytes,
@@ -93,11 +99,30 @@ function samplesToSeries(
   return hist;
 }
 
+function publicSamplesToSeries(
+  samples: readonly PublicLiveNodeSample[],
+): Record<string, SeriesPoint[]> {
+  const hist: Record<string, SeriesPoint[]> = {};
+  for (const s of samples) {
+    if (s.cpu_pct !== null) {
+      (hist._cpu ??= []).push({ ts: s.ts, value: s.cpu_pct });
+    }
+    if (s.mem_pct !== null) {
+      (hist._mem ??= []).push({ ts: s.ts, value: s.mem_pct });
+    }
+  }
+
+  return hist;
+}
+
 function recordAdminSample(sample: LiveNodeSample): void {
   const prev = liveHistory.value[sample.node_id] ?? {};
   const next: Record<string, SeriesPoint[]> = { ...prev };
   if (sample.cpu_pct !== undefined) {
     next._cpu = appendSeriesPoint(prev._cpu, sample.ts, sample.cpu_pct);
+  }
+  if (sample.load_1m !== undefined) {
+    next._load = appendSeriesPoint(prev._load, sample.ts, sample.load_1m);
   }
   const mem = memPercent({
     uptime_secs: sample.uptime_secs,
@@ -114,6 +139,18 @@ function recordAdminSample(sample: LiveNodeSample): void {
     next._tx_bps = appendSeriesPoint(prev._tx_bps, sample.ts, sample.tx_bps);
   }
   liveHistory.value = { ...liveHistory.value, [sample.node_id]: next };
+}
+
+function recordPublicSample(sample: PublicLiveNodeSample): void {
+  const prev = publicLiveHistory.value[sample.key] ?? {};
+  const next: Record<string, SeriesPoint[]> = { ...prev };
+  if (sample.cpu_pct !== null) {
+    next._cpu = appendSeriesPoint(prev._cpu, sample.ts, sample.cpu_pct);
+  }
+  if (sample.mem_pct !== null) {
+    next._mem = appendSeriesPoint(prev._mem, sample.ts, sample.mem_pct);
+  }
+  publicLiveHistory.value = { ...publicLiveHistory.value, [sample.key]: next };
 }
 
 function patchAdminNode(snap: DashboardSnapshot, sample: LiveNodeSample): void {
@@ -172,13 +209,10 @@ function patchPublicNode(
   };
 }
 
-function handleLiveMessage(kind: "admin" | "public", raw: string): void {
-  let msg: AdminLiveMessage | PublicLiveMessage;
-  try {
-    msg = JSON.parse(raw) as AdminLiveMessage | PublicLiveMessage;
-  } catch {
-    return;
-  }
+function applyLiveMessage(
+  kind: "admin" | "public",
+  msg: AdminLiveMessage | PublicLiveMessage,
+): void {
   if (kind === "admin") {
     const adminMsg = msg as AdminLiveMessage;
     if (adminMsg.type === "init") {
@@ -203,15 +237,31 @@ function handleLiveMessage(kind: "admin" | "public", raw: string): void {
 
   const pubMsg = msg as PublicLiveMessage;
   if (pubMsg.type === "init") {
-    for (const samples of Object.values(pubMsg.nodes)) {
+    const nextHist: Record<string, Record<string, SeriesPoint[]>> = {};
+    for (const [key, samples] of Object.entries(pubMsg.nodes)) {
+      nextHist[key] = publicSamplesToSeries(samples);
       const latest = samples.at(-1);
       if (latest && publicStatus.value) {
         patchPublicNode(publicStatus.value, latest);
       }
     }
-  } else if (pubMsg.type === "tick" && publicStatus.value) {
-    patchPublicNode(publicStatus.value, pubMsg.sample);
+    publicLiveHistory.value = nextHist;
+  } else if (pubMsg.type === "tick") {
+    recordPublicSample(pubMsg.sample);
+    if (publicStatus.value) {
+      patchPublicNode(publicStatus.value, pubMsg.sample);
+    }
   }
+}
+
+function handleLiveMessage(kind: "admin" | "public", raw: string): void {
+  let msg: AdminLiveMessage | PublicLiveMessage;
+  try {
+    msg = JSON.parse(raw) as AdminLiveMessage | PublicLiveMessage;
+  } catch {
+    return;
+  }
+  applyLiveMessage(kind, msg);
 }
 
 function createRefresher<T>(
@@ -346,7 +396,8 @@ export function useLiveRefresh(
 
   function connectLive() {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${proto}//${location.host}/api/v1/live`);
+    const suffix = kind === "public" ? "?scope=public" : "";
+    const ws = new WebSocket(`${proto}//${location.host}/api/v1/live${suffix}`);
     socket = ws;
 
     ws.addEventListener("open", () => {
@@ -443,6 +494,7 @@ function showIssuedToken(payload: IssuedToken) {
 async function signOutState() {
   snapshot.value = null;
   liveHistory.value = {};
+  publicLiveHistory.value = {};
   await loadState();
 }
 
@@ -511,6 +563,7 @@ export function hasLiveNodeSamples(nodeId: string): boolean {
   return (
     (live._cpu?.length ?? 0) >= 2 ||
     (live._mem?.length ?? 0) >= 2 ||
+    (live._load?.length ?? 0) >= 2 ||
     (live._rx_bps?.length ?? 0) >= 2 ||
     (live._tx_bps?.length ?? 0) >= 2
   );
@@ -525,6 +578,7 @@ export const useUptarnStore = () => ({
   syncGeneration,
   liveConnected,
   liveHistory,
+  publicLiveHistory,
   isDark,
   toggleTheme,
   loadState,

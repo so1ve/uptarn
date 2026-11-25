@@ -82,7 +82,13 @@ interface RawNodeSample {
 }
 
 const MAX_DETAIL_POINTS = 72;
-const BUILTIN_SERIES_KEYS = ["_cpu", "_mem", "_rx_bps", "_tx_bps"] as const;
+const BUILTIN_SERIES_KEYS = [
+  "_cpu",
+  "_mem",
+  "_load",
+  "_rx_bps",
+  "_tx_bps",
+] as const;
 const PUBLIC_SPARK_KEYS = new Set<string>(["_cpu", "_mem"]);
 
 interface PublicAlertStateRow {

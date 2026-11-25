@@ -37,6 +37,7 @@ const chartPalette = (isDark: boolean) => ({
   tooltipMuted: isDark ? "#a1a1aa" : "#71717a",
   cpu: isDark ? "#60a5fa" : "#2563eb",
   mem: isDark ? "#a78bfa" : "#7c3aed",
+  load: isDark ? "#2dd4bf" : "#0d9488",
   probe: isDark ? "#38bdf8" : "#0284c7",
   loss: isDark ? "#f87171" : "#dc2626",
 });
@@ -166,6 +167,14 @@ const cartesianOption = (opts: {
   series: opts.series,
 });
 
+const CARD_LIVE_SPARK_POINTS = 40;
+
+export const pickSparkHistory = (
+  live: readonly SeriesPoint[] | undefined,
+  fallback: readonly SeriesPoint[],
+): readonly SeriesPoint[] =>
+  live && live.length >= 2 ? live.slice(-CARD_LIVE_SPARK_POINTS) : fallback;
+
 export const buildSparkOption = (
   points: readonly SeriesPoint[],
   color: string,
@@ -280,6 +289,56 @@ export function buildNetworkChartOption(
     formatBps,
     live,
   );
+}
+
+export interface LoadChartItem {
+  option: EChartsCoreOption;
+  avg: number;
+  peak: number;
+}
+
+export function buildLoadChart(
+  node: NodeSummary,
+  isDark: boolean,
+  history: Record<string, SeriesPoint[]> = node.history,
+  showDate = false,
+  live = false,
+): LoadChartItem | null {
+  const pts = history._load ?? [];
+  if (pts.length < 2) {
+    return null;
+  }
+  const p = chartPalette(isDark);
+  const vals = pts.map((pt) => pt.value);
+  const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+  const peak = Math.max(...vals);
+
+  return {
+    avg,
+    peak,
+    option: cartesianOption({
+      p,
+      gridLeft: 42,
+      timestamps: pts.map((pt) => pt.ts),
+      showDate,
+      showSeconds: live,
+      live,
+      yAxis: valueAxis(p.gridColor, { min: 0, splitNumber: 3 }, (v) =>
+        v.toFixed(v < 10 ? 2 : 1),
+      ),
+      tooltipFmt: (v) => (typeof v === "number" ? v.toFixed(2) : "-"),
+      series: [
+        areaLine(
+          "Load 1m",
+          p.load,
+          vals,
+          p.areaOpacity,
+          true,
+          live ? 0.35 : 0.25,
+        ),
+      ],
+    }),
+  };
 }
 
 export interface ProbeChartItem {
