@@ -1,62 +1,34 @@
 import type { Theme } from "clerc";
 
+import { MONITOR_CONFIG_KEYS } from "../domain/monitors.ts";
 import type { DashboardSnapshot, MonitorSummary } from "../shared/index.ts";
-import { parseMonitorInput } from "../validation.ts";
+import { normalizePrimaryMount, parseMonitorInput } from "../validation.ts";
 import { renderSection } from "./format.ts";
-
-export interface SyncNodeSpec {
-  id: string;
-  is_public?: boolean;
-  primary_mount?: string | null;
-}
 
 export type NormalizedSyncMonitor = ReturnType<typeof parseMonitorInput>;
 
 export interface SyncSpec {
   hub_url?: string;
   auto_register?: boolean;
-  nodes?: SyncNodeSpec[];
+  nodes?: { id: string; is_public?: boolean; primary_mount?: string | null }[];
   monitors?: NormalizedSyncMonitor[];
-}
-
-export interface NodePatchItem {
-  id: string;
-  patch: { is_public?: boolean; primary_mount?: string | null };
-  changes: string[];
-}
-
-export interface ManagedNodeConflict {
-  id: string;
-  declared: boolean;
-  current: boolean;
-}
-
-export interface MonitorUpdate {
-  monitor: NormalizedSyncMonitor;
-  changes: string[];
-}
-
-export interface MonitorRef {
-  id: string;
-  name: string;
-}
-
-export interface ManagedMonitorConflict {
-  id: string;
-  nodeId: string;
 }
 
 export interface SyncPlan {
   settingsPatch: { auto_register: boolean } | null;
-  nodePatches: NodePatchItem[];
+  nodePatches: {
+    id: string;
+    patch: { is_public?: boolean; primary_mount?: string | null };
+    changes: string[];
+  }[];
   missingNodes: string[];
-  managedNodeConflicts: ManagedNodeConflict[];
+  managedNodeConflicts: { id: string; declared: boolean; current: boolean }[];
   nodeOrder: string[] | null;
   monitorsCreate: NormalizedSyncMonitor[];
-  monitorsUpdate: MonitorUpdate[];
-  monitorsDelete: MonitorRef[];
-  unmanagedMonitors: MonitorRef[];
-  managedMonitorConflicts: ManagedMonitorConflict[];
+  monitorsUpdate: { monitor: NormalizedSyncMonitor; changes: string[] }[];
+  monitorsDelete: { id: string; name: string }[];
+  unmanagedMonitors: { id: string; name: string }[];
+  managedMonitorConflicts: { id: string; nodeId: string }[];
   monitorOrder: string[] | null;
   hasChanges: boolean;
   hasConflicts: boolean;
@@ -68,26 +40,48 @@ export type AdminRequestFn = <T>(
   body?: unknown,
 ) => Promise<T>;
 
-const MONITOR_COMPARE_FIELDS = [
-  "name",
-  "url",
-  "public_url",
-  "method",
-  "expected_status_min",
-  "expected_status_max",
-  "expected_body",
-  "timeout_ms",
-  "interval_secs",
-  "enabled",
-  "is_public",
-] as const;
-
 function asRecord(val: unknown, label: string): Record<string, unknown> {
   if (typeof val !== "object" || val === null || Array.isArray(val)) {
     throw new Error(`${label} must be an object`);
   }
 
   return val as Record<string, unknown>;
+}
+
+function optionalBool(val: unknown, label: string): boolean | undefined {
+  if (val === undefined || val === null) {
+    return undefined;
+  }
+  if (typeof val !== "boolean") {
+    throw new TypeError(`${label} must be a boolean`);
+  }
+
+  return val;
+}
+
+function parseUniqueArray<T extends { id: string }>(
+  raw: unknown,
+  field: string,
+  parseItem: (obj: Record<string, unknown>, label: string) => T,
+): T[] | undefined {
+  if (raw === undefined || raw === null) {
+    return undefined;
+  }
+  if (!Array.isArray(raw)) {
+    throw new TypeError(`${field} must be an array`);
+  }
+  const seen = new Set<string>();
+
+  return raw.map((entry, idx) => {
+    const label = `${field}[${idx}]`;
+    const item = parseItem(asRecord(entry, label), label);
+    if (seen.has(item.id)) {
+      throw new Error(`${label}.id duplicate "${item.id}"`);
+    }
+    seen.add(item.id);
+
+    return item;
+  });
 }
 
 export function parseSyncSpec(raw: unknown): SyncSpec {
@@ -98,100 +92,64 @@ export function parseSyncSpec(raw: unknown): SyncSpec {
     spec.hub_url = obj.hub_url.trim().replace(/\/+$/, "");
   }
 
-  if (obj.auto_register !== undefined && obj.auto_register !== null) {
-    if (typeof obj.auto_register !== "boolean") {
-      throw new TypeError("auto_register must be a boolean");
-    }
-    spec.auto_register = obj.auto_register;
+  const autoRegister = optionalBool(obj.auto_register, "auto_register");
+  if (autoRegister !== undefined) {
+    spec.auto_register = autoRegister;
   }
 
-  if (obj.nodes !== undefined && obj.nodes !== null) {
-    if (!Array.isArray(obj.nodes)) {
-      throw new TypeError("nodes must be an array");
+  spec.nodes = parseUniqueArray(obj.nodes, "nodes", (node, label) => {
+    if (typeof node.id !== "string" || !node.id.trim()) {
+      throw new Error(`${label}.id must be a non-empty string`);
     }
-    const seen = new Set<string>();
-    spec.nodes = obj.nodes.map((entry, idx) => {
-      const node = asRecord(entry, `nodes[${idx}]`);
-      if (typeof node.id !== "string" || !node.id.trim()) {
-        throw new Error(`nodes[${idx}].id must be a non-empty string`);
-      }
-      const id = node.id.trim();
-      if (seen.has(id)) {
-        throw new Error(`nodes[${idx}].id duplicate "${id}"`);
-      }
-      seen.add(id);
-      if (
-        node.is_public !== undefined &&
-        node.is_public !== null &&
-        typeof node.is_public !== "boolean"
-      ) {
-        throw new Error(`nodes[${idx}].is_public must be a boolean`);
-      }
-      let primaryMount: string | null | undefined;
-      if (Object.hasOwn(node, "primary_mount")) {
-        if (node.primary_mount === null) {
-          primaryMount = null;
-        } else if (typeof node.primary_mount === "string") {
-          const trimmed = node.primary_mount.trim();
-          primaryMount = !trimmed || trimmed === "sum" ? null : trimmed;
-        } else {
-          throw new TypeError(
-            `nodes[${idx}].primary_mount must be a string or null`,
-          );
-        }
-      }
+    const isPublic = optionalBool(node.is_public, `${label}.is_public`);
+    const primaryMount = Object.hasOwn(node, "primary_mount")
+      ? normalizePrimaryMount(node.primary_mount, `${label}.primary_mount`)
+      : undefined;
 
-      return {
-        id,
-        ...(node.is_public === undefined || node.is_public === null
-          ? {}
-          : { is_public: node.is_public }),
-        ...(primaryMount === undefined ? {} : { primary_mount: primaryMount }),
-      };
-    });
-  }
+    return {
+      id: node.id.trim(),
+      ...(isPublic === undefined ? {} : { is_public: isPublic }),
+      ...(primaryMount === undefined ? {} : { primary_mount: primaryMount }),
+    };
+  });
 
-  if (obj.monitors !== undefined && obj.monitors !== null) {
-    if (!Array.isArray(obj.monitors)) {
-      throw new TypeError("monitors must be an array");
+  spec.monitors = parseUniqueArray(obj.monitors, "monitors", (mon, label) => {
+    if (typeof mon.id !== "string" || !mon.id.trim()) {
+      throw new Error(`${label}.id is required for declarative sync`);
     }
-    const seen = new Set<string>();
-    spec.monitors = obj.monitors.map((entry, idx) => {
-      const mon = asRecord(entry, `monitors[${idx}]`);
-      if (typeof mon.id !== "string" || !mon.id.trim()) {
-        throw new Error(`monitors[${idx}].id is required for declarative sync`);
-      }
-      const normalized = parseMonitorInput(mon);
-      if (seen.has(normalized.id)) {
-        throw new Error(`monitors[${idx}].id duplicate "${normalized.id}"`);
-      }
-      seen.add(normalized.id);
 
-      return normalized;
-    });
-  }
+    return parseMonitorInput(mon);
+  });
 
   return spec;
 }
 
-function diffMonitor(
+const diffMonitor = (
   current: MonitorSummary,
   desired: NormalizedSyncMonitor,
-): string[] {
-  const changes: string[] = [];
-  for (const field of MONITOR_COMPARE_FIELDS) {
-    if (current[field] !== desired[field]) {
-      changes.push(
-        `${field}: ${JSON.stringify(current[field])} -> ${JSON.stringify(desired[field])}`,
-      );
-    }
-  }
+): string[] =>
+  MONITOR_CONFIG_KEYS.filter((f) => current[f] !== desired[f]).map(
+    (f) =>
+      `${f}: ${JSON.stringify(current[f])} -> ${JSON.stringify(desired[f])}`,
+  );
 
-  return changes;
+function computeReorder(
+  baselineOrder: readonly string[],
+  declaredOrder: readonly string[],
+  survivingExisting: readonly string[],
+  declaredSet: ReadonlySet<string>,
+): string[] | null {
+  const desired = [
+    ...declaredOrder,
+    ...survivingExisting.filter((id) => !declaredSet.has(id)),
+  ];
+  const unchanged =
+    desired.length === 0 ||
+    (desired.length === baselineOrder.length &&
+      desired.every((id, i) => id === baselineOrder[i]));
+
+  return unchanged ? null : desired;
 }
-
-const sameOrder = (a: readonly string[], b: readonly string[]): boolean =>
-  a.length === b.length && a.every((item, idx) => item === b[idx]);
 
 export function computeSyncPlan(
   current: DashboardSnapshot,
@@ -199,36 +157,34 @@ export function computeSyncPlan(
   options: { prune?: boolean } = {},
 ): SyncPlan {
   const prune = options.prune ?? false;
-
   const settingsPatch =
     spec.auto_register !== undefined &&
     spec.auto_register !== current.settings.auto_register
       ? { auto_register: spec.auto_register }
       : null;
 
-  const nodePatches: NodePatchItem[] = [];
+  const nodePatches: SyncPlan["nodePatches"] = [];
   const missingNodes: string[] = [];
-  const managedNodeConflicts: ManagedNodeConflict[] = [];
+  const managedNodeConflicts: SyncPlan["managedNodeConflicts"] = [];
   let nodeOrder: string[] | null = null;
 
   if (spec.nodes !== undefined) {
-    const currentNodesById = new Map(current.nodes.map((n) => [n.id, n]));
-    const declaredExistingNodeIds: string[] = [];
+    const byId = new Map(current.nodes.map((n) => [n.id, n]));
+    const declaredOrder: string[] = [];
     const declaredSet = new Set<string>();
 
     for (const declared of spec.nodes) {
-      const existing = currentNodesById.get(declared.id);
+      const existing = byId.get(declared.id);
       if (!existing) {
         missingNodes.push(declared.id);
 
         continue;
       }
-      declaredExistingNodeIds.push(declared.id);
+      declaredOrder.push(declared.id);
       declaredSet.add(declared.id);
 
       const patch: { is_public?: boolean; primary_mount?: string | null } = {};
       const changes: string[] = [];
-
       if (
         declared.is_public !== undefined &&
         declared.is_public !== existing.is_public
@@ -260,37 +216,33 @@ export function computeSyncPlan(
       }
     }
 
-    const currentNodeIds = current.nodes.map((n) => n.id);
-    const desiredNodeOrder = [
-      ...declaredExistingNodeIds,
-      ...currentNodeIds.filter((id) => !declaredSet.has(id)),
-    ];
-    if (
-      desiredNodeOrder.length > 0 &&
-      !sameOrder(currentNodeIds, desiredNodeOrder)
-    ) {
-      nodeOrder = desiredNodeOrder;
-    }
+    const currentIds = current.nodes.map((n) => n.id);
+    nodeOrder = computeReorder(
+      currentIds,
+      declaredOrder,
+      currentIds,
+      declaredSet,
+    );
   }
 
   const monitorsCreate: NormalizedSyncMonitor[] = [];
-  const monitorsUpdate: MonitorUpdate[] = [];
-  const monitorsDelete: MonitorRef[] = [];
-  const unmanagedMonitors: MonitorRef[] = [];
-  const managedMonitorConflicts: ManagedMonitorConflict[] = [];
+  const monitorsUpdate: SyncPlan["monitorsUpdate"] = [];
+  const monitorsDelete: SyncPlan["monitorsDelete"] = [];
+  const unmanagedMonitors: SyncPlan["unmanagedMonitors"] = [];
+  const managedMonitorConflicts: SyncPlan["managedMonitorConflicts"] = [];
   let monitorOrder: string[] | null = null;
 
   if (spec.monitors !== undefined) {
-    const currentMonitorsById = new Map(current.monitors.map((m) => [m.id, m]));
+    const byId = new Map(current.monitors.map((m) => [m.id, m]));
     const declaredSet = new Set<string>();
-    const declaredOrderIds: string[] = [];
+    const declaredOrder: string[] = [];
 
     for (const desired of spec.monitors) {
       declaredSet.add(desired.id);
-      const existing = currentMonitorsById.get(desired.id);
+      const existing = byId.get(desired.id);
       if (!existing) {
         monitorsCreate.push(desired);
-        declaredOrderIds.push(desired.id);
+        declaredOrder.push(desired.id);
 
         continue;
       }
@@ -302,7 +254,7 @@ export function computeSyncPlan(
 
         continue;
       }
-      declaredOrderIds.push(desired.id);
+      declaredOrder.push(desired.id);
       const changes = diffMonitor(existing, desired);
       if (changes.length > 0) {
         monitorsUpdate.push({ monitor: desired, changes });
@@ -314,44 +266,25 @@ export function computeSyncPlan(
       if (declaredSet.has(existing.id) || existing.managed_by_node_id) {
         continue;
       }
+      const ref = { id: existing.id, name: existing.name };
       if (prune) {
-        monitorsDelete.push({ id: existing.id, name: existing.name });
+        monitorsDelete.push(ref);
         deletedSet.add(existing.id);
       } else {
-        unmanagedMonitors.push({ id: existing.id, name: existing.name });
+        unmanagedMonitors.push(ref);
       }
     }
 
-    const survivingExistingIds = current.monitors
+    const surviving = current.monitors
       .map((m) => m.id)
       .filter((id) => !deletedSet.has(id));
-    const orderWithoutReorder = [
-      ...survivingExistingIds,
-      ...monitorsCreate.map((m) => m.id),
-    ];
-    const desiredMonitorOrder = [
-      ...declaredOrderIds,
-      ...survivingExistingIds.filter((id) => !declaredSet.has(id)),
-    ];
-    if (
-      desiredMonitorOrder.length > 0 &&
-      !sameOrder(orderWithoutReorder, desiredMonitorOrder)
-    ) {
-      monitorOrder = desiredMonitorOrder;
-    }
+    monitorOrder = computeReorder(
+      [...surviving, ...monitorsCreate.map((m) => m.id)],
+      declaredOrder,
+      surviving,
+      declaredSet,
+    );
   }
-
-  const hasChanges =
-    settingsPatch !== null ||
-    nodePatches.length > 0 ||
-    nodeOrder !== null ||
-    monitorsCreate.length > 0 ||
-    monitorsUpdate.length > 0 ||
-    monitorsDelete.length > 0 ||
-    monitorOrder !== null;
-
-  const hasConflicts =
-    managedNodeConflicts.length > 0 || managedMonitorConflicts.length > 0;
 
   return {
     settingsPatch,
@@ -365,8 +298,16 @@ export function computeSyncPlan(
     unmanagedMonitors,
     managedMonitorConflicts,
     monitorOrder,
-    hasChanges,
-    hasConflicts,
+    hasChanges:
+      settingsPatch !== null ||
+      nodePatches.length > 0 ||
+      nodeOrder !== null ||
+      monitorsCreate.length > 0 ||
+      monitorsUpdate.length > 0 ||
+      monitorsDelete.length > 0 ||
+      monitorOrder !== null,
+    hasConflicts:
+      managedNodeConflicts.length > 0 || managedMonitorConflicts.length > 0,
   };
 }
 
@@ -376,101 +317,106 @@ export function renderSyncPlan(
   options: { dryRun?: boolean } = {},
 ): string {
   const lines: string[] = [];
-
-  if (plan.settingsPatch) {
-    lines.push(renderSection(theme, "Settings"));
-    lines.push(
-      `  ${theme.warn("~")} auto_register ${theme.muted("->")} ${theme.bold(String(plan.settingsPatch.auto_register))}`,
-    );
-  }
-
-  if (
-    plan.nodePatches.length > 0 ||
-    plan.nodeOrder !== null ||
-    plan.missingNodes.length > 0 ||
-    plan.managedNodeConflicts.length > 0
-  ) {
-    lines.push(renderSection(theme, "Nodes"));
-    for (const item of plan.nodePatches) {
-      lines.push(
-        `  ${theme.warn("~")} ${theme.bold(item.id)}  ${theme.muted(item.changes.join(", "))}`,
-      );
-    }
-    if (plan.nodeOrder) {
-      lines.push(
-        `  ${theme.warn("~")} ${theme.bold("order")}  ${theme.muted(plan.nodeOrder.join(" -> "))}`,
-      );
-    }
-    for (const id of plan.missingNodes) {
-      lines.push(
-        `  ${theme.warn("!")} ${theme.bold(id)}  ${theme.muted("not registered on hub (skipped)")}`,
-      );
-    }
-    for (const conflict of plan.managedNodeConflicts) {
-      lines.push(
-        `  ${theme.error("!")} ${theme.bold(conflict.id)}  ${theme.error(`is_public is managed by agent (current=${conflict.current}, declared=${conflict.declared})`)}`,
-      );
+  const row = (mark: string, id: string, detail: string) =>
+    `  ${mark} ${id}  ${detail}`;
+  function pushSection(title: string, items: string[]) {
+    if (items.length > 0) {
+      lines.push(renderSection(theme, title), ...items);
     }
   }
+  const orderRow = (ids: string[] | null) =>
+    ids
+      ? [
+          row(
+            theme.warn("~"),
+            theme.bold("order"),
+            theme.muted(ids.join(" -> ")),
+          ),
+        ]
+      : [];
 
-  if (
-    plan.monitorsCreate.length > 0 ||
-    plan.monitorsUpdate.length > 0 ||
-    plan.monitorsDelete.length > 0 ||
-    plan.monitorOrder !== null ||
-    plan.unmanagedMonitors.length > 0 ||
-    plan.managedMonitorConflicts.length > 0
-  ) {
-    lines.push(renderSection(theme, "Monitors"));
-    for (const mon of plan.monitorsCreate) {
-      lines.push(
-        `  ${theme.success("+")} ${theme.bold(mon.id)}  ${mon.name} ${theme.muted(`(${mon.method} ${mon.url})`)}`,
-      );
-    }
-    for (const { monitor, changes } of plan.monitorsUpdate) {
-      lines.push(
-        `  ${theme.warn("~")} ${theme.bold(monitor.id)}  ${monitor.name}`,
-      );
-      for (const change of changes) {
-        lines.push(`      ${theme.muted(change)}`);
-      }
-    }
-    for (const mon of plan.monitorsDelete) {
-      lines.push(
-        `  ${theme.error("-")} ${theme.bold(mon.id)}  ${theme.muted(mon.name)}`,
-      );
-    }
-    if (plan.monitorOrder) {
-      lines.push(
-        `  ${theme.warn("~")} ${theme.bold("order")}  ${theme.muted(plan.monitorOrder.join(" -> "))}`,
-      );
-    }
-    for (const mon of plan.unmanagedMonitors) {
-      lines.push(
-        `  ${theme.muted("?")} ${theme.muted(mon.id)}  ${theme.muted(`${mon.name} (unmanaged; pass --prune to remove)`)}`,
-      );
-    }
-    for (const conflict of plan.managedMonitorConflicts) {
-      lines.push(
-        `  ${theme.error("!")} ${theme.bold(conflict.id)}  ${theme.error(`managed by node "${conflict.nodeId}"`)}`,
-      );
-    }
-  }
+  pushSection(
+    "Settings",
+    plan.settingsPatch
+      ? [
+          `  ${theme.warn("~")} auto_register ${theme.muted("->")} ${theme.bold(String(plan.settingsPatch.auto_register))}`,
+        ]
+      : [],
+  );
+
+  pushSection("Nodes", [
+    ...plan.nodePatches.map((item) =>
+      row(
+        theme.warn("~"),
+        theme.bold(item.id),
+        theme.muted(item.changes.join(", ")),
+      ),
+    ),
+    ...orderRow(plan.nodeOrder),
+    ...plan.missingNodes.map((id) =>
+      row(
+        theme.warn("!"),
+        theme.bold(id),
+        theme.muted("not registered on hub (skipped)"),
+      ),
+    ),
+    ...plan.managedNodeConflicts.map((c) =>
+      row(
+        theme.error("!"),
+        theme.bold(c.id),
+        theme.error(
+          `is_public is managed by agent (current=${c.current}, declared=${c.declared})`,
+        ),
+      ),
+    ),
+  ]);
+
+  pushSection("Monitors", [
+    ...plan.monitorsCreate.map((m) =>
+      row(
+        theme.success("+"),
+        theme.bold(m.id),
+        `${m.name} ${theme.muted(`(${m.method} ${m.url})`)}`,
+      ),
+    ),
+    ...plan.monitorsUpdate.flatMap(({ monitor, changes }) => [
+      row(theme.warn("~"), theme.bold(monitor.id), monitor.name),
+      ...changes.map((c) => `      ${theme.muted(c)}`),
+    ]),
+    ...plan.monitorsDelete.map((m) =>
+      row(theme.error("-"), theme.bold(m.id), theme.muted(m.name)),
+    ),
+    ...orderRow(plan.monitorOrder),
+    ...plan.unmanagedMonitors.map((m) =>
+      row(
+        theme.muted("?"),
+        theme.muted(m.id),
+        theme.muted(`${m.name} (unmanaged; pass --prune to remove)`),
+      ),
+    ),
+    ...plan.managedMonitorConflicts.map((c) =>
+      row(
+        theme.error("!"),
+        theme.bold(c.id),
+        theme.error(`managed by node "${c.nodeId}"`),
+      ),
+    ),
+  ]);
 
   if (!plan.hasChanges && !plan.hasConflicts) {
     lines.push(
       `\n  ${theme.success("✓")} ${theme.bold("In sync")} ${theme.muted("(0 changes)")}`,
     );
   } else if (options.dryRun) {
+    const updateCount =
+      plan.monitorsUpdate.length +
+      plan.nodePatches.length +
+      (plan.settingsPatch ? 1 : 0);
     const parts = [
       plan.monitorsCreate.length > 0 && `+${plan.monitorsCreate.length} create`,
-      plan.monitorsUpdate.length +
-        plan.nodePatches.length +
-        (plan.settingsPatch ? 1 : 0) >
-        0 &&
-        `~${plan.monitorsUpdate.length + plan.nodePatches.length + (plan.settingsPatch ? 1 : 0)} update`,
+      updateCount > 0 && `~${updateCount} update`,
       plan.monitorsDelete.length > 0 && `-${plan.monitorsDelete.length} delete`,
-      (plan.nodeOrder ? 1 : 0) + (plan.monitorOrder ? 1 : 0) > 0 && "reorder",
+      (plan.nodeOrder !== null || plan.monitorOrder !== null) && "reorder",
     ].filter(Boolean);
     lines.push(
       `\n  ${theme.warn("Dry run:")} ${parts.join(", ")} ${theme.muted("(no changes applied)")}`,
@@ -495,14 +441,13 @@ export async function applySyncPlan(
     ];
 
     throw new Error(
-      `Sync blocked by agent-managed conflicts: ${reasons.join("; ")}`,
+      `Sync refused due to agent-managed conflicts: ${reasons.join("; ")}`,
     );
   }
 
   if (plan.settingsPatch) {
     await request("PATCH", "/api/v1/admin/settings", plan.settingsPatch);
   }
-
   for (const item of plan.nodePatches) {
     await request(
       "PATCH",
@@ -510,26 +455,21 @@ export async function applySyncPlan(
       item.patch,
     );
   }
-
   if (plan.nodeOrder) {
     await request("PUT", "/api/v1/admin/nodes/order", { ids: plan.nodeOrder });
   }
-
-  for (const mon of plan.monitorsCreate) {
+  for (const mon of [
+    ...plan.monitorsCreate,
+    ...plan.monitorsUpdate.map((u) => u.monitor),
+  ]) {
     await request("POST", "/api/v1/admin/monitors", mon);
   }
-
-  for (const { monitor } of plan.monitorsUpdate) {
-    await request("POST", "/api/v1/admin/monitors", monitor);
-  }
-
   for (const mon of plan.monitorsDelete) {
     await request(
       "DELETE",
       `/api/v1/admin/monitors/${encodeURIComponent(mon.id)}`,
     );
   }
-
   if (plan.monitorOrder) {
     await request("PUT", "/api/v1/admin/monitors/order", {
       ids: plan.monitorOrder,

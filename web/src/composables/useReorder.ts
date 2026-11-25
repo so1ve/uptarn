@@ -1,5 +1,8 @@
 import { ref } from "vue";
 
+import { useUptarnStore } from "../lib/store.ts";
+import { useAction } from "./useAction.ts";
+
 function reorderIds(
   ids: readonly string[],
   fromId: string,
@@ -83,4 +86,21 @@ export function useReorder(
   });
 
   return { dragAttrs, moveBy };
+}
+
+export function usePersistedReorder(
+  kind: "nodes" | "monitors",
+  getIds: () => readonly string[],
+  overClass?: string,
+) {
+  const { run } = useAction();
+  const { persistOrder } = useUptarnStore();
+  const label = kind === "nodes" ? "node" : "monitor";
+  function commit(ids: string[]) {
+    void run(`reorder-${kind}`, `Failed to save ${label} order`, () =>
+      persistOrder(kind, ids),
+    );
+  }
+
+  return { ...useReorder(getIds, commit, overClass), commit };
 }

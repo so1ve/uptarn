@@ -1,44 +1,34 @@
 <script setup lang="ts">
 import { computed } from "vue";
 
+import EmptyState from "../components/ui/EmptyState.vue";
+import MuteButton from "../components/ui/MuteButton.vue";
+import MutedBadge from "../components/ui/MutedBadge.vue";
 import PageHeader from "../components/ui/PageHeader.vue";
 import StatusDot from "../components/ui/StatusDot.vue";
-import type { IncidentSummary } from "../lib/index.ts";
 import {
   deliveryStatus,
   formatAge,
   formatDuration,
-  formatRemaining,
   incidentRoute,
   splitIncident,
   targetMutedUntil,
-  useAction,
   useSnapshot,
 } from "../lib/index.ts";
 
 const snap = useSnapshot();
-const { busy, mute } = useAction();
 
 const openCount = computed(
   () => snap.value.incidents.filter((i) => i.state === "open").length,
 );
 
 const incidentRows = computed(() =>
-  snap.value.incidents.map((inc) => {
-    const mutedUntil = targetMutedUntil(
-      snap.value,
-      inc.target_type,
-      inc.target_id,
-    );
-
-    return {
-      inc,
-      ...splitIncident(inc),
-      to: incidentRoute(inc),
-      mutedUntil,
-      isMuted: mutedUntil > snap.value.now,
-    };
-  }),
+  snap.value.incidents.map((inc) => ({
+    inc,
+    ...splitIncident(inc),
+    to: incidentRoute(inc),
+    mutedUntil: targetMutedUntil(snap.value, inc.target_type, inc.target_id),
+  })),
 );
 
 const eventRows = computed(() =>
@@ -47,15 +37,6 @@ const eventRows = computed(() =>
     delivery: deliveryStatus(ev.delivery),
   })),
 );
-
-const onToggleMute = (inc: IncidentSummary, isMuted: boolean) =>
-  mute(
-    inc.incident_key,
-    inc.target_type,
-    inc.target_id,
-    splitIncident(inc).title,
-    isMuted ? 0 : 3600,
-  );
 </script>
 
 <template>
@@ -72,12 +53,9 @@ const onToggleMute = (inc: IncidentSummary, isMuted: boolean) =>
         </span>
       </div>
 
-      <div
-        v-if="incidentRows.length === 0"
-        class="rounded-xl border border-default bg-surface px-5 py-6 text-sm text-muted"
-      >
+      <EmptyState v-if="incidentRows.length === 0">
         No active incidents.
-      </div>
+      </EmptyState>
 
       <ul
         v-else
@@ -85,7 +63,7 @@ const onToggleMute = (inc: IncidentSummary, isMuted: boolean) =>
         :class="openCount > 0 ? 'bg-red-500/8' : 'bg-amber-500/10'"
       >
         <li
-          v-for="{ inc, kind, title, to, mutedUntil, isMuted } in incidentRows"
+          v-for="{ inc, kind, title, to, mutedUntil } in incidentRows"
           :key="inc.incident_key"
           class="flex flex-wrap items-center justify-between gap-3 px-3.5 py-3"
         >
@@ -100,9 +78,7 @@ const onToggleMute = (inc: IncidentSummary, isMuted: boolean) =>
             >
               {{ title }}
             </RouterLink>
-            <UBadge v-if="isMuted" color="warning" size="xs" variant="subtle">
-              Muted {{ formatRemaining(mutedUntil, snap.now) }}
-            </UBadge>
+            <MutedBadge :now="snap.now" :until="mutedUntil" />
             <span class="font-mono text-xs break-all text-muted">
               {{ inc.last_summary }}
             </span>
@@ -116,15 +92,13 @@ const onToggleMute = (inc: IncidentSummary, isMuted: boolean) =>
                   : formatDuration(snap.now - inc.opened_at)
               }}
             </span>
-            <UButton
-              color="neutral"
-              :loading="busy === inc.incident_key"
-              size="xs"
-              variant="ghost"
-              @click="onToggleMute(inc, isMuted)"
-            >
-              {{ isMuted ? "Unmute" : "Mute 1h" }}
-            </UButton>
+            <MuteButton
+              :label="title"
+              :muted-until
+              :now="snap.now"
+              :target-id="inc.target_id"
+              :target-type="inc.target_type"
+            />
           </div>
         </li>
       </ul>
@@ -138,12 +112,9 @@ const onToggleMute = (inc: IncidentSummary, isMuted: boolean) =>
         </span>
       </div>
 
-      <div
-        v-if="eventRows.length === 0"
-        class="rounded-xl border border-default bg-surface px-5 py-6 text-sm text-muted"
-      >
+      <EmptyState v-if="eventRows.length === 0">
         No incident history yet.
-      </div>
+      </EmptyState>
 
       <ol v-else class="divide-y divide-default border-y border-default">
         <li

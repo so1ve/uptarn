@@ -9,7 +9,7 @@ import { createApp } from "./app.ts";
 import { loadConfig } from "./config.ts";
 import { applyMigrations, openNodeSqlite } from "./db/node.ts";
 import { runTick } from "./domain/index.ts";
-import { errorMessage } from "./http.ts";
+import { errorMessage } from "./shared/index.ts";
 
 const DIST_DIR = path.resolve(import.meta.dirname, "../web/dist");
 

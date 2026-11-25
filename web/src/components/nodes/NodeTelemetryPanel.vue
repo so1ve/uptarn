@@ -1,8 +1,10 @@
 <script setup lang="ts">
+import { createReusableTemplate } from "@vueuse/core";
 import { computed, ref } from "vue";
 
 import type {
   CheckSnapshot,
+  DotStatus,
   NodeSummary,
   SeriesSnapshot,
 } from "../../lib/index.ts";
@@ -21,6 +23,11 @@ const props = defineProps<{
 }>();
 
 const detailOverrides = ref<Record<string, boolean>>({});
+const [DefineRowLabel, RowLabel] = createReusableTemplate<{
+  status: DotStatus;
+  label: string;
+  group?: string;
+}>();
 
 const hasStorage = computed(() => props.node.mounts.length > 0);
 const hasChecksOrSeries = computed(
@@ -51,6 +58,22 @@ function scalarSummaryNote(series: SeriesSnapshot): string | null {
 </script>
 
 <template>
+  <DefineRowLabel v-slot="{ status, label, group }">
+    <div class="flex min-w-0 items-center gap-2">
+      <StatusDot :status />
+      <span class="truncate font-medium">{{ label }}</span>
+      <UBadge
+        v-if="group"
+        class="shrink-0"
+        color="neutral"
+        size="xs"
+        variant="subtle"
+      >
+        {{ group }}
+      </UBadge>
+    </div>
+  </DefineRowLabel>
+
   <section
     v-if="hasStorage || hasChecksOrSeries"
     class="grid grid-cols-1 items-start gap-8"
@@ -85,26 +108,19 @@ function scalarSummaryNote(series: SeriesSnapshot): string | null {
       <h2 class="text-sm font-semibold">Checks</h2>
       <div class="divide-y divide-default border-y border-default">
         <div v-for="c in node.checks" :key="c.key">
-          <button
-            v-if="c.detail"
-            :aria-expanded="isDetailOpen(c)"
-            class="group -mx-2 flex w-[calc(100%+1rem)] cursor-pointer items-center justify-between gap-3 rounded-md px-2 py-3.5 text-left text-[13px] transition-colors hover:bg-elevated/60 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary"
-            type="button"
-            @click="toggleDetail(c)"
+          <component
+            :is="c.detail ? 'button' : 'div'"
+            :aria-expanded="c.detail ? isDetailOpen(c) : undefined"
+            class="flex items-center justify-between gap-3 py-3.5 text-[13px]"
+            :class="
+              c.detail
+                ? 'group -mx-2 w-[calc(100%+1rem)] cursor-pointer rounded-md px-2 text-left transition-colors hover:bg-elevated/60 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary'
+                : ''
+            "
+            :type="c.detail ? 'button' : undefined"
+            @click="c.detail && toggleDetail(c)"
           >
-            <div class="flex min-w-0 items-center gap-2">
-              <StatusDot :status="c.status" />
-              <span class="truncate font-medium">{{ c.label }}</span>
-              <UBadge
-                v-if="c.group"
-                class="shrink-0"
-                color="neutral"
-                size="xs"
-                variant="subtle"
-              >
-                {{ c.group }}
-              </UBadge>
-            </div>
+            <RowLabel :group="c.group" :label="c.label" :status="c.status" />
             <div class="flex shrink-0 items-center gap-2">
               <span
                 class="font-mono text-xs"
@@ -113,6 +129,7 @@ function scalarSummaryNote(series: SeriesSnapshot): string | null {
                 {{ c.summary ?? c.status }}
               </span>
               <span
+                v-if="c.detail"
                 aria-hidden="true"
                 class="inline-flex size-6 items-center justify-center rounded-md text-dimmed transition-colors group-hover:text-default"
               >
@@ -122,40 +139,13 @@ function scalarSummaryNote(series: SeriesSnapshot): string | null {
                   name="i-lucide-chevron-down"
                 />
               </span>
-            </div>
-          </button>
-
-          <div
-            v-else
-            class="flex items-center justify-between gap-3 py-3.5 text-[13px]"
-          >
-            <div class="flex min-w-0 items-center gap-2">
-              <StatusDot :status="c.status" />
-              <span class="truncate font-medium">{{ c.label }}</span>
-              <UBadge
-                v-if="c.group"
-                class="shrink-0"
-                color="neutral"
-                size="xs"
-                variant="subtle"
-              >
-                {{ c.group }}
-              </UBadge>
-            </div>
-            <div class="flex shrink-0 items-center gap-2">
               <span
-                class="font-mono text-xs"
-                :class="statusTextClass(c.status)"
-              >
-                {{ c.summary ?? c.status }}
-              </span>
-              <span
-                v-if="hasAnyCheckDetail"
+                v-else-if="hasAnyCheckDetail"
                 aria-hidden="true"
                 class="size-6 shrink-0"
               />
             </div>
-          </div>
+          </component>
 
           <pre
             v-if="c.detail && isDetailOpen(c)"
@@ -169,19 +159,11 @@ function scalarSummaryNote(series: SeriesSnapshot): string | null {
           class="space-y-1.5 py-3.5 text-[13px]"
         >
           <div class="flex items-center justify-between gap-3">
-            <div class="flex min-w-0 items-center gap-2">
-              <StatusDot :status="s.status ?? 'pending'" />
-              <span class="truncate font-medium">{{ s.label }}</span>
-              <UBadge
-                v-if="s.group"
-                class="shrink-0"
-                color="neutral"
-                size="xs"
-                variant="subtle"
-              >
-                {{ s.group }}
-              </UBadge>
-            </div>
+            <RowLabel
+              :group="s.group"
+              :label="s.label"
+              :status="s.status ?? 'pending'"
+            />
             <div class="flex shrink-0 items-center gap-2">
               <span
                 class="font-mono text-xs tabular-nums"

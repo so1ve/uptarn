@@ -1,31 +1,31 @@
 <script setup lang="ts">
-import { useStorage } from "@vueuse/core";
 import { computed, reactive, ref } from "vue";
 
 import MonitorModal from "../components/modals/MonitorModal.vue";
 import MonitorRow from "../components/monitors/MonitorRow.vue";
-import MonitorWindowToggle from "../components/monitors/MonitorWindowToggle.vue";
-import EChart from "../components/ui/EChart.vue";
+import ChartCard from "../components/ui/ChartCard.vue";
 import EmptyState from "../components/ui/EmptyState.vue";
+import MuteButton from "../components/ui/MuteButton.vue";
 import PageHeader from "../components/ui/PageHeader.vue";
-import type { MonitorSummary, MonitorWindow } from "../lib/index.ts";
+import SegmentedControl from "../components/ui/SegmentedControl.vue";
+import type { MonitorSummary } from "../lib/index.ts";
 import {
+  MONITOR_WINDOWS,
   buildMonitorLatencyOption,
   monitorLatencyStats,
-  useAction,
-  useReorder,
+  useMonitorWindow,
+  usePersistedReorder,
   useSnapshot,
   useUptarnStore,
 } from "../lib/index.ts";
 
 const snap = useSnapshot();
-const { busy, run, mute } = useAction();
-const { isDark, persistOrder } = useUptarnStore();
+const { isDark } = useUptarnStore();
 
 const monitorModalOpen = ref(false);
 const editingMonitor = ref<MonitorSummary | null>(null);
 const expandedIds = reactive(new Set<string>());
-const monitorWindow = useStorage<MonitorWindow>("uptarn:monitor-window", "24h");
+const monitorWindow = useMonitorWindow();
 
 const rows = computed(() =>
   snap.value.monitors.map((mon) => ({
@@ -43,14 +43,8 @@ const rows = computed(() =>
 );
 
 const canReorder = computed(() => snap.value.monitors.length > 1);
-
-const { dragAttrs, moveBy } = useReorder(
-  () => snap.value.monitors.map((m) => m.id),
-  (ids) => {
-    void run("reorder", "Failed to save monitor order", () =>
-      persistOrder("monitors", ids),
-    );
-  },
+const { dragAttrs, moveBy } = usePersistedReorder("monitors", () =>
+  snap.value.monitors.map((m) => m.id),
 );
 
 function toggleExpand(id: string) {
@@ -68,21 +62,18 @@ function openMonitorModal(mon: MonitorSummary | null) {
   editingMonitor.value = mon;
   monitorModalOpen.value = true;
 }
-
-const onToggleMute = (mon: MonitorSummary) =>
-  mute(
-    mon.id,
-    "monitor",
-    mon.id,
-    mon.name,
-    mon.muted_until > snap.value.now ? 0 : 3600,
-  );
 </script>
 
 <template>
   <div class="space-y-6">
     <PageHeader title="Monitors">
-      <MonitorWindowToggle v-if="rows.length > 0" v-model="monitorWindow" />
+      <SegmentedControl
+        v-if="rows.length > 0"
+        v-model="monitorWindow"
+        aria-label="Uptime window"
+        mono
+        :options="MONITOR_WINDOWS"
+      />
       <UButton
         color="primary"
         icon="i-lucide-plus"
@@ -113,30 +104,30 @@ const onToggleMute = (mon: MonitorSummary) =>
           @toggle="toggleExpand(mon.id)"
         />
 
-        <div
+        <ChartCard
           v-if="expandedIds.has(mon.id)"
-          class="mb-4 rounded-xl border border-default bg-surface p-4 sm:ml-6"
+          class="mb-4 sm:ml-6"
+          compact
+          empty-text="No samples yet."
+          height="180px"
+          :option="chartOption"
         >
-          <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <template #title>
             <span class="font-mono text-xs text-muted tabular-nums">
               {{ stats ?? "" }}
             </span>
-            <UButton
-              color="neutral"
-              :loading="busy === mon.id"
-              size="xs"
+          </template>
+          <template #meta>
+            <MuteButton
+              :label="mon.name"
+              :muted-until="mon.muted_until"
+              :now="snap.now"
+              :target-id="mon.id"
+              target-type="monitor"
               variant="soft"
-              @click="onToggleMute(mon)"
-            >
-              {{ mon.muted_until > snap.now ? "Unmute" : "Mute 1h" }}
-            </UButton>
-          </div>
-
-          <EChart v-if="chartOption" height="180px" :option="chartOption" />
-          <p v-else class="py-4 text-center text-xs text-dimmed">
-            No samples yet.
-          </p>
-        </div>
+            />
+          </template>
+        </ChartCard>
       </div>
     </div>
 

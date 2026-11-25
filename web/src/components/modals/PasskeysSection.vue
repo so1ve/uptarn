@@ -57,19 +57,16 @@ const onDeletePasskey = (pk: PasskeySummary) =>
     <div class="flex flex-wrap items-center gap-2 text-sm">
       <span class="mr-1 text-muted">Methods</span>
       <UBadge
-        :color="snap.settings.auth.password_enabled ? 'success' : 'neutral'"
+        v-for="[name, on] in [
+          ['Password', snap.settings.auth.password_enabled],
+          ['Cloudflare Access', snap.settings.auth.cf_access_enabled],
+        ] as const"
+        :key="name"
+        :color="on ? 'success' : 'neutral'"
         size="sm"
         variant="subtle"
       >
-        Password {{ snap.settings.auth.password_enabled ? "on" : "off" }}
-      </UBadge>
-      <UBadge
-        :color="snap.settings.auth.cf_access_enabled ? 'success' : 'neutral'"
-        size="sm"
-        variant="subtle"
-      >
-        Cloudflare Access
-        {{ snap.settings.auth.cf_access_enabled ? "on" : "off" }}
+        {{ name }} {{ on ? "on" : "off" }}
       </UBadge>
     </div>
 

@@ -8,24 +8,20 @@ import NodeTable from "../components/nodes/NodeTable.vue";
 import DragHandle from "../components/ui/DragHandle.vue";
 import EmptyState from "../components/ui/EmptyState.vue";
 import PageHeader from "../components/ui/PageHeader.vue";
-import StatusDot from "../components/ui/StatusDot.vue";
+import SegmentedControl from "../components/ui/SegmentedControl.vue";
+import StatusBanner from "../components/ui/StatusBanner.vue";
 import {
   splitIncident,
-  useAction,
-  useReorder,
+  usePersistedReorder,
   useSnapshot,
-  useUptarnStore,
 } from "../lib/index.ts";
 
 const VIEW_MODES = [
-  { id: "cards", label: "Cards", icon: "i-lucide-layout-grid" },
-  { id: "table", label: "Table", icon: "i-lucide-list" },
-] as const;
+  { value: "cards" as const, label: "Cards", icon: "i-lucide-layout-grid" },
+  { value: "table" as const, label: "Table", icon: "i-lucide-list" },
+];
 
 const snap = useSnapshot();
-const { run } = useAction();
-const { persistOrder } = useUptarnStore();
-
 const nodesView = useStorage<"cards" | "table">("uptarn:nodes-view", "cards");
 const nodeFilter = ref("");
 const addNodeOpen = ref(false);
@@ -48,15 +44,13 @@ const canReorder = computed(
   () => nodeFilter.value.trim() === "" && snap.value.nodes.length > 1,
 );
 
-function onReorderNodes(ids: string[]) {
-  void run("reorder-nodes", "Failed to save node order", () =>
-    persistOrder("nodes", ids),
-  );
-}
-
-const { dragAttrs, moveBy } = useReorder(
+const {
+  dragAttrs,
+  moveBy,
+  commit: onReorderNodes,
+} = usePersistedReorder(
+  "nodes",
   () => snap.value.nodes.map((n) => n.id),
-  onReorderNodes,
   "ring-2 ring-primary/50",
 );
 
@@ -73,36 +67,22 @@ const incidentHeadline = computed(() => {
 
 <template>
   <div class="space-y-6">
-    <RouterLink
+    <StatusBanner
       v-if="snap.incidents.length > 0"
-      class="flex flex-wrap items-center justify-between gap-3 rounded-xl px-4 py-2.5 text-sm transition-opacity hover:opacity-90"
-      :class="openIncidents > 0 ? 'bg-red-500/10' : 'bg-amber-500/10'"
+      :title="`${snap.incidents.length} ${snap.incidents.length === 1 ? 'active incident' : 'active incidents'}`"
       to="/admin/incidents"
+      :tone="openIncidents > 0 ? 'fail' : 'warn'"
     >
-      <div class="flex min-w-0 items-center gap-2.5">
-        <StatusDot :status="openIncidents > 0 ? 'fail' : 'warn'" />
+      <span class="truncate text-xs text-muted">{{ incidentHeadline }}</span>
+      <template #trailing>
         <span
-          class="font-semibold whitespace-nowrap"
-          :class="
-            openIncidents > 0
-              ? 'text-red-600 dark:text-red-400'
-              : 'text-amber-600 dark:text-amber-400'
-          "
+          class="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-muted"
         >
-          {{ snap.incidents.length }}
-          {{
-            snap.incidents.length === 1 ? "active incident" : "active incidents"
-          }}
+          View incidents
+          <UIcon class="size-3.5" name="i-lucide-arrow-right" />
         </span>
-        <span class="truncate text-xs text-muted">{{ incidentHeadline }}</span>
-      </div>
-      <span
-        class="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-muted"
-      >
-        View incidents
-        <UIcon class="size-3.5" name="i-lucide-arrow-right" />
-      </span>
-    </RouterLink>
+      </template>
+    </StatusBanner>
 
     <PageHeader title="Nodes">
       <UInput
@@ -113,24 +93,12 @@ const incidentHeadline = computed(() => {
         placeholder="Filter…"
         size="xs"
       />
-      <div
+      <SegmentedControl
         v-if="snap.nodes.length > 0"
+        v-model="nodesView"
         aria-label="Node layout"
-        class="inline-flex items-center rounded-lg bg-muted p-0.5"
-        role="group"
-      >
-        <UButton
-          v-for="m in VIEW_MODES"
-          :key="m.id"
-          color="neutral"
-          :icon="m.icon"
-          size="xs"
-          :variant="nodesView === m.id ? 'solid' : 'ghost'"
-          @click="nodesView = m.id"
-        >
-          {{ m.label }}
-        </UButton>
-      </div>
+        :options="VIEW_MODES"
+      />
       <UButton
         color="primary"
         icon="i-lucide-plus"

@@ -14,6 +14,7 @@ import {
   statusTextClass,
   summarizeDisk,
 } from "../../lib/index.ts";
+import MutedBadge from "../ui/MutedBadge.vue";
 import SparkMetric from "../ui/SparkMetric.vue";
 import StatusDot from "../ui/StatusDot.vue";
 import UsageBar from "../ui/UsageBar.vue";
@@ -25,7 +26,6 @@ const props = defineProps<{
 
 const offline = computed(() => props.node.overall_status === "offline");
 const pending = computed(() => props.node.overall_status === "pending");
-const isMuted = computed(() => props.node.muted_until > props.now);
 
 const cpuPct = computed(() => props.node.system?.cpu_pct);
 const memPct = computed(() => memPercent(props.node.system));
@@ -80,15 +80,7 @@ const memCaption = computed(() =>
           >
             Private
           </UBadge>
-          <UBadge
-            v-if="isMuted"
-            class="shrink-0"
-            color="warning"
-            size="xs"
-            variant="subtle"
-          >
-            Muted
-          </UBadge>
+          <MutedBadge compact :now :until="node.muted_until" />
         </div>
 
         <span

@@ -3,14 +3,40 @@ import type {
   MountSnapshot,
   SeriesUnit,
   SystemSnapshot,
+  TargetType,
 } from "./protocol.ts";
 
 export const unixNow = (): number => Math.floor(Date.now() / 1000);
 
+export const errorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+export const worstHealthStatus = (
+  statuses: readonly HealthStatus[],
+): HealthStatus =>
+  statuses.includes("fail")
+    ? "fail"
+    : statuses.includes("warn")
+      ? "warn"
+      : "ok";
+
 export const round1 = (n: number): number => Math.round(n * 10) / 10;
+
+export const clampPct = (value: number): number =>
+  Math.min(100, Math.max(0, value));
 
 export const percent = (used: number, total: number): number | null =>
   total > 0 ? (used / total) * 100 : null;
+
+const HTML_ESCAPES: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+};
+
+export const escapeHtml = (text: string): string =>
+  text.replace(/[&<>"]/g, (ch) => HTML_ESCAPES[ch]);
 
 export const memPercent = (system: SystemSnapshot | null): number | null =>
   system?.mem_used_bytes !== undefined && system.mem_total_bytes !== undefined
@@ -98,16 +124,16 @@ export const formatClock = (ts: number): string =>
     minute: "2-digit",
   });
 
-export function formatTimestamp(ts: number, showDate = false): string {
-  if (!showDate) {
-    return formatClock(ts);
-  }
+export function formatDateShort(ts: number): string {
   const d = new Date(ts * 1000);
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
 
-  return `${mm}/${dd} ${formatClock(ts)}`;
+  return `${mm}/${dd}`;
 }
+
+export const formatTimestamp = (ts: number, showDate = false): string =>
+  showDate ? `${formatDateShort(ts)} ${formatClock(ts)}` : formatClock(ts);
 
 export function formatSeriesValue(value: number, unit: SeriesUnit): string {
   if (!Number.isFinite(value)) {
@@ -138,6 +164,52 @@ export function formatSeriesValue(value: number, unit: SeriesUnit): string {
   }
 }
 
+export const formatSeriesWithLoss = (
+  value: number,
+  unit: SeriesUnit,
+  lossPct?: number,
+): string =>
+  `${formatSeriesValue(value, unit)}${lossPct && lossPct > 0 ? `, ${Math.round(lossPct)}% loss` : ""}`;
+
+export function splitAlertLabel(
+  targetType: TargetType,
+  label: string,
+): { kind: string; scope: string | null; subject: string } {
+  if (targetType === "monitor") {
+    return {
+      kind: "HTTP",
+      scope: null,
+      subject: label.replace(/^HTTP:\s*/i, ""),
+    };
+  }
+  if (targetType === "job") {
+    return {
+      kind: "Job",
+      scope: "Job",
+      subject: label.replace(/^Job:\s*/i, ""),
+    };
+  }
+  const sep = label.indexOf(": ");
+
+  return sep > 0
+    ? {
+        kind: "Node",
+        scope: label.slice(0, sep),
+        subject: label.slice(sep + 2),
+      }
+    : { kind: "Node", scope: null, subject: label };
+}
+
+export const incidentTargetPath = (
+  targetType: TargetType,
+  targetId: string,
+): string =>
+  targetType === "node"
+    ? `/admin/nodes/${encodeURIComponent(targetId)}`
+    : targetType === "monitor"
+      ? "/admin/monitors"
+      : "/admin/jobs";
+
 export interface DiskSummary {
   label: string | null;
   used_bytes: number;
@@ -150,9 +222,7 @@ export interface DiskSummary {
 
 function singleMountSummary(m: MountSnapshot): DiskSummary {
   const pct =
-    m.total_bytes > 0
-      ? Math.min(100, Math.max(0, (m.used_bytes / m.total_bytes) * 100))
-      : null;
+    m.total_bytes > 0 ? clampPct((m.used_bytes / m.total_bytes) * 100) : null;
 
   return {
     label: m.label ?? m.path,
@@ -182,11 +252,7 @@ export function summarizeDisk(
     return singleMountSummary(mounts[0]);
   }
 
-  const status: HealthStatus = mounts.some((m) => m.status === "fail")
-    ? "fail"
-    : mounts.some((m) => m.status === "warn")
-      ? "warn"
-      : "ok";
+  const status = worstHealthStatus(mounts.map((m) => m.status));
   const sized = mounts.filter((m) => m.total_bytes > 0);
   if (sized.length === 0) {
     return {
@@ -206,7 +272,7 @@ export function summarizeDisk(
     label: null,
     used_bytes: used,
     total_bytes: total,
-    pct: Math.min(100, Math.max(0, (used / total) * 100)),
+    pct: clampPct((used / total) * 100),
     status,
     error: null,
     is_sum: true,

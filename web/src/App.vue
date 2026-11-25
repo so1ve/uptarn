@@ -33,12 +33,16 @@ watch(
   { immediate: true },
 );
 
+function loadAdminPublic() {
+  loadError.value = null;
+  void refreshPublicStatus({ force: true });
+}
+
 watch(
   isAdminPublicView,
   (active) => {
     if (active) {
-      loadError.value = null;
-      void refreshPublicStatus({ force: true });
+      loadAdminPublic();
     }
   },
   { immediate: true },
@@ -46,12 +50,10 @@ watch(
 
 function onRetry() {
   if (isAdminPublicView.value) {
-    loadError.value = null;
-    void refreshPublicStatus({ force: true });
-
-    return;
+    loadAdminPublic();
+  } else {
+    void loadState();
   }
-  void loadState();
 }
 
 onMounted(() => {
@@ -77,26 +79,19 @@ onMounted(() => {
     </div>
 
     <PublicStatusView
-      v-else-if="isAdminPublicView && publicStatus"
-      admin-preview
+      v-else-if="
+        publicStatus && (isAdminPublicView || (!snapshot && hasPublicContent))
+      "
+      :admin-preview="isAdminPublicView"
       :status="publicStatus"
     />
 
-    <div
-      v-else-if="isAdminPublicView"
-      class="grid min-h-svh place-items-center text-xs text-dimmed"
-    >
-      Loading…
-    </div>
+    <AdminShell v-else-if="snapshot && !isAdminPublicView" />
 
-    <AdminShell v-else-if="snapshot" />
-
-    <PublicStatusView
-      v-else-if="publicStatus && hasPublicContent"
+    <LoginView
+      v-else-if="!isAdminPublicView && publicStatus"
       :status="publicStatus"
     />
-
-    <LoginView v-else-if="publicStatus" :status="publicStatus" />
 
     <div v-else class="grid min-h-svh place-items-center text-xs text-dimmed">
       Loading…

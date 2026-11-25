@@ -10,17 +10,20 @@ import type {
   TargetType,
 } from "../../../src/shared/index.ts";
 import {
+  clampPct,
   formatBytes,
-  formatSeriesValue,
+  formatSeriesWithLoss,
   formatUsage,
+  incidentTargetPath,
   percent,
+  splitAlertLabel,
 } from "../../../src/shared/index.ts";
 
 export type DotStatus =
   HealthStatus | NodeSummary["overall_status"] | "pending" | "overdue";
 
 export const mountPercent = (mount: MountSnapshot): number =>
-  Math.min(100, Math.max(0, percent(mount.used_bytes, mount.total_bytes) ?? 0));
+  clampPct(percent(mount.used_bytes, mount.total_bytes) ?? 0);
 
 export function formatMountText(
   mount: MountSnapshot,
@@ -57,6 +60,15 @@ export const statusTextClass = (
       ? "text-amber-600 dark:text-amber-400"
       : okClass;
 
+export const uptimeToneClass = (pct: number | null): string =>
+  pct === null
+    ? "text-dimmed"
+    : pct >= 99
+      ? "text-emerald-600 dark:text-emerald-400"
+      : pct >= 90
+        ? "text-amber-600 dark:text-amber-400"
+        : "text-red-500 dark:text-red-400";
+
 export interface NodeIssueSummary {
   text: string;
   compact: string;
@@ -85,7 +97,7 @@ export function nodeIssueSummary(
         detail:
           s.status === "fail" && s.summary
             ? s.summary
-            : `${formatSeriesValue(s.value, s.unit)}${s.loss_pct && s.loss_pct > 0 ? `, ${Math.round(s.loss_pct)}% loss` : ""}`,
+            : formatSeriesWithLoss(s.value, s.unit, s.loss_pct),
         fail: s.status === "fail",
       })),
     ...node.checks
@@ -112,14 +124,16 @@ export function nodeIssueSummary(
 
 export type MonitorWindow = "live" | "24h" | "7d" | "15d" | "30d";
 
-export const MONITOR_WINDOWS: readonly { id: MonitorWindow; label: string }[] =
-  [
-    { id: "live", label: "Live" },
-    { id: "24h", label: "24h" },
-    { id: "7d", label: "7d" },
-    { id: "15d", label: "15d" },
-    { id: "30d", label: "30d" },
-  ];
+export const MONITOR_WINDOWS: readonly {
+  value: MonitorWindow;
+  label: string;
+}[] = [
+  { value: "live", label: "Live" },
+  { value: "24h", label: "24h" },
+  { value: "7d", label: "7d" },
+  { value: "15d", label: "15d" },
+  { value: "30d", label: "30d" },
+];
 
 export const ROLLUP_WINDOW_SPEC: Record<
   Exclude<MonitorWindow, "live">,
@@ -204,21 +218,17 @@ export function monitorLatencyStats(
   return `Min ${Math.round(Math.min(...latencies))} ms, avg ${Math.round(avg)} ms, max ${Math.round(Math.max(...latencies))} ms`;
 }
 
-export const splitIncident = (
-  inc: IncidentSummary,
-): { kind: string; title: string } =>
-  inc.target_type === "monitor"
-    ? { kind: "HTTP", title: inc.label.replace(/^HTTP:\s*/i, "") }
-    : inc.target_type === "job"
-      ? { kind: "Job", title: inc.label.replace(/^Job:\s*/i, "") }
-      : { kind: "Node", title: inc.label };
+export function splitIncident(inc: IncidentSummary): {
+  kind: string;
+  title: string;
+} {
+  const { kind, subject } = splitAlertLabel(inc.target_type, inc.label);
+
+  return { kind, title: inc.target_type === "node" ? inc.label : subject };
+}
 
 export const incidentRoute = (inc: IncidentSummary): string =>
-  inc.target_type === "node"
-    ? `/admin/nodes/${encodeURIComponent(inc.target_id)}`
-    : inc.target_type === "monitor"
-      ? "/admin/monitors"
-      : "/admin/jobs";
+  incidentTargetPath(inc.target_type, inc.target_id);
 
 export const targetMutedUntil = (
   snap: DashboardSnapshot,

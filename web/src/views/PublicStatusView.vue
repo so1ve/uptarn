@@ -1,22 +1,24 @@
 <script setup lang="ts">
-import { useStorage } from "@vueuse/core";
 import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
 
 import SignInForm from "../components/modals/SignInForm.vue";
 import MonitorRow from "../components/monitors/MonitorRow.vue";
-import MonitorWindowToggle from "../components/monitors/MonitorWindowToggle.vue";
 import EmptyState from "../components/ui/EmptyState.vue";
+import SegmentedControl from "../components/ui/SegmentedControl.vue";
 import SparkMetric from "../components/ui/SparkMetric.vue";
+import StatusBanner from "../components/ui/StatusBanner.vue";
 import StatusDot from "../components/ui/StatusDot.vue";
 import UsageBar from "../components/ui/UsageBar.vue";
 import AppLayout from "../layouts/AppLayout.vue";
-import type { MonitorWindow, PublicStatusSnapshot } from "../lib/index.ts";
+import type { PublicStatusSnapshot } from "../lib/index.ts";
 import {
+  MONITOR_WINDOWS,
   formatDuration,
   hostOf,
   usageTextClass,
   useLiveRefresh,
+  useMonitorWindow,
   useUptarnStore,
 } from "../lib/index.ts";
 
@@ -28,7 +30,7 @@ const props = defineProps<{
 const router = useRouter();
 const { loadState } = useUptarnStore();
 const signInOpen = ref(false);
-const monitorWindow = useStorage<MonitorWindow>("uptarn:monitor-window", "24h");
+const monitorWindow = useMonitorWindow();
 
 document.title = "Status - Uptarn";
 useLiveRefresh("public", 10_000, 3000);
@@ -36,15 +38,6 @@ useLiveRefresh("public", 10_000, 3000);
 const hasContent = computed(
   () => props.status.monitors.length > 0 || props.status.nodes.length > 0,
 );
-
-const BANNER_STYLES = {
-  fail: { bg: "bg-red-500/10", text: "text-red-600 dark:text-red-400" },
-  warn: { bg: "bg-amber-500/10", text: "text-amber-600 dark:text-amber-400" },
-  ok: {
-    bg: "bg-emerald-500/10",
-    text: "text-emerald-700 dark:text-emerald-400",
-  },
-} as const;
 
 const banner = computed(() => {
   const failing =
@@ -109,20 +102,17 @@ async function onSignedIn() {
     </EmptyState>
 
     <div v-else class="space-y-8">
-      <div
-        class="flex items-center gap-2.5 rounded-xl px-4 py-3 text-sm"
-        :class="BANNER_STYLES[banner.tone].bg"
-      >
-        <StatusDot size-class="size-2.5" :status="banner.tone" />
-        <span class="font-semibold" :class="BANNER_STYLES[banner.tone].text">
-          {{ banner.text }}
-        </span>
-      </div>
+      <StatusBanner :title="banner.text" :tone="banner.tone" />
 
       <section v-if="status.monitors.length > 0" class="space-y-3">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <h2 class="text-base font-semibold tracking-tight">Services</h2>
-          <MonitorWindowToggle v-model="monitorWindow" />
+          <SegmentedControl
+            v-model="monitorWindow"
+            aria-label="Uptime window"
+            mono
+            :options="MONITOR_WINDOWS"
+          />
         </div>
         <div class="divide-y divide-default border-y border-default">
           <MonitorRow

@@ -11,6 +11,7 @@ import type {
   SeriesSnapshot,
 } from "../../../src/shared/index.ts";
 import {
+  escapeHtml,
   formatBps,
   formatSeriesValue,
   formatTimestamp,
@@ -39,6 +40,8 @@ const chartPalette = (isDark: boolean) => ({
   loss: isDark ? "#f87171" : "#dc2626",
 });
 
+type ChartPalette = ReturnType<typeof chartPalette>;
+
 interface AxisTooltipItem {
   axisValueLabel?: string;
   seriesName?: string;
@@ -47,61 +50,39 @@ interface AxisTooltipItem {
   value?: unknown;
 }
 
-const HTML_ESCAPES: Record<string, string> = {
-  "&": "&amp;",
-  "<": "&lt;",
-  ">": "&gt;",
-  '"': "&quot;",
-};
-const escapeHtml = (input: string) =>
-  input.replace(/[&<>"]/g, (ch) => HTML_ESCAPES[ch]);
-
-function baseTooltip(
-  isDark: boolean,
+const baseTooltip = (
+  p: ChartPalette,
   valueFormatter: (v: unknown, idx?: number) => string,
-) {
-  const p = chartPalette(isDark);
+) => ({
+  trigger: "axis",
+  backgroundColor: p.tooltipBg,
+  borderColor: p.tooltipBorder,
+  borderWidth: 1,
+  padding: [8, 10],
+  textStyle: {
+    color: p.tooltipText,
+    fontSize: 12,
+    fontWeight: 400,
+    fontFamily: "Geist Mono, monospace",
+  },
+  formatter: (raw: unknown) => {
+    const items = (Array.isArray(raw) ? raw : [raw]) as AxisTooltipItem[];
+    const header = items[0]?.axisValueLabel ?? "";
+    const rows = items
+      .map((item) => {
+        const dotColor =
+          typeof item.color === "string" ? item.color : p.tooltipMuted;
+        const label = escapeHtml(item.seriesName ?? "");
+        const formatted = escapeHtml(
+          valueFormatter(item.value, item.seriesIndex),
+        );
 
-  return {
-    trigger: "axis",
-    backgroundColor: p.tooltipBg,
-    borderColor: p.tooltipBorder,
-    borderWidth: 1,
-    padding: [8, 10],
-    textStyle: {
-      color: p.tooltipText,
-      fontSize: 12,
-      fontWeight: 400,
-      fontFamily: "Geist Mono, monospace",
-    },
-    formatter: (raw: unknown) => {
-      const items = (Array.isArray(raw) ? raw : [raw]) as AxisTooltipItem[];
-      const header = items[0]?.axisValueLabel ?? "";
-      const rows = items
-        .map((item) => {
-          const dotColor =
-            typeof item.color === "string" ? item.color : p.tooltipMuted;
-          const label = escapeHtml(item.seriesName ?? "");
-          const formatted = escapeHtml(
-            valueFormatter(item.value, item.seriesIndex),
-          );
+        return `<div style="display:flex;align-items:center;justify-content:space-between;gap:16px;line-height:1.55"><span style="display:inline-flex;align-items:center;gap:6px;color:${p.tooltipMuted};font-weight:400"><span style="width:7px;height:7px;border-radius:9999px;background:${escapeHtml(dotColor)};flex:none"></span>${label}</span><span style="color:${p.tooltipText};font-weight:500;font-variant-numeric:tabular-nums">${formatted}</span></div>`;
+      })
+      .join("");
 
-          return `<div style="display:flex;align-items:center;justify-content:space-between;gap:16px;line-height:1.55"><span style="display:inline-flex;align-items:center;gap:6px;color:${p.tooltipMuted};font-weight:400"><span style="width:7px;height:7px;border-radius:9999px;background:${escapeHtml(dotColor)};flex:none"></span>${label}</span><span style="color:${p.tooltipText};font-weight:500;font-variant-numeric:tabular-nums">${formatted}</span></div>`;
-        })
-        .join("");
-
-      return `<div style="font-size:11px;color:${p.tooltipMuted};font-weight:400;margin-bottom:4px">${escapeHtml(header)}</div>${rows}`;
-    },
-  };
-}
-
-const timeAxis = (timestamps: readonly number[], showDate = false) => ({
-  type: "category",
-  boundaryGap: false,
-  data: timestamps.map((ts) => formatTimestamp(ts, showDate)),
-  axisLine: { show: false },
-  axisTick: { show: false },
-  axisLabel: AXIS_LABEL,
+    return `<div style="font-size:11px;color:${p.tooltipMuted};font-weight:400;margin-bottom:4px">${escapeHtml(header)}</div>${rows}`;
+  },
 });
 
 const valueAxis = (
@@ -119,7 +100,7 @@ const areaLine = (
   name: string,
   color: string,
   data: readonly (number | null)[],
-  isDark: boolean,
+  areaOpacity: number,
   connectNulls = false,
 ) => ({
   name,
@@ -130,7 +111,32 @@ const areaLine = (
   data,
   lineStyle: { width: 2, color },
   itemStyle: { color },
-  areaStyle: { color, opacity: chartPalette(isDark).areaOpacity },
+  areaStyle: { color, opacity: areaOpacity },
+});
+
+const cartesianOption = (opts: {
+  p: ChartPalette;
+  gridLeft: number;
+  timestamps: readonly number[];
+  showDate: boolean;
+  yAxis: unknown;
+  series: unknown[];
+  tooltipFmt: (v: unknown, idx?: number) => string;
+  duration?: number;
+}): EChartsCoreOption => ({
+  animationDuration: opts.duration ?? 220,
+  grid: { left: opts.gridLeft, right: 14, top: 14, bottom: 24 },
+  tooltip: baseTooltip(opts.p, opts.tooltipFmt),
+  xAxis: {
+    type: "category",
+    boundaryGap: false,
+    data: opts.timestamps.map((ts) => formatTimestamp(ts, opts.showDate)),
+    axisLine: { show: false },
+    axisTick: { show: false },
+    axisLabel: AXIS_LABEL,
+  },
+  yAxis: opts.yAxis,
+  series: opts.series,
 });
 
 export const buildSparkOption = (
@@ -161,7 +167,7 @@ export const buildSparkOption = (
 
 function buildDualAreaOption(
   channels: readonly [string, string, readonly SeriesPoint[]][],
-  isDark: boolean,
+  p: ChartPalette,
   showDate: boolean,
   gridLeft: number,
   yAxisExtra: Record<string, unknown>,
@@ -176,14 +182,13 @@ function buildDualAreaOption(
     ...new Set(active.flatMap(([, , pts]) => pts.map((pt) => pt.ts))),
   ].sort((a, b) => a - b);
 
-  return {
-    animationDuration: 220,
-    grid: { left: gridLeft, right: 14, top: 14, bottom: 24 },
-    tooltip: baseTooltip(isDark, (v) =>
-      typeof v === "number" ? tooltipFmt(v) : "-",
-    ),
-    xAxis: timeAxis(timestamps, showDate),
-    yAxis: valueAxis(chartPalette(isDark).gridColor, yAxisExtra, yAxisFmt),
+  return cartesianOption({
+    p,
+    gridLeft,
+    timestamps,
+    showDate,
+    yAxis: valueAxis(p.gridColor, yAxisExtra, yAxisFmt),
+    tooltipFmt: (v) => (typeof v === "number" ? tooltipFmt(v) : "-"),
     series: active.map(([name, color, pts]) => {
       const byTs = new Map(pts.map((pt) => [pt.ts, pt.value]));
 
@@ -191,11 +196,11 @@ function buildDualAreaOption(
         name,
         color,
         timestamps.map((ts) => byTs.get(ts) ?? null),
-        isDark,
+        p.areaOpacity,
         true,
       );
     }),
-  };
+  });
 }
 
 export function buildComputeChartOption(
@@ -211,7 +216,7 @@ export function buildComputeChartOption(
       ["CPU", p.cpu, history._cpu ?? []],
       ["Memory", p.mem, history._mem ?? []],
     ],
-    isDark,
+    p,
     showDate,
     40,
     { min: 0, max: 100, interval: 25 },
@@ -233,7 +238,7 @@ export function buildNetworkChartOption(
       ["RX", p.cpu, history._rx_bps ?? []],
       ["TX", p.mem, history._tx_bps ?? []],
     ],
-    isDark,
+    p,
     showDate,
     66,
     { min: 0, splitNumber: 3 },
@@ -276,9 +281,9 @@ export function buildProbeCharts(
           ? "#f59e0b"
           : p.probe;
 
-    const chartSeries: unknown[] = [areaLine(s.label, color, vals, isDark)];
+    const series: unknown[] = [areaLine(s.label, color, vals, p.areaOpacity)];
     if (pts.some((pt) => (pt.aux ?? 0) > 0)) {
-      chartSeries.push({
+      series.push({
         name: "Packet loss",
         type: "bar",
         yAxisIndex: 1,
@@ -295,26 +300,23 @@ export function buildProbeCharts(
     items.push({
       series: s,
       stats: `Min ${formatSeriesValue(minV, s.unit)}, avg ${formatSeriesValue(avgV, s.unit)}, max ${formatSeriesValue(maxV, s.unit)}`,
-      option: {
-        animationDuration: 220,
-        grid: { left: 44, right: 14, top: 14, bottom: 24 },
-        tooltip: baseTooltip(isDark, (v, idx) =>
+      option: cartesianOption({
+        p,
+        gridLeft: 44,
+        timestamps: pts.map((pt) => pt.ts),
+        showDate,
+        yAxis: [
+          valueAxis(p.gridColor, { splitNumber: 3 }),
+          { type: "value", show: false, min: 0, max: 100 },
+        ],
+        series,
+        tooltipFmt: (v, idx) =>
           typeof v === "number"
             ? idx === 1
               ? `${Math.round(v)}%`
               : formatSeriesValue(v, s.unit)
             : "-",
-        ),
-        xAxis: timeAxis(
-          pts.map((pt) => pt.ts),
-          showDate,
-        ),
-        yAxis: [
-          valueAxis(p.gridColor, { splitNumber: 3 }),
-          { type: "value", show: false, min: 0, max: 100 },
-        ],
-        series: chartSeries,
-      },
+      }),
     });
   }
 
@@ -330,10 +332,7 @@ export function buildMonitorLatencyOption(
   const p = chartPalette(isDark);
   const points =
     window === "live"
-      ? mon.samples.map((s) => ({
-          ts: s.ts,
-          ms: s.ok ? s.latency_ms : null,
-        }))
+      ? mon.samples.map((s) => ({ ts: s.ts, ms: s.ok ? s.latency_ms : null }))
       : getMonitorWindowBuckets(mon, window, now).map((b) => ({
           ts: b.ts,
           ms: b.avg_ms,
@@ -342,24 +341,22 @@ export function buildMonitorLatencyOption(
     return null;
   }
 
-  return {
-    animationDuration: 180,
-    grid: { left: 46, right: 14, top: 14, bottom: 24 },
-    tooltip: baseTooltip(isDark, (v) =>
-      typeof v === "number" ? `${Math.round(v)} ms` : "Failed",
-    ),
-    xAxis: timeAxis(
-      points.map((pt) => pt.ts),
-      window !== "live" && window !== "24h",
-    ),
+  return cartesianOption({
+    p,
+    gridLeft: 46,
+    duration: 180,
+    timestamps: points.map((pt) => pt.ts),
+    showDate: window !== "live" && window !== "24h",
     yAxis: valueAxis(p.gridColor, { splitNumber: 3 }, "{value} ms"),
+    tooltipFmt: (v) =>
+      typeof v === "number" ? `${Math.round(v)} ms` : "Failed",
     series: [
       areaLine(
         window === "live" ? "Latency" : "Avg latency",
         p.cpu,
         points.map((pt) => pt.ms),
-        isDark,
+        p.areaOpacity,
       ),
     ],
-  };
+  });
 }

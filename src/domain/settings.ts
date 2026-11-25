@@ -1,9 +1,9 @@
 import { generateRandomToken } from "../auth/index.ts";
 import type { LoadedConfig } from "../config.ts";
 import type { SqlDatabase, SqlStatement } from "../db/index.ts";
-import { httpError } from "../http.ts";
 import type { TargetType } from "../shared/index.ts";
 import { unixNow } from "../shared/index.ts";
+import { assertMonitorHubManaged } from "./monitors.ts";
 
 export interface RuntimeSettings {
   autoRegister: boolean;
@@ -137,16 +137,7 @@ export async function deleteTarget(
   targetId: string,
 ): Promise<boolean> {
   if (targetType === "monitor") {
-    const existing = await db.first<{ managed_by_node_id: string | null }>(
-      "SELECT managed_by_node_id FROM monitors WHERE id = ?1",
-      [targetId],
-    );
-    if (existing?.managed_by_node_id) {
-      throw httpError(
-        409,
-        `Monitor "${targetId}" is managed by node "${existing.managed_by_node_id}"`,
-      );
-    }
+    await assertMonitorHubManaged(db, targetId);
   }
   const { table, pk } = TARGET_TABLE[targetType];
   const statements: SqlStatement[] = [

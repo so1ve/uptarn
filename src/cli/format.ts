@@ -5,11 +5,15 @@ import type { Theme } from "clerc";
 import type {
   AdminSettingsSummary,
   AlertEventSummary,
+  CheckSnapshot,
+  DashboardSnapshot,
   IncidentSummary,
   JobSummary,
   MonitorSummary,
+  MountSnapshot,
   NodeSummary,
   PasskeySummary,
+  SeriesSnapshot,
 } from "../shared/index.ts";
 import {
   formatAge,
@@ -20,21 +24,8 @@ import {
   formatSeriesValue,
   formatUsage,
   memPercent,
+  percent,
   summarizeDisk,
-} from "../shared/index.ts";
-
-export {
-  formatAge,
-  formatBps,
-  formatBytes,
-  formatDuration,
-  formatMs,
-  formatRemaining,
-  formatSeriesValue,
-  formatUsage,
-  memPercent,
-  summarizeDisk,
-  unixNow,
 } from "../shared/index.ts";
 
 export interface TableColumn<T> {
@@ -42,6 +33,14 @@ export interface TableColumn<T> {
   align?: "left" | "right";
   value: (row: T) => string;
 }
+
+export type KvEntry = [label: string, value: string] | false | null | undefined;
+
+const col = <T>(
+  header: string,
+  value: (row: T) => string,
+  align?: "left" | "right",
+): TableColumn<T> => ({ header, value, align });
 
 const visibleLength = (text: string): number =>
   stripVTControlCharacters(text).length;
@@ -61,30 +60,26 @@ export const renderBanner = (
   title: string,
   subtitle?: string,
 ): string =>
-  subtitle
-    ? `${theme.brand("◆")} ${theme.bold(title)}  ${theme.muted(subtitle)}`
-    : `${theme.brand("◆")} ${theme.bold(title)}`;
+  `${theme.brand("◆")} ${theme.bold(title)}${subtitle ? `  ${theme.muted(subtitle)}` : ""}`;
 
 export const renderSection = (
   theme: Theme,
   title: string,
   subtitle?: string,
 ): string =>
-  subtitle
-    ? `\n${theme.heading(title.toUpperCase())} ${theme.muted(subtitle)}`
-    : `\n${theme.heading(title.toUpperCase())}`;
+  `\n${theme.heading(title.toUpperCase())}${subtitle ? ` ${theme.muted(subtitle)}` : ""}`;
 
 export function renderKv(
   theme: Theme,
-  entries: readonly [label: string, value: string][],
+  entries: readonly KvEntry[],
   indent = "  ",
 ): string {
-  const maxLabel = Math.max(
-    ...entries.map(([label]) => visibleLength(label)),
-    0,
+  const active = entries.filter((entry): entry is [string, string] =>
+    Boolean(entry),
   );
+  const maxLabel = Math.max(...active.map(([l]) => visibleLength(l)), 0);
 
-  return entries
+  return active
     .map(
       ([label, value]) =>
         `${indent}${theme.muted(padCell(label, maxLabel + 2))}${value}`,
@@ -98,53 +93,44 @@ export function renderTable<T>(
   rows: readonly T[],
   indent = "  ",
 ): string {
-  const renderedRows = rows.map((row) => columns.map((col) => col.value(row)));
-  const widths = columns.map((col, i) =>
+  const renderedRows = rows.map((row) => columns.map((c) => c.value(row)));
+  const widths = columns.map((c, i) =>
     Math.max(
-      visibleLength(col.header),
+      visibleLength(c.header),
       ...renderedRows.map((row) => visibleLength(row[i])),
     ),
   );
   const lastCol = columns.length - 1;
-  const formatCell = (
-    text: string,
-    idx: number,
-    align?: "left" | "right",
-  ): string =>
+  const cell = (text: string, idx: number, align?: "left" | "right"): string =>
     idx === lastCol && align !== "right"
       ? text
       : padCell(text, widths[idx], align);
 
   return [
-    `${indent}${columns.map((col, i) => theme.muted(formatCell(col.header, i, col.align))).join("  ")}`,
+    `${indent}${columns.map((c, i) => theme.muted(cell(c.header, i, c.align))).join("  ")}`,
     `${indent}${theme.muted(widths.map((w) => "─".repeat(w)).join("  "))}`,
     ...renderedRows.map(
       (row) =>
-        `${indent}${row.map((cell, i) => formatCell(cell, i, columns[i].align)).join("  ")}`,
+        `${indent}${row.map((v, i) => cell(v, i, columns[i].align)).join("  ")}`,
     ),
   ].join("\n");
 }
 
+const STATUS_STYLE: Record<string, "success" | "warn" | "error"> = {
+  ok: "success",
+  resolved: "success",
+  warn: "warn",
+  pending: "warn",
+  fail: "error",
+  firing: "error",
+  offline: "error",
+  overdue: "error",
+};
+
 export function formatStatus(theme: Theme, status: string): string {
-  switch (status) {
-    case "ok":
-    case "resolved": {
-      return theme.success(status);
-    }
-    case "warn":
-    case "pending": {
-      return theme.warn(status);
-    }
-    case "fail":
-    case "firing":
-    case "offline":
-    case "overdue": {
-      return theme.error(status);
-    }
-    default: {
-      return theme.muted(status);
-    }
-  }
+  const style = STATUS_STYLE[status];
+
+  return style ? theme[style](status) : theme.muted(status);
 }
 
 export function formatVisibility(
@@ -157,6 +143,26 @@ export function formatVisibility(
   return managed ? `${base} ${theme.muted("(agent)")}` : base;
 }
 
+const mutedOr = (theme: Theme, value: string | null | undefined): string =>
+  theme.muted(value ?? "-");
+
+const pctCell = (theme: Theme, pct: number | null | undefined): string =>
+  pct === null || pct === undefined ? theme.muted("-") : `${pct.toFixed(0)}%`;
+
+const mutedEntry = (theme: Theme, until: number, now: number): KvEntry =>
+  until > now && ["Muted", theme.warn(`for ${formatRemaining(until, now)}`)];
+
+const formatMonitorState = (theme: Theme, mon: MonitorSummary): string =>
+  mon.enabled ? formatStatus(theme, mon.last_status) : theme.muted("paused");
+
+const formatChannels = (
+  theme: Theme,
+  channels: AdminSettingsSummary["channels"],
+): string =>
+  [channels.telegram && "telegram", channels.matrix && "matrix"]
+    .filter(Boolean)
+    .join(", ") || theme.muted("none");
+
 export const renderNodesTable = (
   theme: Theme,
   nodes: readonly NodeSummary[],
@@ -165,52 +171,20 @@ export const renderNodesTable = (
   renderTable<NodeSummary>(
     theme,
     [
-      { header: "ID", value: (n) => theme.bold(n.id) },
-      {
-        header: "STATUS",
-        value: (n) => formatStatus(theme, n.overall_status),
-      },
-      {
-        header: "VISIBILITY",
-        value: (n) => formatVisibility(theme, n.is_public, n.public_managed),
-      },
-      {
-        header: "CPU",
-        align: "right",
-        value: (n) =>
-          n.system?.cpu_pct === undefined
-            ? theme.muted("-")
-            : `${n.system.cpu_pct.toFixed(0)}%`,
-      },
-      {
-        header: "MEM",
-        align: "right",
-        value: (n) => {
-          const pct = memPercent(n.system);
-
-          return pct === null ? theme.muted("-") : `${pct.toFixed(0)}%`;
-        },
-      },
-      {
-        header: "DISK",
-        align: "right",
-        value: (n) => {
-          const disk = summarizeDisk(n.mounts, n.primary_mount);
-
-          return disk?.pct === null || disk === null
-            ? theme.muted("-")
-            : `${disk.pct.toFixed(0)}%`;
-        },
-      },
-      {
-        header: "SEEN",
-        align: "right",
-        value: (n) => theme.muted(formatAge(n.last_seen_at, now)),
-      },
-      {
-        header: "LABEL",
-        value: (n) => theme.muted(n.label),
-      },
+      col("ID", (n) => theme.bold(n.id)),
+      col("STATUS", (n) => formatStatus(theme, n.overall_status)),
+      col("VISIBILITY", (n) =>
+        formatVisibility(theme, n.is_public, n.public_managed),
+      ),
+      col("CPU", (n) => pctCell(theme, n.system?.cpu_pct), "right"),
+      col("MEM", (n) => pctCell(theme, memPercent(n.system)), "right"),
+      col(
+        "DISK",
+        (n) => pctCell(theme, summarizeDisk(n.mounts, n.primary_mount)?.pct),
+        "right",
+      ),
+      col("SEEN", (n) => theme.muted(formatAge(n.last_seen_at, now)), "right"),
+      col("LABEL", (n) => theme.muted(n.label)),
     ],
     nodes,
   );
@@ -222,7 +196,17 @@ export function renderNodeDetail(
 ): string {
   const disk = summarizeDisk(node.mounts, node.primary_mount);
   const memPct = memPercent(node.system);
-  const lines: string[] = [
+  const sys = node.system;
+  const cpuLoad = sys
+    ? [
+        sys.cpu_pct !== undefined && `${sys.cpu_pct.toFixed(1)}%`,
+        sys.load_1m !== undefined && `load ${sys.load_1m.toFixed(2)}`,
+      ]
+        .filter(Boolean)
+        .join("  ") || theme.muted("-")
+    : "";
+
+  const lines = [
     renderBanner(
       theme,
       node.id,
@@ -241,98 +225,63 @@ export function renderNodeDetail(
         `${formatDuration(node.interval_secs)} / ${formatDuration(node.grace_secs)}`,
       ],
       ["Disk summary", node.primary_mount ?? "sum (all mounts)"],
-      ...(node.agent_version
-        ? [["Agent", node.agent_version] as [string, string]]
-        : []),
-      ...(node.muted_until > now
+      node.agent_version ? ["Agent", node.agent_version] : false,
+      mutedEntry(theme, node.muted_until, now),
+      sys ? ["Uptime", formatDuration(sys.uptime_secs)] : false,
+      sys ? ["CPU / Load", cpuLoad] : false,
+      sys
         ? [
-            [
-              "Muted",
-              theme.warn(`for ${formatRemaining(node.muted_until, now)}`),
-            ] as [string, string],
+            "Memory",
+            memPct !== null &&
+            sys.mem_used_bytes !== undefined &&
+            sys.mem_total_bytes !== undefined
+              ? `${memPct.toFixed(1)}% (${formatUsage(sys.mem_used_bytes, sys.mem_total_bytes)})`
+              : theme.muted("-"),
           ]
-        : []),
-      ...(node.system
+        : false,
+      disk
         ? [
-            ["Uptime", formatDuration(node.system.uptime_secs)] as [
-              string,
-              string,
-            ],
-            [
-              "CPU / Load",
-              [
-                node.system.cpu_pct === undefined
-                  ? null
-                  : `${node.system.cpu_pct.toFixed(1)}%`,
-                node.system.load_1m === undefined
-                  ? null
-                  : `load ${node.system.load_1m.toFixed(2)}`,
-              ]
-                .filter(Boolean)
-                .join("  ") || theme.muted("-"),
-            ] as [string, string],
-            [
-              "Memory",
-              memPct !== null &&
-              node.system.mem_used_bytes !== undefined &&
-              node.system.mem_total_bytes !== undefined
-                ? `${memPct.toFixed(1)}% (${formatUsage(node.system.mem_used_bytes, node.system.mem_total_bytes)})`
-                : theme.muted("-"),
-            ] as [string, string],
+            "Disk",
+            disk.pct === null
+              ? theme.warn(disk.error ?? "Unavailable")
+              : `${disk.pct.toFixed(1)}% (${formatUsage(disk.used_bytes, disk.total_bytes)})`,
           ]
-        : []),
-      ...(disk
+        : false,
+      node.rx_bps !== null || node.tx_bps !== null
         ? [
-            [
-              "Disk",
-              disk.pct === null
-                ? theme.warn(disk.error ?? "Unavailable")
-                : `${disk.pct.toFixed(1)}% (${formatUsage(disk.used_bytes, disk.total_bytes)})`,
-            ] as [string, string],
+            "Network",
+            `RX ${formatBps(node.rx_bps ?? 0)}  TX ${formatBps(node.tx_bps ?? 0)}`,
           ]
-        : []),
-      ...(node.rx_bps !== null || node.tx_bps !== null
-        ? [
-            [
-              "Network",
-              `RX ${formatBps(node.rx_bps ?? 0)}  TX ${formatBps(node.tx_bps ?? 0)}`,
-            ] as [string, string],
-          ]
-        : []),
+        : false,
     ]),
   ];
 
   if (node.mounts.length > 0) {
     lines.push(
       renderSection(theme, "Mounts", `(${node.mounts.length})`),
-      renderTable(
+      renderTable<MountSnapshot>(
         theme,
         [
-          {
-            header: "PATH",
-            value: (m) =>
-              node.primary_mount === m.path
-                ? `${theme.bold(m.path)} ${theme.accent("*")}`
-                : theme.bold(m.path),
-          },
-          { header: "STATUS", value: (m) => formatStatus(theme, m.status) },
-          {
-            header: "USED",
-            align: "right",
-            value: (m) =>
-              m.total_bytes > 0
-                ? `${((m.used_bytes / m.total_bytes) * 100).toFixed(0)}%`
-                : theme.muted("-"),
-          },
-          {
-            header: "CAPACITY",
-            align: "right",
-            value: (m) =>
+          col("PATH", (m) =>
+            node.primary_mount === m.path
+              ? `${theme.bold(m.path)} ${theme.accent("*")}`
+              : theme.bold(m.path),
+          ),
+          col("STATUS", (m) => formatStatus(theme, m.status)),
+          col(
+            "USED",
+            (m) => pctCell(theme, percent(m.used_bytes, m.total_bytes)),
+            "right",
+          ),
+          col(
+            "CAPACITY",
+            (m) =>
               m.total_bytes > 0
                 ? formatUsage(m.used_bytes, m.total_bytes)
-                : theme.muted(m.summary ?? "-"),
-          },
-          { header: "LABEL", value: (m) => theme.muted(m.label ?? "-") },
+                : mutedOr(theme, m.summary),
+            "right",
+          ),
+          col("LABEL", (m) => mutedOr(theme, m.label)),
         ],
         node.mounts,
       ),
@@ -342,14 +291,14 @@ export function renderNodeDetail(
   if (node.checks.length > 0) {
     lines.push(
       renderSection(theme, "Checks", `(${node.checks.length})`),
-      renderTable(
+      renderTable<CheckSnapshot>(
         theme,
         [
-          { header: "KEY", value: (c) => theme.bold(c.key) },
-          { header: "STATUS", value: (c) => formatStatus(theme, c.status) },
-          { header: "GROUP", value: (c) => theme.muted(c.group ?? "-") },
-          { header: "LABEL", value: (c) => c.label },
-          { header: "SUMMARY", value: (c) => theme.muted(c.summary ?? "-") },
+          col("KEY", (c) => theme.bold(c.key)),
+          col("STATUS", (c) => formatStatus(theme, c.status)),
+          col("GROUP", (c) => mutedOr(theme, c.group)),
+          col("LABEL", (c) => c.label),
+          col("SUMMARY", (c) => mutedOr(theme, c.summary)),
         ],
         node.checks,
       ),
@@ -359,22 +308,16 @@ export function renderNodeDetail(
   if (node.series.length > 0) {
     lines.push(
       renderSection(theme, "Series", `(${node.series.length})`),
-      renderTable(
+      renderTable<SeriesSnapshot>(
         theme,
         [
-          { header: "KEY", value: (s) => theme.bold(s.key) },
-          {
-            header: "VALUE",
-            align: "right",
-            value: (s) => formatSeriesValue(s.value, s.unit),
-          },
-          {
-            header: "STATUS",
-            value: (s) =>
-              s.status ? formatStatus(theme, s.status) : theme.muted("-"),
-          },
-          { header: "GROUP", value: (s) => theme.muted(s.group ?? "-") },
-          { header: "LABEL", value: (s) => s.label },
+          col("KEY", (s) => theme.bold(s.key)),
+          col("VALUE", (s) => formatSeriesValue(s.value, s.unit), "right"),
+          col("STATUS", (s) =>
+            s.status ? formatStatus(theme, s.status) : theme.muted("-"),
+          ),
+          col("GROUP", (s) => mutedOr(theme, s.group)),
+          col("LABEL", (s) => s.label),
         ],
         node.series,
       ),
@@ -401,118 +344,86 @@ export const renderMonitorsTable = (
   renderTable<MonitorSummary>(
     theme,
     [
-      { header: "ID", value: (m) => theme.bold(m.id) },
-      {
-        header: "STATUS",
-        value: (m) =>
-          m.enabled
-            ? formatStatus(theme, m.last_status)
-            : theme.muted("paused"),
-      },
-      {
-        header: "VISIBILITY",
-        value: (m) =>
-          formatVisibility(theme, m.is_public, m.managed_by_node_id !== null),
-      },
-      {
-        header: "LATENCY",
-        align: "right",
-        value: (m) =>
+      col("ID", (m) => theme.bold(m.id)),
+      col("STATUS", (m) => formatMonitorState(theme, m)),
+      col("VISIBILITY", (m) =>
+        formatVisibility(theme, m.is_public, m.managed_by_node_id !== null),
+      ),
+      col(
+        "LATENCY",
+        (m) =>
           m.last_latency_ms === null
             ? theme.muted("-")
             : formatMs(m.last_latency_ms),
-      },
-      {
-        header: "INTERVAL",
-        align: "right",
-        value: (m) => theme.muted(formatDuration(m.interval_secs)),
-      },
-      { header: "NAME", value: (m) => m.name },
-      { header: "URL", value: (m) => theme.muted(m.url) },
+        "right",
+      ),
+      col(
+        "INTERVAL",
+        (m) => theme.muted(formatDuration(m.interval_secs)),
+        "right",
+      ),
+      col("NAME", (m) => m.name),
+      col("URL", (m) => theme.muted(m.url)),
     ],
     monitors,
   );
 
 export function renderMonitorDetail(
   theme: Theme,
-  monitor: MonitorSummary,
+  mon: MonitorSummary,
   now: number,
 ): string {
-  const okSamples = monitor.samples.filter((s) => s.ok).length;
-  const uptimeText =
-    monitor.samples.length > 0
-      ? `${((okSamples / monitor.samples.length) * 100).toFixed(1)}% (${okSamples}/${monitor.samples.length})`
-      : theme.muted("-");
-  const manager = monitor.managed_by_node_id
-    ? `agent (${monitor.managed_by_node_id})`
-    : "hub";
+  const okSamples = mon.samples.filter((s) => s.ok).length;
+  const httpLatency =
+    [
+      mon.last_http_status !== null && `HTTP ${mon.last_http_status}`,
+      mon.last_latency_ms !== null && formatMs(mon.last_latency_ms),
+    ]
+      .filter(Boolean)
+      .join("  ") || theme.muted("-");
 
   return [
-    renderBanner(theme, monitor.id, monitor.name),
+    renderBanner(theme, mon.id, mon.name),
     renderSection(theme, "Status"),
     renderKv(theme, [
+      ["State", formatMonitorState(theme, mon)],
+      ["HTTP / Latency", httpLatency],
+      ["Last checked", formatAge(mon.last_checked_at, now)],
       [
-        "State",
-        monitor.enabled
-          ? formatStatus(theme, monitor.last_status)
-          : theme.muted("paused"),
+        "Recent uptime",
+        mon.samples.length > 0
+          ? `${((okSamples / mon.samples.length) * 100).toFixed(1)}% (${okSamples}/${mon.samples.length})`
+          : theme.muted("-"),
       ],
-      [
-        "HTTP / Latency",
-        [
-          monitor.last_http_status === null
-            ? null
-            : `HTTP ${monitor.last_http_status}`,
-          monitor.last_latency_ms === null
-            ? null
-            : formatMs(monitor.last_latency_ms),
-        ]
-          .filter(Boolean)
-          .join("  ") || theme.muted("-"),
-      ],
-      ["Last checked", formatAge(monitor.last_checked_at, now)],
-      ["Recent uptime", uptimeText],
-      ...(monitor.last_error
-        ? [["Last error", theme.error(monitor.last_error)] as [string, string]]
-        : []),
-      ...(monitor.muted_until > now
-        ? [
-            [
-              "Muted",
-              theme.warn(`for ${formatRemaining(monitor.muted_until, now)}`),
-            ] as [string, string],
-          ]
-        : []),
+      mon.last_error ? ["Last error", theme.error(mon.last_error)] : false,
+      mutedEntry(theme, mon.muted_until, now),
     ]),
     renderSection(theme, "Configuration"),
     renderKv(theme, [
-      ["URL", monitor.url],
-      ...(monitor.public_url
-        ? [["Public URL", monitor.public_url] as [string, string]]
-        : []),
-      ["Method", monitor.method],
+      ["URL", mon.url],
+      mon.public_url ? ["Public URL", mon.public_url] : false,
+      ["Method", mon.method],
       [
         "Expected status",
-        monitor.expected_status_min === monitor.expected_status_max
-          ? String(monitor.expected_status_min)
-          : `${monitor.expected_status_min}..${monitor.expected_status_max}`,
+        mon.expected_status_min === mon.expected_status_max
+          ? String(mon.expected_status_min)
+          : `${mon.expected_status_min}..${mon.expected_status_max}`,
       ],
-      ...(monitor.expected_body
-        ? [["Expected body", monitor.expected_body] as [string, string]]
-        : []),
+      mon.expected_body ? ["Expected body", mon.expected_body] : false,
       [
         "Interval / Timeout",
-        `${formatDuration(monitor.interval_secs)} / ${formatMs(monitor.timeout_ms)}`,
+        `${formatDuration(mon.interval_secs)} / ${formatMs(mon.timeout_ms)}`,
       ],
       [
         "Visibility",
-        formatVisibility(
-          theme,
-          monitor.is_public,
-          monitor.managed_by_node_id !== null,
+        formatVisibility(theme, mon.is_public, mon.managed_by_node_id !== null),
+      ],
+      [
+        "Managed by",
+        theme.muted(
+          mon.managed_by_node_id ? `agent (${mon.managed_by_node_id})` : "hub",
         ),
       ],
-      ["Managed by", theme.muted(manager)],
     ]),
   ].join("\n");
 }
@@ -525,20 +436,20 @@ export const renderJobsTable = (
   renderTable<JobSummary>(
     theme,
     [
-      { header: "KEY", value: (j) => theme.bold(j.key) },
-      { header: "STATUS", value: (j) => formatStatus(theme, j.overall_status) },
-      { header: "NODE", value: (j) => theme.muted(j.node_id ?? "-") },
-      {
-        header: "LAST RUN",
-        align: "right",
-        value: (j) => theme.muted(formatAge(j.last_run_at, now)),
-      },
-      {
-        header: "INTERVAL",
-        align: "right",
-        value: (j) => theme.muted(formatDuration(j.interval_secs)),
-      },
-      { header: "SUMMARY", value: (j) => theme.muted(j.last_summary ?? "-") },
+      col("KEY", (j) => theme.bold(j.key)),
+      col("STATUS", (j) => formatStatus(theme, j.overall_status)),
+      col("NODE", (j) => mutedOr(theme, j.node_id)),
+      col(
+        "LAST RUN",
+        (j) => theme.muted(formatAge(j.last_run_at, now)),
+        "right",
+      ),
+      col(
+        "INTERVAL",
+        (j) => theme.muted(formatDuration(j.interval_secs)),
+        "right",
+      ),
+      col("SUMMARY", (j) => mutedOr(theme, j.last_summary)),
     ],
     jobs,
   );
@@ -572,20 +483,10 @@ export function renderJobDetail(
           ? theme.muted("-")
           : formatMs(job.last_duration_ms),
       ],
-      ...(job.muted_until > now
-        ? [
-            [
-              "Muted",
-              theme.warn(`for ${formatRemaining(job.muted_until, now)}`),
-            ] as [string, string],
-          ]
-        : []),
-      ...(job.last_summary
-        ? [["Summary", job.last_summary] as [string, string]]
-        : []),
+      mutedEntry(theme, job.muted_until, now),
+      job.last_summary ? ["Summary", job.last_summary] : false,
     ]),
   ];
-
   if (job.last_detail) {
     lines.push(renderSection(theme, "Detail"), `  ${job.last_detail}`);
   }
@@ -612,18 +513,11 @@ export const renderIncidentEventsTable = (
   renderTable<AlertEventSummary>(
     theme,
     [
-      { header: "KIND", value: (e) => formatStatus(theme, e.kind) },
-      {
-        header: "TARGET",
-        value: (e) => `${e.target_type}:${theme.bold(e.target_id)}`,
-      },
-      { header: "LABEL", value: (e) => e.label },
-      {
-        header: "WHEN",
-        align: "right",
-        value: (e) => theme.muted(formatAge(e.created_at, now)),
-      },
-      { header: "SUMMARY", value: (e) => theme.muted(e.summary) },
+      col("KIND", (e) => formatStatus(theme, e.kind)),
+      col("TARGET", (e) => `${e.target_type}:${theme.bold(e.target_id)}`),
+      col("LABEL", (e) => e.label),
+      col("WHEN", (e) => theme.muted(formatAge(e.created_at, now)), "right"),
+      col("SUMMARY", (e) => theme.muted(e.summary)),
     ],
     events,
   );
@@ -636,23 +530,18 @@ export const renderPasskeysTable = (
   renderTable<PasskeySummary>(
     theme,
     [
-      { header: "ID", value: (p) => theme.bold(p.id) },
-      { header: "NAME", value: (p) => p.name },
-      { header: "TYPE", value: (p) => theme.muted(p.device_type) },
-      {
-        header: "BACKED UP",
-        value: (p) => (p.backed_up ? theme.success("yes") : theme.muted("no")),
-      },
-      {
-        header: "CREATED",
-        align: "right",
-        value: (p) => theme.muted(formatAge(p.created_at, now)),
-      },
-      {
-        header: "LAST USED",
-        align: "right",
-        value: (p) => theme.muted(formatAge(p.last_used_at, now)),
-      },
+      col("ID", (p) => theme.bold(p.id)),
+      col("NAME", (p) => p.name),
+      col("TYPE", (p) => theme.muted(p.device_type)),
+      col("BACKED UP", (p) =>
+        p.backed_up ? theme.success("yes") : theme.muted("no"),
+      ),
+      col("CREATED", (p) => theme.muted(formatAge(p.created_at, now)), "right"),
+      col(
+        "LAST USED",
+        (p) => theme.muted(formatAge(p.last_used_at, now)),
+        "right",
+      ),
     ],
     passkeys,
   );
@@ -662,10 +551,6 @@ export function renderSettingsDetail(
   settings: AdminSettingsSummary,
   now: number,
 ): string {
-  const channels = [
-    settings.channels.telegram && "telegram",
-    settings.channels.matrix && "matrix",
-  ].filter(Boolean);
   const authMethods = [
     settings.auth.password_enabled && "password",
     settings.auth.cf_access_enabled && "cloudflare-access",
@@ -692,10 +577,7 @@ export function renderSettingsDetail(
           )
         : theme.muted("off"),
     ],
-    [
-      "Channels",
-      channels.length > 0 ? channels.join(", ") : theme.muted("none"),
-    ],
+    ["Channels", formatChannels(theme, settings.channels)],
     [
       "Auth methods",
       authMethods.length > 0
@@ -703,4 +585,75 @@ export function renderSettingsDetail(
         : theme.muted("token only"),
     ],
   ]);
+}
+
+export function renderStatusOverview(
+  theme: Theme,
+  data: DashboardSnapshot,
+  now: number,
+): string {
+  const onlineNodes = data.nodes.filter(
+    (n) => n.overall_status !== "offline" && n.overall_status !== "pending",
+  ).length;
+  const okMonitors = data.monitors.filter(
+    (m) => m.enabled && m.last_status === "ok",
+  ).length;
+
+  const blocks = [
+    renderBanner(
+      theme,
+      "Uptarn Hub",
+      `${data.public_base_url} (v${data.version})`,
+    ),
+    renderSection(theme, "Overview"),
+    renderKv(theme, [
+      [
+        "Nodes",
+        `${theme.bold(String(onlineNodes))}/${data.nodes.length} online`,
+      ],
+      [
+        "Monitors",
+        `${theme.bold(String(okMonitors))}/${data.monitors.length} ok`,
+      ],
+      ["Jobs", theme.bold(String(data.jobs.length))],
+      [
+        "Incidents",
+        data.incidents.length > 0
+          ? theme.bold(theme.error(String(data.incidents.length)))
+          : theme.success("0"),
+      ],
+      [
+        "Auto-register",
+        data.settings.auto_register
+          ? theme.warn("enabled")
+          : theme.muted("disabled"),
+      ],
+      ["Channels", formatChannels(theme, data.settings.channels)],
+    ]),
+  ];
+
+  if (data.incidents.length > 0) {
+    blocks.push(
+      renderSection(theme, "Active Incidents", `(${data.incidents.length})`),
+      renderIncidentsList(theme, data.incidents),
+    );
+  }
+  blocks.push(
+    renderSection(theme, "Nodes", `(${data.nodes.length})`),
+    data.nodes.length === 0
+      ? `  ${theme.muted("No nodes registered.")}`
+      : renderNodesTable(theme, data.nodes, now),
+    renderSection(theme, "Monitors", `(${data.monitors.length})`),
+    data.monitors.length === 0
+      ? `  ${theme.muted("No monitors configured.")}`
+      : renderMonitorsTable(theme, data.monitors),
+  );
+  if (data.jobs.length > 0) {
+    blocks.push(
+      renderSection(theme, "Jobs", `(${data.jobs.length})`),
+      renderJobsTable(theme, data.jobs, now),
+    );
+  }
+
+  return blocks.join("\n");
 }

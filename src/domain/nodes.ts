@@ -8,16 +8,20 @@ import type { SqlDatabase, SqlStatement } from "../db/index.ts";
 import { httpError } from "../http.ts";
 import type { NodeMonitorSpec, NodeReportPayload } from "../shared/index.ts";
 import {
-  formatBytes,
-  formatSeriesValue,
+  formatSeriesWithLoss,
+  formatUsage,
   memPercent,
+  percent,
   round1,
   unixNow,
 } from "../shared/index.ts";
 import type { AlertObservation, AlertStateRow } from "./alerts.ts";
 import { ALERT_STATE_COLUMNS, buildAlertStatements } from "./alerts.ts";
 import type { MonitorConfigFields } from "./monitors.ts";
-import { buildMonitorUpsertStatements } from "./monitors.ts";
+import {
+  MONITOR_CONFIG_KEYS,
+  buildMonitorUpsertStatements,
+} from "./monitors.ts";
 import type { SettingRow } from "./settings.ts";
 import { SELECT_SETTINGS_SQL, parseRuntimeSettings } from "./settings.ts";
 
@@ -35,20 +39,6 @@ interface NodeIngestRow {
   rx_bps: number | null;
   tx_bps: number | null;
 }
-
-const MONITOR_DIFF_KEYS = [
-  "name",
-  "url",
-  "public_url",
-  "method",
-  "expected_status_min",
-  "expected_status_max",
-  "expected_body",
-  "timeout_ms",
-  "interval_secs",
-  "enabled",
-  "is_public",
-] as const satisfies readonly (keyof MonitorConfigFields)[];
 
 async function issueNodeToken() {
   const token = generateRandomToken("uptn_node");
@@ -166,7 +156,7 @@ function buildManagedMonitorStatements(
     };
     nextIds.add(next.id);
     const prev = existingById.get(next.id);
-    if (prev && MONITOR_DIFF_KEYS.every((k) => prev[k] === next[k])) {
+    if (prev && MONITOR_CONFIG_KEYS.every((k) => prev[k] === next[k])) {
       continue;
     }
     statements.push(...buildMonitorUpsertStatements(next, now, nodeId));
@@ -420,7 +410,7 @@ export async function ingestNodeReport(
         m.label ?? m.path,
         m.status === "fail",
         m.summary ??
-          `${formatBytes(m.used_bytes)} / ${formatBytes(m.total_bytes)} (${m.total_bytes > 0 ? `${((m.used_bytes / m.total_bytes) * 100).toFixed(1)}%` : "0%"})`,
+          `${formatUsage(m.used_bytes, m.total_bytes)} (${(percent(m.used_bytes, m.total_bytes) ?? 0).toFixed(1)}%)`,
       ),
     ),
     ...checks.map((c) =>
@@ -438,8 +428,7 @@ export async function ingestNodeReport(
           `series:${s.key}`,
           s.label,
           s.status === "fail",
-          s.summary ??
-            `${formatSeriesValue(s.value, s.unit)}${s.loss_pct === undefined ? "" : `, ${s.loss_pct.toFixed(0)}% loss`}`,
+          s.summary ?? formatSeriesWithLoss(s.value, s.unit, s.loss_pct),
         ),
       ),
   ];

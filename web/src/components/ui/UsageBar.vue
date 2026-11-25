@@ -1,12 +1,21 @@
 <script setup lang="ts">
 import type { HealthStatus } from "../../lib/index.ts";
+import { clampPct } from "../../lib/index.ts";
 
-const props = defineProps<{
-  pct: number;
-  status?: HealthStatus;
-}>();
+const props = withDefaults(
+  defineProps<{
+    pct: number;
+    status?: HealthStatus;
+    barClass?: string;
+    heightClass?: string;
+  }>(),
+  { status: undefined, barClass: undefined, heightClass: "h-1.5" },
+);
 
-function barClass() {
+function resolvedBarClass() {
+  if (props.barClass) {
+    return props.barClass;
+  }
   const s =
     props.status ??
     (props.pct >= 92 ? "fail" : props.pct >= 85 ? "warn" : "ok");
@@ -21,12 +30,13 @@ function barClass() {
 
 <template>
   <div
-    class="h-1.5 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800"
+    class="w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800"
+    :class="heightClass"
   >
     <div
       class="h-full rounded-full"
-      :class="barClass()"
-      :style="{ width: `${Math.min(100, Math.max(0, pct))}%` }"
+      :class="resolvedBarClass()"
+      :style="{ width: `${clampPct(pct)}%` }"
     />
   </div>
 </template>

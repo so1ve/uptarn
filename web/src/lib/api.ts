@@ -7,9 +7,6 @@ export class ApiError extends Error {
   }
 }
 
-export const errorMessage = (err: unknown): string =>
-  err instanceof Error ? err.message : String(err);
-
 export async function apiFetch<T = Record<string, unknown>>(
   url: string,
   method = "GET",

@@ -1,12 +1,12 @@
 import type { SqlDatabase, SqlStatement } from "../db/index.ts";
-import { errorMessage, httpError, readBoundedText } from "../http.ts";
+import { httpError, readBoundedText } from "../http.ts";
 import type {
   MonitorInput,
   MonitorRollupBucket,
   MonitorRollups,
   MonitorSample,
 } from "../shared/index.ts";
-import { unixNow } from "../shared/index.ts";
+import { errorMessage, round1, unixNow } from "../shared/index.ts";
 import { parseMonitorInput } from "../validation.ts";
 
 export interface MonitorConfigFields {
@@ -23,6 +23,20 @@ export interface MonitorConfigFields {
   enabled: number;
   is_public: number;
 }
+
+export const MONITOR_CONFIG_KEYS = [
+  "name",
+  "url",
+  "public_url",
+  "method",
+  "expected_status_min",
+  "expected_status_max",
+  "expected_body",
+  "timeout_ms",
+  "interval_secs",
+  "enabled",
+  "is_public",
+] as const satisfies readonly (keyof MonitorConfigFields)[];
 
 export interface MonitorRow extends MonitorConfigFields {
   managed_by_node_id: string | null;
@@ -240,21 +254,28 @@ export function buildMonitorUpsertStatements(
   return statements;
 }
 
+export async function assertMonitorHubManaged(
+  db: SqlDatabase,
+  monitorId: string,
+): Promise<void> {
+  const existing = await db.first<{ managed_by_node_id: string | null }>(
+    "SELECT managed_by_node_id FROM monitors WHERE id = ?1",
+    [monitorId],
+  );
+  if (existing?.managed_by_node_id) {
+    throw httpError(
+      409,
+      `Monitor "${monitorId}" is managed by node "${existing.managed_by_node_id}"`,
+    );
+  }
+}
+
 export async function upsertMonitor(
   db: SqlDatabase,
   raw: MonitorInput | unknown,
 ): Promise<string> {
   const parsed = parseMonitorInput(raw);
-  const existing = await db.first<{ managed_by_node_id: string | null }>(
-    "SELECT managed_by_node_id FROM monitors WHERE id = ?1",
-    [parsed.id],
-  );
-  if (existing?.managed_by_node_id) {
-    throw httpError(
-      409,
-      `Monitor "${parsed.id}" is managed by node "${existing.managed_by_node_id}"`,
-    );
-  }
+  await assertMonitorHubManaged(db, parsed.id);
   await db.batch(
     buildMonitorUpsertStatements(
       {
@@ -288,7 +309,7 @@ export async function probeMonitor(
       headers: { "User-Agent": "uptarn-probe/0.1" },
       signal: AbortSignal.timeout(monitor.timeout_ms),
     });
-    const latencyMs = Math.round((performance.now() - started) * 10) / 10;
+    const latencyMs = round1(performance.now() - started);
     if (
       response.status < monitor.expected_status_min ||
       response.status > monitor.expected_status_max
@@ -331,7 +352,7 @@ export async function probeMonitor(
     return {
       ok: false,
       httpStatus: null,
-      latencyMs: Math.round((performance.now() - started) * 10) / 10,
+      latencyMs: round1(performance.now() - started),
       error: isTimeout ? `Timed out after ${timeoutLabel}` : rawError,
     };
   }

@@ -354,21 +354,27 @@ export function parseOrderInput(raw: unknown): string[] {
   });
 }
 
+export function normalizePrimaryMount(
+  val: unknown,
+  field = "primary_mount",
+): string | null {
+  if (val === null) {
+    return null;
+  }
+  const cleaned = str(val, field, 128);
+
+  return !cleaned || cleaned === "sum" ? null : cleaned;
+}
+
 export function parseNodePatch(raw: unknown): {
   is_public?: boolean;
   primary_mount?: string | null;
 } {
   const obj = asObj(raw, "node patch");
   const isPublic = bool(obj.is_public, "is_public");
-  let primaryMount: string | null | undefined;
-  if (Object.hasOwn(obj, "primary_mount")) {
-    if (obj.primary_mount === null) {
-      primaryMount = null;
-    } else {
-      const cleaned = str(obj.primary_mount, "primary_mount", 128);
-      primaryMount = !cleaned || cleaned === "sum" ? null : cleaned;
-    }
-  }
+  const primaryMount = Object.hasOwn(obj, "primary_mount")
+    ? normalizePrimaryMount(obj.primary_mount)
+    : undefined;
   if (isPublic === undefined && primaryMount === undefined) {
     bad("At least one of is_public or primary_mount is required");
   }

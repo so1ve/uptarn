@@ -1,8 +1,14 @@
 import type { LoadedConfig } from "../config.ts";
 import type { SqlStatement } from "../db/index.ts";
-import { errorMessage, readBoundedText } from "../http.ts";
+import { readBoundedText } from "../http.ts";
 import type { TargetType } from "../shared/index.ts";
-import { formatDuration } from "../shared/index.ts";
+import {
+  errorMessage,
+  escapeHtml,
+  formatDuration,
+  incidentTargetPath,
+  splitAlertLabel,
+} from "../shared/index.ts";
 
 export interface AlertPayload {
   kind: "firing" | "resolved";
@@ -41,69 +47,31 @@ export interface AlertStateRow {
 export const ALERT_STATE_COLUMNS =
   "incident_key, target_type, target_id, label, state, consecutive_failures, opened_at, notified_open, last_changed_at, last_summary";
 
-const HTML_ESCAPES: Record<string, string> = {
-  "&": "&amp;",
-  "<": "&lt;",
-  ">": "&gt;",
-  '"': "&quot;",
-};
-const escapeHtml = (text: string): string =>
-  text.replace(/[&<>"]/g, (ch) => HTML_ESCAPES[ch]);
-
 // Prevent Telegram from turning domain names inside alert titles into blue links.
 const defangDomain = (text: string): string =>
   text.replace(/([a-z0-9])\.(?=[a-z0-9])/gi, "$1.\u200B");
 
-function splitAlertTitle(alert: AlertPayload): {
-  scope: string | null;
-  subject: string;
-} {
-  if (alert.targetType === "monitor") {
-    return { scope: null, subject: alert.label.replace(/^HTTP:\s*/i, "") };
-  }
-  if (alert.targetType === "job") {
-    return { scope: "Job", subject: alert.label.replace(/^Job:\s*/i, "") };
-  }
-  const sep = alert.label.indexOf(": ");
-
-  return sep > 0
-    ? { scope: alert.label.slice(0, sep), subject: alert.label.slice(sep + 2) }
-    : { scope: null, subject: alert.label };
-}
-
-function resolveActionLink(alerts: readonly AlertPayload[]): {
-  label: string;
-  url: string;
-} {
-  const first = alerts[0];
-  const base = first.dashboardUrl.replace(/\/+$/, "");
-  const allSameType = alerts.every((a) => a.targetType === first.targetType);
-  if (
-    allSameType &&
-    first.targetType === "node" &&
-    alerts.every((a) => a.targetId === first.targetId)
-  ) {
-    const nodeName = splitAlertTitle(first).scope ?? first.targetId;
-
-    return {
-      label: `Open ${nodeName}`,
-      url: `${base}/admin/nodes/${encodeURIComponent(first.targetId)}`,
-    };
-  }
-  if (allSameType && first.targetType === "monitor") {
-    return { label: "Open monitors", url: `${base}/admin/monitors` };
-  }
-  if (allSameType && first.targetType === "job") {
-    return { label: "Open jobs", url: `${base}/admin/jobs` };
-  }
-
-  return { label: "Open dashboard", url: `${base}/admin` };
-}
-
 function formatBatchBodies(alerts: readonly AlertPayload[]) {
   const first = alerts[0];
   const icon = first.kind === "firing" ? "🔴" : "🟢";
-  const action = resolveActionLink(alerts);
+  const base = first.dashboardUrl.replace(/\/+$/, "");
+  const allSameType = alerts.every((a) => a.targetType === first.targetType);
+  const sameNode =
+    allSameType &&
+    first.targetType === "node" &&
+    alerts.every((a) => a.targetId === first.targetId);
+  const firstTitle = splitAlertLabel(first.targetType, first.label);
+  const action = sameNode
+    ? {
+        label: `Open ${firstTitle.scope ?? first.targetId}`,
+        url: `${base}${incidentTargetPath("node", first.targetId)}`,
+      }
+    : allSameType && first.targetType !== "node"
+      ? {
+          label: `Open ${first.targetType}s`,
+          url: `${base}${incidentTargetPath(first.targetType, first.targetId)}`,
+        }
+      : { label: "Open dashboard", url: `${base}/admin` };
 
   let heading: string;
   let suffix = "";
@@ -112,8 +80,9 @@ function formatBatchBodies(alerts: readonly AlertPayload[]) {
   let matrixBody: string;
 
   if (alerts.length === 1) {
-    const { scope, subject } = splitAlertTitle(first);
-    heading = scope ? `${scope} / ${subject}` : subject;
+    heading = firstTitle.scope
+      ? `${firstTitle.scope} / ${firstTitle.subject}`
+      : firstTitle.subject;
     if (first.kind === "resolved" && first.durationSecs !== undefined) {
       suffix = ` (recovered after ${formatDuration(first.durationSecs)})`;
     }
@@ -121,12 +90,7 @@ function formatBatchBodies(alerts: readonly AlertPayload[]) {
     telegramBody = escapeHtml(first.summary);
     matrixBody = telegramBody;
   } else {
-    const sameNode =
-      first.targetType === "node" &&
-      alerts.every(
-        (a) => a.targetType === "node" && a.targetId === first.targetId,
-      );
-    const sharedScope = sameNode ? splitAlertTitle(first).scope : null;
+    const sharedScope = sameNode ? firstTitle.scope : null;
     heading = sharedScope
       ? `${sharedScope} (${alerts.length} ${first.kind === "firing" ? "alerts" : "recovered"})`
       : `${alerts.length} alerts ${first.kind === "firing" ? "firing" : "recovered"}`;
@@ -134,7 +98,7 @@ function formatBatchBodies(alerts: readonly AlertPayload[]) {
     const plainLines: string[] = [];
     const htmlLines: string[] = [];
     for (const alert of alerts) {
-      const { scope, subject } = splitAlertTitle(alert);
+      const { scope, subject } = splitAlertLabel(alert.targetType, alert.label);
       const name = sharedScope
         ? subject
         : scope

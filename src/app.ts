@@ -32,9 +32,9 @@ import {
   updateRuntimeSettings,
   upsertMonitor,
 } from "./domain/index.ts";
-import { errorMessage, extractBearer, httpError, readJson } from "./http.ts";
+import { extractBearer, httpError, readJson } from "./http.ts";
 import type { TargetType } from "./shared/index.ts";
-import { unixNow } from "./shared/index.ts";
+import { errorMessage, unixNow } from "./shared/index.ts";
 import {
   parseCreateNodeInput,
   parseJobReportPayload,
@@ -44,6 +44,17 @@ import {
   parseOrderInput,
   parseSettingsPatch,
 } from "./validation.ts";
+
+const resolveMutedUntil = (
+  mutedUntil?: number,
+  durationSecs?: number,
+): number | undefined =>
+  mutedUntil ??
+  (durationSecs === undefined
+    ? undefined
+    : durationSecs > 0
+      ? unixNow() + durationSecs
+      : 0);
 
 function requireBearer(c: Context): string {
   const token = extractBearer(c);
@@ -206,10 +217,7 @@ export function createApp(db: SqlDatabase, config: LoadedConfig): Hono {
   app.post("/api/v1/admin/mute", async (c) => {
     const body = parseMuteInput(await readJson(c));
     const mutedUntil =
-      body.muted_until ??
-      (body.duration_secs && body.duration_secs > 0
-        ? unixNow() + body.duration_secs
-        : 0);
+      resolveMutedUntil(body.muted_until, body.duration_secs) ?? 0;
     if (
       !(await setTargetMute(db, body.target_type, body.target_id, mutedUntil))
     ) {
@@ -221,16 +229,13 @@ export function createApp(db: SqlDatabase, config: LoadedConfig): Hono {
 
   app.patch("/api/v1/admin/settings", async (c) => {
     const body = parseSettingsPatch(await readJson(c));
-    const fromDuration =
-      body.global_mute_secs === undefined
-        ? undefined
-        : body.global_mute_secs > 0
-          ? unixNow() + body.global_mute_secs
-          : 0;
     const settings = await updateRuntimeSettings(db, config, {
       auto_register: body.auto_register,
       rotate_enrollment_token: body.rotate_enrollment_token,
-      global_muted_until: body.global_muted_until ?? fromDuration,
+      global_muted_until: resolveMutedUntil(
+        body.global_muted_until,
+        body.global_mute_secs,
+      ),
     });
 
     return c.json({

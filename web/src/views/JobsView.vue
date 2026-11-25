@@ -1,6 +1,10 @@
 <script setup lang="ts">
+import { createReusableTemplate } from "@vueuse/core";
+
 import ConfirmPopover from "../components/ui/ConfirmPopover.vue";
 import EmptyState from "../components/ui/EmptyState.vue";
+import MuteButton from "../components/ui/MuteButton.vue";
+import MutedBadge from "../components/ui/MutedBadge.vue";
 import PageHeader from "../components/ui/PageHeader.vue";
 import StatusDot from "../components/ui/StatusDot.vue";
 import type { JobSummary } from "../lib/index.ts";
@@ -9,22 +13,18 @@ import {
   formatAge,
   formatDuration,
   formatMs,
-  formatRemaining,
   useAction,
   useSnapshot,
 } from "../lib/index.ts";
 
 const snap = useSnapshot();
-const { busy, run, mute } = useAction();
+const { busy, run } = useAction();
+const [DefineJobActions, JobActions] = createReusableTemplate<{
+  job: JobSummary;
+}>();
 
-const onToggleMute = (job: JobSummary) =>
-  mute(
-    `mute:${job.key}`,
-    "job",
-    job.key,
-    job.label,
-    job.muted_until > snap.value.now ? 0 : 3600,
-  );
+const jobSchedule = (job: JobSummary): string =>
+  `Every ${formatDuration(job.interval_secs)}${job.last_duration_ms === null ? "" : `, ${formatMs(job.last_duration_ms)}`}`;
 
 const onRemoveJob = (key: string) =>
   run(
@@ -41,6 +41,26 @@ const onRemoveJob = (key: string) =>
 
 <template>
   <div class="space-y-6">
+    <DefineJobActions v-slot="{ job }">
+      <MuteButton
+        class="font-sans"
+        :label="job.label"
+        :muted-until="job.muted_until"
+        :now="snap.now"
+        :target-id="job.key"
+        target-type="job"
+      />
+      <ConfirmPopover
+        label="Remove"
+        :loading="busy === job.key"
+        @confirm="onRemoveJob(job.key)"
+      >
+        Remove
+        <strong>{{ job.label }}</strong>
+        ?
+      </ConfirmPopover>
+    </DefineJobActions>
+
     <PageHeader title="Jobs" />
 
     <EmptyState v-if="snap.jobs.length === 0">
@@ -76,14 +96,7 @@ const onRemoveJob = (key: string) =>
                 {{ job.node_id }}
               </UBadge>
             </RouterLink>
-            <UBadge
-              v-if="job.muted_until > snap.now"
-              color="warning"
-              size="xs"
-              variant="subtle"
-            >
-              Muted {{ formatRemaining(job.muted_until, snap.now) }}
-            </UBadge>
+            <MutedBadge :now="snap.now" :until="job.muted_until" />
           </div>
 
           <div
@@ -104,26 +117,7 @@ const onRemoveJob = (key: string) =>
             </span>
 
             <div class="hidden items-center gap-1 sm:flex">
-              <UButton
-                class="font-sans"
-                color="neutral"
-                :loading="busy === `mute:${job.key}`"
-                size="xs"
-                variant="ghost"
-                @click="onToggleMute(job)"
-              >
-                {{ job.muted_until > snap.now ? "Unmute" : "Mute 1h" }}
-              </UButton>
-
-              <ConfirmPopover
-                label="Remove"
-                :loading="busy === job.key"
-                @confirm="onRemoveJob(job.key)"
-              >
-                Remove
-                <strong>{{ job.label }}</strong>
-                ?
-              </ConfirmPopover>
+              <JobActions :job />
             </div>
           </div>
         </div>
@@ -147,38 +141,16 @@ const onRemoveJob = (key: string) =>
           <span
             class="hidden shrink-0 font-mono text-[11px] text-dimmed tabular-nums sm:inline"
           >
-            {{
-              `Every ${formatDuration(job.interval_secs)}${job.last_duration_ms === null ? "" : `, ${formatMs(job.last_duration_ms)}`}`
-            }}
+            {{ jobSchedule(job) }}
           </span>
         </div>
 
         <div class="flex items-center justify-between gap-2 pl-4 sm:hidden">
           <span class="font-mono text-[11px] text-dimmed tabular-nums">
-            {{
-              `Every ${formatDuration(job.interval_secs)}${job.last_duration_ms === null ? "" : `, ${formatMs(job.last_duration_ms)}`}`
-            }}
+            {{ jobSchedule(job) }}
           </span>
           <div class="flex shrink-0 items-center gap-1">
-            <UButton
-              color="neutral"
-              :loading="busy === `mute:${job.key}`"
-              size="xs"
-              variant="ghost"
-              @click="onToggleMute(job)"
-            >
-              {{ job.muted_until > snap.now ? "Unmute" : "Mute 1h" }}
-            </UButton>
-
-            <ConfirmPopover
-              label="Remove"
-              :loading="busy === job.key"
-              @confirm="onRemoveJob(job.key)"
-            >
-              Remove
-              <strong>{{ job.label }}</strong>
-              ?
-            </ConfirmPopover>
+            <JobActions :job />
           </div>
         </div>
 

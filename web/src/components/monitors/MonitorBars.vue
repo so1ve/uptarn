@@ -12,6 +12,7 @@ import {
   ROLLUP_WINDOW_SPEC,
   formatAge,
   formatClock,
+  formatDateShort,
   formatUptimePct,
 } from "../../lib/index.ts";
 
@@ -38,28 +39,23 @@ interface BarSlot {
   tip: BarTooltip | null;
 }
 
-function formatMonthDay(ts: number): string {
-  const d = new Date(ts * 1000);
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
+const SLOT_TONE = {
+  ok: { dot: "bg-emerald-500", text: "text-emerald-600 dark:text-emerald-400" },
+  warn: { dot: "bg-amber-500", text: "text-amber-600 dark:text-amber-400" },
+  fail: { dot: "bg-red-500", text: "text-red-500 dark:text-red-400" },
+  empty: { dot: "bg-zinc-400 dark:bg-zinc-600", text: "text-muted" },
+} as const;
 
-  return `${mm}/${dd}`;
-}
-
-function formatBucketRange(
+const formatBucketRange = (
   ts: number,
   window: Exclude<MonitorWindow, "live">,
   step: number,
-): string {
-  if (window === "24h") {
-    return `${formatClock(ts)} - ${formatClock(ts + step)}`;
-  }
-  if (window === "7d") {
-    return `${formatMonthDay(ts)} ${formatClock(ts)} - ${formatClock(ts + step)}`;
-  }
-
-  return formatMonthDay(ts);
-}
+): string =>
+  window === "24h"
+    ? `${formatClock(ts)} - ${formatClock(ts + step)}`
+    : window === "7d"
+      ? `${formatDateShort(ts)} ${formatClock(ts)} - ${formatClock(ts + step)}`
+      : formatDateShort(ts);
 
 const slots = computed<BarSlot[]>(() => {
   if (props.window === "live") {
@@ -91,16 +87,16 @@ const slots = computed<BarSlot[]>(() => {
           : Math.round(34 + ((sample.latency_ms - minLat) / span) * 62)
         : 100;
 
+      const tone = sample.ok ? SLOT_TONE.ok : SLOT_TONE.fail;
+
       return {
-        colorClass: sample.ok ? "bg-emerald-500" : "bg-red-500",
+        colorClass: tone.dot,
         heightPct,
         tip: {
           header: `${formatClock(sample.ts)} (${formatAge(sample.ts, props.now)})`,
           headline: sample.ok ? "Operational" : "Failed",
-          dotClass: sample.ok ? "bg-emerald-500" : "bg-red-500",
-          toneClass: sample.ok
-            ? "text-emerald-600 dark:text-emerald-400"
-            : "text-red-500 dark:text-red-400",
+          dotClass: tone.dot,
+          toneClass: tone.text,
           latency:
             sample.latency_ms === null
               ? null
@@ -132,34 +128,25 @@ const slots = computed<BarSlot[]>(() => {
         tip: {
           header: range,
           headline: "No data",
-          dotClass: "bg-zinc-400 dark:bg-zinc-600",
-          toneClass: "text-muted",
+          dotClass: SLOT_TONE.empty.dot,
+          toneClass: SLOT_TONE.empty.text,
           latency: null,
         },
       };
     }
     const pct = (bucket.ok / bucket.total) * 100;
-    const isOk = bucket.ok === bucket.total;
-    const isWarn = !isOk && pct >= 90;
-    const dotClass = isOk
-      ? "bg-emerald-500"
-      : isWarn
-        ? "bg-amber-500"
-        : "bg-red-500";
-    const toneClass = isOk
-      ? "text-emerald-600 dark:text-emerald-400"
-      : isWarn
-        ? "text-amber-600 dark:text-amber-400"
-        : "text-red-500 dark:text-red-400";
+    const state =
+      bucket.ok === bucket.total ? "ok" : pct >= 90 ? "warn" : "fail";
+    const tone = SLOT_TONE[state];
 
     return {
-      colorClass: dotClass,
-      heightPct: isOk ? 74 : isWarn ? 88 : 100,
+      colorClass: tone.dot,
+      heightPct: state === "ok" ? 74 : state === "warn" ? 88 : 100,
       tip: {
         header: range,
         headline: formatUptimePct(pct),
-        dotClass,
-        toneClass,
+        dotClass: tone.dot,
+        toneClass: tone.text,
         latency: bucket.avg_ms === null ? null : `${bucket.avg_ms} ms avg`,
         ok: bucket.ok,
         failed: bucket.total - bucket.ok,

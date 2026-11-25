@@ -1,28 +1,23 @@
 <script setup lang="ts">
-import { reactive, watch } from "vue";
-
-import { apiFetch, useAction, useUptarnStore } from "../../lib/index.ts";
+import {
+  apiFetch,
+  useAction,
+  useModalForm,
+  useUptarnStore,
+} from "../../lib/index.ts";
 
 const open = defineModel<boolean>("open", { default: false });
 
 const { busy, run } = useAction();
 const { showIssuedToken } = useUptarnStore();
 
-const initialForm = () => ({
+const form = useModalForm(open, () => ({
   id: "",
   label: "",
   interval_secs: 60,
   grace_secs: 120,
   is_public: false,
-});
-
-const form = reactive(initialForm());
-
-watch(open, (isOpen) => {
-  if (isOpen) {
-    Object.assign(form, initialForm());
-  }
-});
+}));
 
 const onSubmit = () =>
   run("create", "Could not create node", async () => {

@@ -1,29 +1,28 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import NodeChartsGrid from "../components/nodes/NodeChartsGrid.vue";
 import NodeTelemetryPanel from "../components/nodes/NodeTelemetryPanel.vue";
 import ConfirmPopover from "../components/ui/ConfirmPopover.vue";
+import MutedBadge from "../components/ui/MutedBadge.vue";
 import StatusDot from "../components/ui/StatusDot.vue";
-import type { NodeHistoryResponse, SeriesPoint } from "../lib/index.ts";
 import {
   apiFetch,
   buildProbeCharts,
   formatAge,
   formatBps,
   formatDuration,
-  formatRemaining,
   formatUsage,
   memPercent,
   statusTextClass,
   summarizeDisk,
   useAction,
+  useNodeHistory,
   useSnapshot,
   useUptarnStore,
 } from "../lib/index.ts";
 
-const DEFAULT_WINDOW_SECS = 21_600;
 const MUTE_OPTIONS = [
   { label: "Mute 1h", secs: 3600 },
   { label: "Mute 1d", secs: 86_400 },
@@ -33,7 +32,7 @@ const route = useRoute();
 const router = useRouter();
 const snap = useSnapshot();
 const { busy, run, mute } = useAction();
-const { isDark, showIssuedToken, syncGeneration } = useUptarnStore();
+const { isDark, showIssuedToken } = useUptarnStore();
 
 const nodeId = computed(() => String(route.params.id ?? ""));
 const node = computed(
@@ -58,49 +57,11 @@ const disk = computed(() =>
     : null,
 );
 
-const windowSecs = ref(DEFAULT_WINDOW_SECS);
-const customHistory = ref<Record<string, SeriesPoint[]> | null>(null);
-const loadingWindow = ref(false);
-let historySeq = 0;
-
-watch(nodeId, () => {
-  windowSecs.value = DEFAULT_WINDOW_SECS;
-  customHistory.value = null;
-});
-
-watch(
-  [nodeId, windowSecs, () => node.value?.last_seen_at, syncGeneration],
-  async ([id, secs]) => {
-    const seq = ++historySeq;
-    if (!id || secs === DEFAULT_WINDOW_SECS) {
-      customHistory.value = null;
-      loadingWindow.value = false;
-
-      return;
-    }
-    loadingWindow.value = true;
-    try {
-      const res = await apiFetch<NodeHistoryResponse>(
-        `/api/v1/admin/nodes/${encodeURIComponent(id)}/history?window=${secs}`,
-      );
-      if (seq === historySeq) {
-        customHistory.value = res.history;
-      }
-    } catch {
-      // Keep previous series visible on transient fetch failures.
-    } finally {
-      if (seq === historySeq) {
-        loadingWindow.value = false;
-      }
-    }
-  },
-);
-
-const activeHistory = computed<Record<string, SeriesPoint[]>>(() =>
-  windowSecs.value === DEFAULT_WINDOW_SECS
-    ? (node.value?.history ?? {})
-    : (customHistory.value ?? node.value?.history ?? {}),
-);
+const {
+  windowSecs,
+  loadingWindow,
+  history: activeHistory,
+} = useNodeHistory(nodeId, node);
 
 const probeCharts = computed(() =>
   node.value
@@ -255,9 +216,7 @@ async function onDelete() {
             >
               Private
             </UBadge>
-            <UBadge v-if="isMuted" color="warning" size="xs" variant="subtle">
-              Muted {{ formatRemaining(node.muted_until, snap.now) }}
-            </UBadge>
+            <MutedBadge :now="snap.now" :until="node.muted_until" />
           </div>
           <div
             class="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-xs text-muted tabular-nums"

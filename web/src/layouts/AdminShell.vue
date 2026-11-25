@@ -4,9 +4,9 @@ import { useRoute } from "vue-router";
 
 import IssuedTokenModal from "../components/modals/IssuedTokenModal.vue";
 import SettingsModal from "../components/modals/SettingsModal.vue";
+import MutedBadge from "../components/ui/MutedBadge.vue";
 import {
   apiFetch,
-  formatRemaining,
   useAction,
   useLiveRefresh,
   useSnapshot,
@@ -28,9 +28,6 @@ const { signOutState } = useUptarnStore();
 const settingsOpen = ref(false);
 
 const totalIncidents = computed(() => snap.value.incidents.length);
-const globalMuted = computed(
-  () => snap.value.settings.global_muted_until > snap.value.now,
-);
 
 const pageTitle = computed(() => {
   if (route.name === "node-detail") {
@@ -133,15 +130,11 @@ async function onSignOut() {
     </template>
 
     <template #actions-prefix>
-      <UBadge
-        v-if="globalMuted"
+      <MutedBadge
         class="mr-1"
-        color="warning"
-        size="xs"
-        variant="subtle"
-      >
-        Muted {{ formatRemaining(snap.settings.global_muted_until, snap.now) }}
-      </UBadge>
+        :now="snap.now"
+        :until="snap.settings.global_muted_until"
+      />
       <UButton
         aria-label="Public status page"
         color="neutral"

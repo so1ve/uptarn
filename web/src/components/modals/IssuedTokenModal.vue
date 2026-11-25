@@ -2,6 +2,7 @@
 import { computed } from "vue";
 
 import { useAction, useSnapshot, useUptarnStore } from "../../lib/index.ts";
+import CopyField from "../ui/CopyField.vue";
 
 const snap = useSnapshot();
 const { copy } = useAction();
@@ -40,24 +41,11 @@ const agentConfigSnippet = computed(() => {
           Save this token now. It will not be shown again.
         </p>
 
-        <UFormField label="Token">
-          <div class="flex items-center gap-2">
-            <UInput
-              class="flex-1 font-mono"
-              :model-value="issuedToken.token"
-              readonly
-            />
-            <UButton
-              color="neutral"
-              icon="i-lucide-copy"
-              size="sm"
-              variant="soft"
-              @click="copy(issuedToken.token, 'Token')"
-            >
-              Copy
-            </UButton>
-          </div>
-        </UFormField>
+        <CopyField
+          button-text="Copy"
+          label="Token"
+          :value="issuedToken.token"
+        />
 
         <UFormField label="agent.toml">
           <div class="space-y-2">

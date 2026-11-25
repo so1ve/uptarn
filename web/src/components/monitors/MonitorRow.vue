@@ -10,12 +10,13 @@ import type {
 import {
   MONITOR_WINDOWS,
   formatAge,
-  formatRemaining,
   formatUptimePct,
   monitorUptime,
   stripUrlScheme,
+  uptimeToneClass,
 } from "../../lib/index.ts";
 import DragHandle from "../ui/DragHandle.vue";
+import MutedBadge from "../ui/MutedBadge.vue";
 import StatusDot from "../ui/StatusDot.vue";
 import MonitorBars from "./MonitorBars.vue";
 
@@ -47,24 +48,15 @@ const dotStatus = computed<DotStatus>(() =>
     : props.monitor.last_status,
 );
 
-const uptimeTone = (pct: number | null) =>
-  pct === null
-    ? "text-dimmed"
-    : pct >= 99
-      ? "text-emerald-600 dark:text-emerald-400"
-      : pct >= 90
-        ? "text-amber-600 dark:text-amber-400"
-        : "text-red-500 dark:text-red-400";
-
 const uptime = computed(() =>
   monitorUptime(props.monitor, props.window, props.now),
 );
 
 const uptimeBreakdown = computed(() =>
   MONITOR_WINDOWS.map((w) => {
-    const stat = monitorUptime(props.monitor, w.id, props.now);
+    const stat = monitorUptime(props.monitor, w.value, props.now);
 
-    return { ...w, ...stat, active: w.id === props.window };
+    return { ...w, ...stat, active: w.value === props.window };
   }),
 );
 
@@ -158,15 +150,7 @@ const errorText = computed(() =>
           >
             Private
           </UBadge>
-          <UBadge
-            v-if="adminMon && adminMon.muted_until > now"
-            class="shrink-0"
-            color="warning"
-            size="xs"
-            variant="subtle"
-          >
-            Muted {{ formatRemaining(adminMon.muted_until, now) }}
-          </UBadge>
+          <MutedBadge v-if="adminMon" :now :until="adminMon.muted_until" />
         </div>
 
         <a
@@ -184,19 +168,14 @@ const errorText = computed(() =>
     </div>
 
     <div
-      class="font-mono text-xs font-semibold tabular-nums"
-      :class="
-        adminMon
-          ? 'order-2 self-start pt-0.5 text-right lg:order-3 lg:self-center lg:pt-0'
-          : 'order-2 self-start pt-0.5 text-right lg:order-3 lg:self-center lg:pt-0'
-      "
+      class="order-2 self-start pt-0.5 text-right font-mono text-xs font-semibold tabular-nums lg:order-3 lg:self-center lg:pt-0"
     >
       <UTooltip
         :delay-duration="80"
         :disabled="uptime.total === 0"
         :ui="{ content: 'h-auto block p-2.5' }"
       >
-        <span class="cursor-default" :class="uptimeTone(uptime.pct)">
+        <span class="cursor-default" :class="uptimeToneClass(uptime.pct)">
           {{ formatUptimePct(uptime.pct) }}
         </span>
         <template #content>
@@ -205,14 +184,14 @@ const errorText = computed(() =>
             <div class="space-y-1 font-mono text-[11px] tabular-nums">
               <div
                 v-for="item in uptimeBreakdown"
-                :key="item.id"
+                :key="item.value"
                 class="grid grid-cols-[2.5rem_3.75rem_1fr] items-center gap-2"
                 :class="item.active ? 'font-semibold' : 'opacity-80'"
               >
                 <span :class="item.active ? 'text-default' : 'text-muted'">
                   {{ item.label }}
                 </span>
-                <span class="text-right" :class="uptimeTone(item.pct)">
+                <span class="text-right" :class="uptimeToneClass(item.pct)">
                   {{ formatUptimePct(item.pct) }}
                 </span>
                 <span class="text-right text-dimmed">

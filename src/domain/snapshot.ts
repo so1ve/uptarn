@@ -19,7 +19,13 @@ import type {
   SeriesSnapshot,
   SystemSnapshot,
 } from "../shared/index.ts";
-import { round1, summarizeDisk, unixNow } from "../shared/index.ts";
+import {
+  memPercent,
+  round1,
+  summarizeDisk,
+  unixNow,
+  worstHealthStatus,
+} from "../shared/index.ts";
 import type { JobRow } from "./jobs.ts";
 import type { MonitorRow } from "./monitors.ts";
 import { parseMonitorRollups, parseMonitorSamples } from "./monitors.ts";
@@ -75,16 +81,11 @@ function parseNodeCore(row: NodeCoreRow, now: number) {
   } else if (now > row.last_seen_at + row.interval_secs + row.grace_secs) {
     overallStatus = "offline";
   } else {
-    const statuses = [
+    overallStatus = worstHealthStatus([
       ...mounts.map((m) => m.status),
       ...checks.map((c) => c.status),
       ...series.flatMap((s) => (s.status ? [s.status] : [])),
-    ];
-    overallStatus = statuses.includes("fail")
-      ? "fail"
-      : statuses.includes("warn")
-        ? "warn"
-        : "ok";
+    ]);
   }
 
   return { system, mounts, checks, series, overallStatus };
@@ -113,7 +114,7 @@ function downsampleSeries(
     if (nextBucket !== bucketTs) {
       buckets.push({
         ts: bucketTs,
-        value: Math.round((sum / count) * 10) / 10,
+        value: round1(sum / count),
         aux: maxAux,
       });
       bucketTs = nextBucket;
@@ -180,6 +181,15 @@ const buildAllowedSeriesKeys = (
   series: readonly SeriesSnapshot[],
 ): Set<string> =>
   new Set<string>([...BUILTIN_SERIES_KEYS, ...series.map((item) => item.key)]);
+
+const monitorStatus = (raw: string | null): MonitorSummary["last_status"] =>
+  raw === "ok" || raw === "fail" ? raw : "pending";
+
+const buildAuthSummary = (config: LoadedConfig, passkeyCount: number) => ({
+  password_enabled: hasPasswordLogin(config),
+  cf_access_enabled: config.cfAccess !== null,
+  passkey_count: passkeyCount,
+});
 
 function publicStoragePct(
   mounts: readonly MountSnapshot[],
@@ -309,10 +319,7 @@ export async function getDashboardSnapshot(
         ...rest,
         enabled: enabled === 1,
         is_public: is_public === 1,
-        last_status:
-          last_status === "ok" || last_status === "fail"
-            ? last_status
-            : "pending",
+        last_status: monitorStatus(last_status),
         samples,
         rollups: parseMonitorRollups(rollup_json, samples),
       };
@@ -346,11 +353,7 @@ export async function getDashboardSnapshot(
         telegram: config.telegram !== null,
         matrix: config.matrix !== null,
       },
-      auth: {
-        password_enabled: hasPasswordLogin(config),
-        cf_access_enabled: config.cfAccess !== null,
-        passkey_count: passkeys.length,
-      },
+      auth: buildAuthSummary(config, passkeys.length),
     },
     incidents,
     nodes,
@@ -431,16 +434,10 @@ export async function getPublicStatusSnapshot(
     now,
     version: manifest.version,
     public_base_url: config.publicBaseUrl,
-    auth: {
-      password_enabled: hasPasswordLogin(config),
-      cf_access_enabled: config.cfAccess !== null,
-      passkey_count: passkeyCountRows[0]?.count ?? 0,
-    },
+    auth: buildAuthSummary(config, passkeyCountRows[0]?.count ?? 0),
     monitors: monitorRows.map((row, idx) => {
-      const status =
-        row.last_status === "ok" || row.last_status === "fail"
-          ? row.last_status
-          : "pending";
+      const status = monitorStatus(row.last_status);
+      const allSamples = parseMonitorSamples(row.samples_json);
 
       return {
         key: `m${idx}`,
@@ -456,24 +453,15 @@ export async function getPublicStatusSnapshot(
               ? `HTTP ${row.last_http_status}`
               : "Unreachable"
             : null,
-        samples: parseMonitorSamples(row.samples_json).slice(-36),
-        rollups: parseMonitorRollups(
-          row.rollup_json,
-          parseMonitorSamples(row.samples_json),
-        ),
+        samples: allSamples.slice(-36),
+        rollups: parseMonitorRollups(row.rollup_json, allSamples),
       };
     }),
     nodes: nodeRows.map((row, idx) => {
       const { system, mounts, overallStatus } = parseNodeCore(row, now);
       const hist = historyByNode.get(row.id) ?? {};
-      const memPct =
-        system?.mem_used_bytes !== undefined &&
-        system.mem_total_bytes !== undefined &&
-        system.mem_total_bytes > 0
-          ? Math.round(
-              (system.mem_used_bytes / system.mem_total_bytes) * 1000,
-            ) / 10
-          : null;
+      const rawMemPct = memPercent(system);
+      const memPct = rawMemPct === null ? null : round1(rawMemPct);
 
       return {
         key: `n${idx}`,

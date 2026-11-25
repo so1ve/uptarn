@@ -8,6 +8,7 @@ import {
   useUptarnStore,
 } from "../../lib/index.ts";
 import EChart from "./EChart.vue";
+import UsageBar from "./UsageBar.vue";
 
 const props = defineProps<{
   kind: "cpu" | "memory";
@@ -65,16 +66,7 @@ const option = computed(() => {
       </span>
     </div>
     <EChart v-if="option" height="32px" :option />
-    <div
-      v-else
-      class="h-1 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800"
-    >
-      <div
-        class="h-full rounded-full"
-        :class="cfg.barClass"
-        :style="{ width: `${Math.min(100, Math.max(0, pct))}%` }"
-      />
-    </div>
+    <UsageBar v-else :bar-class="cfg.barClass" height-class="h-1" :pct />
     <div v-if="caption" class="font-mono text-[11px] text-dimmed tabular-nums">
       {{ caption }}
     </div>

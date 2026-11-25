@@ -7,9 +7,6 @@ export const httpError = (
   message: string,
 ): HTTPException => new HTTPException(status, { message });
 
-export const errorMessage = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error);
-
 export async function readJson<T = unknown>(c: Context): Promise<T> {
   try {
     return await c.req.json<T>();

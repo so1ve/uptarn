@@ -7,13 +7,14 @@ import {
   useAction,
   useSnapshot,
 } from "../../lib/index.ts";
+import CopyField from "../ui/CopyField.vue";
 import PasskeysSection from "./PasskeysSection.vue";
 
 const open = defineModel<boolean>("open", { default: false });
 
 const toast = useToast();
 const snap = useSnapshot();
-const { busy, run, copy } = useAction();
+const { busy, run } = useAction();
 
 const settings = computed(() => snap.value.settings);
 const globalMuted = computed(
@@ -85,40 +86,27 @@ const onSendTestNotification = () =>
               )
             "
           />
-          <UFormField label="Enrollment token">
-            <div class="flex items-center gap-2">
-              <UInput
-                class="flex-1 font-mono"
-                :model-value="settings.enrollment_token ?? ''"
-                readonly
-              />
-              <UButton
-                v-if="settings.enrollment_token"
-                aria-label="Copy enrollment token"
-                color="neutral"
-                icon="i-lucide-copy"
-                size="sm"
-                variant="soft"
-                @click="copy(settings.enrollment_token, 'Enrollment token')"
-              />
-              <UButton
-                color="neutral"
-                :loading="busy === 'rotate'"
-                size="sm"
-                variant="soft"
-                @click="
-                  patchSettings(
-                    'rotate',
-                    'Rotation failed',
-                    { rotate_enrollment_token: true },
-                    'Enrollment token rotated',
-                  )
-                "
-              >
-                Rotate
-              </UButton>
-            </div>
-          </UFormField>
+          <CopyField
+            label="Enrollment token"
+            :value="settings.enrollment_token ?? ''"
+          >
+            <UButton
+              color="neutral"
+              :loading="busy === 'rotate'"
+              size="sm"
+              variant="soft"
+              @click="
+                patchSettings(
+                  'rotate',
+                  'Rotation failed',
+                  { rotate_enrollment_token: true },
+                  'Enrollment token rotated',
+                )
+              "
+            >
+              Rotate
+            </UButton>
+          </CopyField>
         </section>
 
         <USeparator />
