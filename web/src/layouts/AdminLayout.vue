@@ -68,12 +68,6 @@ const navItems = computed(() => [
     count: activeMaintenancesCount.value,
     urgent: false,
   },
-  {
-    to: "/admin/settings",
-    label: "Settings",
-    count: 0,
-    urgent: false,
-  },
 ]);
 
 const isNavActive = (to: string) =>
@@ -166,7 +160,24 @@ async function onSignOut() {
           <span class="hidden sm:inline">Status</span>
         </RouterLink>
       </UTooltip>
-      <span aria-hidden="true" class="mx-1 h-4 border-l border-default" />
+      <span
+        aria-hidden="true"
+        class="mx-1.5 h-4 w-px bg-zinc-300 dark:bg-zinc-700"
+      />
+      <UTooltip text="Settings">
+        <RouterLink
+          aria-label="Settings"
+          class="inline-flex size-8 items-center justify-center rounded-md transition-colors focus-visible:outline-2 focus-visible:outline-primary"
+          :class="
+            isNavActive('/admin/settings')
+              ? 'bg-elevated text-highlighted'
+              : 'text-muted hover:bg-elevated/70 hover:text-default'
+          "
+          to="/admin/settings"
+        >
+          <UIcon class="size-4" name="i-lucide-settings" />
+        </RouterLink>
+      </UTooltip>
     </template>
 
     <template #actions>

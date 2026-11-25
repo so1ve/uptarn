@@ -5,7 +5,7 @@ defineProps<{
   variant: "public" | "admin-cards" | "admin-list";
 }>();
 
-const NAV_WIDTHS = ["w-14", "w-16", "w-11", "w-16", "w-24", "w-16"] as const;
+const NAV_WIDTHS = ["w-14", "w-16", "w-11", "w-16", "w-24"] as const;
 const MONITOR_ROWS = [
   { name: "w-24", sub: "w-32" },
   { name: "w-32", sub: "w-24" },
