@@ -19,6 +19,18 @@
       type="font/woff2"
       crossorigin
     />
+    <script>
+      try {
+        const mode = localStorage.getItem("vueuse-color-scheme");
+        if (
+          mode === "dark" ||
+          (mode !== "light" &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches)
+        ) {
+          document.documentElement.classList.add("dark");
+        }
+      } catch {}
+    </script>
   </head>
   <body class="bg-default text-default antialiased">
     <div id="app" class="isolate"></div>

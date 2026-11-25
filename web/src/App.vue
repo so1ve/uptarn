@@ -2,6 +2,7 @@
 import { computed, onMounted, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
+import LoadingShell from "./components/ui/LoadingShell.vue";
 import AdminShell from "./layouts/AdminShell.vue";
 import { useUptarnStore } from "./lib/index.ts";
 import LoginView from "./views/LoginView.vue";
@@ -15,6 +16,16 @@ const { publicStatus, snapshot, loadError, loadState, refreshPublicStatus } =
 const isAdminPublicView = computed(
   () => snapshot.value !== null && route.name === "public-status",
 );
+
+const loadingVariant = computed<"public" | "admin-cards" | "admin-list">(() => {
+  if (route.path === "/" || route.name === "public-status") {
+    return "public";
+  }
+
+  return route.name === "nodes" || route.path === "/admin"
+    ? "admin-cards"
+    : "admin-list";
+});
 
 const hasPublicContent = computed(
   () =>
@@ -93,8 +104,6 @@ onMounted(() => {
       :status="publicStatus"
     />
 
-    <div v-else class="grid min-h-svh place-items-center text-xs text-dimmed">
-      Loading…
-    </div>
+    <LoadingShell v-else :variant="loadingVariant" />
   </UApp>
 </template>
