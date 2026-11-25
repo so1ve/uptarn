@@ -7,9 +7,54 @@ export const httpError = (
   message: string,
 ): HTTPException => new HTTPException(status, { message });
 
-export async function readJson<T = unknown>(c: Context): Promise<T> {
+async function readTextWithLimit(
+  body: ReadableStream<Uint8Array> | null,
+  maxBytes: number,
+): Promise<string> {
+  if (!body) {
+    throw httpError(400, "Invalid JSON body");
+  }
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  let total = 0;
   try {
-    return await c.req.json<T>();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      total += value.byteLength;
+      if (total > maxBytes) {
+        throw httpError(413, "Request body too large");
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+
+  return text + decoder.decode();
+}
+
+export async function readJson<T = unknown>(
+  c: Context,
+  maxBytes?: number,
+): Promise<T> {
+  if (maxBytes === undefined) {
+    try {
+      return await c.req.json<T>();
+    } catch {
+      throw httpError(400, "Invalid JSON body");
+    }
+  }
+  const contentLength = Number(c.req.header("Content-Length") ?? "");
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw httpError(413, "Request body too large");
+  }
+  const raw = await readTextWithLimit(c.req.raw.body, maxBytes);
+  try {
+    return JSON.parse(raw) as T;
   } catch {
     throw httpError(400, "Invalid JSON body");
   }

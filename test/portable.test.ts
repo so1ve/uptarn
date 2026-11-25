@@ -2316,4 +2316,46 @@ describe("uptarn portable server", () => {
       ],
     });
   });
+
+  it("rejects oversized ingest payloads with HTTP 413", async () => {
+    const config = loadConfig({
+      PUBLIC_BASE_URL: "https://status.example.com",
+      ADMIN_TOKEN: "admin-tok",
+      AUTO_REGISTER: "true",
+      ENROLLMENT_TOKEN: "enroll-tok",
+    });
+    const app = createApp(db, config);
+
+    const oversizedReport = JSON.stringify({
+      node_id: "big-node",
+      label: "x".repeat(260 * 1024),
+    });
+    const reportRes = await app.request("/api/v1/ingest/report", {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer enroll-tok",
+        "Content-Type": "application/json",
+      },
+      body: oversizedReport,
+    });
+
+    expect(reportRes.status).toBe(413);
+
+    const oversizedJob = JSON.stringify({
+      job_key: "big-job",
+      interval_secs: 60,
+      status: "ok",
+      detail: "y".repeat(33 * 1024),
+    });
+    const jobRes = await app.request("/api/v1/ingest/job", {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer admin-tok",
+        "Content-Type": "application/json",
+      },
+      body: oversizedJob,
+    });
+
+    expect(jobRes.status).toBe(413);
+  });
 });

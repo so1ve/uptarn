@@ -49,6 +49,9 @@ import {
   parseSettingsPatch,
 } from "./validation.ts";
 
+const MAX_INGEST_REPORT_BYTES = 256 * 1024;
+const MAX_INGEST_JOB_BYTES = 32 * 1024;
+
 const resolveMutedUntil = (
   mutedUntil?: number,
   durationSecs?: number,
@@ -119,7 +122,9 @@ export function createApp(db: SqlDatabase, config: LoadedConfig): Hono {
 
   app.post("/api/v1/ingest/report", async (c) => {
     const token = requireBearer(c);
-    const payload = parseNodeReportPayload(await readJson(c));
+    const payload = parseNodeReportPayload(
+      await readJson(c, MAX_INGEST_REPORT_BYTES),
+    );
     const { registered } = await ingestNodeReport(
       db,
       config,
@@ -136,7 +141,7 @@ export function createApp(db: SqlDatabase, config: LoadedConfig): Hono {
     await ingestJobReport(
       db,
       config,
-      parseJobReportPayload(await readJson(c)),
+      parseJobReportPayload(await readJson(c, MAX_INGEST_JOB_BYTES)),
       token,
     );
 

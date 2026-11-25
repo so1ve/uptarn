@@ -103,4 +103,73 @@ describe("uptarn Cloudflare Worker runtime", () => {
 
     expect(snap.nodes.map((n) => n.id)).toContain("edge-sg-01");
   });
+
+  it("caches unauthenticated public status and boot at the edge while bypassing for admin", async () => {
+    const testEnv: CloudflareWorkerEnv = {
+      DB: env.DB,
+      PUBLIC_BASE_URL: "https://status.example.com",
+      ADMIN_TOKEN: "cf-test-admin",
+    };
+
+    async function run(request: Request) {
+      const ctx = createExecutionContext();
+      const response = await worker.fetch(request, testEnv, ctx);
+      await waitOnExecutionContext(ctx);
+
+      return response;
+    }
+
+    const status1 = await run(
+      new Request("https://status.example.com/api/v1/public/status"),
+    );
+
+    expect(status1.status).toBe(200);
+    expect(status1.headers.get("Cache-Control")).toContain("s-maxage=10");
+
+    const firstNow = (await status1.json<{ now: number }>()).now;
+
+    // Update site_title via admin settings; within cache TTL the cached edge response is returned.
+    const patchRes = await run(
+      new Request("https://status.example.com/api/v1/admin/settings", {
+        method: "PATCH",
+        headers: {
+          "Authorization": "Bearer cf-test-admin",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ site_title: "Edge Cached Check" }),
+      }),
+    );
+
+    expect(patchRes.status).toBe(200);
+
+    const status2 = await run(
+      new Request("https://status.example.com/api/v1/public/status?bust=1"),
+    );
+
+    expect(status2.status).toBe(200);
+    await expect(status2.json()).resolves.toMatchObject({
+      now: firstNow,
+      site_title: null,
+    });
+
+    // Unauthenticated boot is cached as public, while authenticated boot bypasses cache.
+    const pubBoot = await run(
+      new Request("https://status.example.com/api/v1/boot"),
+    );
+
+    expect(pubBoot.status).toBe(200);
+    await expect(pubBoot.json()).resolves.toMatchObject({ mode: "public" });
+
+    const adminBoot = await run(
+      new Request("https://status.example.com/api/v1/boot", {
+        headers: { Authorization: "Bearer cf-test-admin" },
+      }),
+    );
+
+    expect(adminBoot.status).toBe(200);
+    await expect(adminBoot.json()).resolves.toMatchObject({
+      mode: "admin",
+      snapshot: { settings: { site_title: "Edge Cached Check" } },
+    });
+  });
 });
