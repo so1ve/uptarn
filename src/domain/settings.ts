@@ -1,7 +1,7 @@
 import { generateRandomToken } from "../auth/index.ts";
 import type { LoadedConfig } from "../config.ts";
 import type { SqlDatabase, SqlStatement } from "../db/index.ts";
-import type { TargetType } from "../shared/index.ts";
+import type { SiteLink, TargetType } from "../shared/index.ts";
 import { unixNow } from "../shared/index.ts";
 import { assertMonitorHubManaged } from "./monitors.ts";
 
@@ -9,6 +9,8 @@ export interface RuntimeSettings {
   autoRegister: boolean;
   enrollmentToken: string | null;
   globalMutedUntil: number;
+  siteTitle: string | null;
+  siteLinks: SiteLink[];
   lastPruneAt: number;
 }
 
@@ -18,6 +20,27 @@ export interface SettingRow {
 }
 
 export const SELECT_SETTINGS_SQL = "SELECT key, value FROM system_settings";
+
+function parseStoredLinks(raw: string | undefined): SiteLink[] {
+  if (!raw) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+
+    return Array.isArray(parsed)
+      ? parsed.filter(
+          (item): item is SiteLink =>
+            typeof item === "object" &&
+            item !== null &&
+            typeof (item as SiteLink).label === "string" &&
+            typeof (item as SiteLink).url === "string",
+        )
+      : [];
+  } catch {
+    return [];
+  }
+}
 
 export function parseRuntimeSettings(
   rows: readonly SettingRow[],
@@ -32,6 +55,8 @@ export function parseRuntimeSettings(
     enrollmentToken:
       map.get("enrollment_token") || config.enrollmentToken || null,
     globalMutedUntil: Number.parseInt(map.get("global_muted_until") ?? "0", 10),
+    siteTitle: map.get("site_title")?.trim() || null,
+    siteLinks: parseStoredLinks(map.get("site_links")),
     lastPruneAt: Number.parseInt(map.get("last_prune_at") ?? "0", 10),
   };
 }
@@ -54,6 +79,8 @@ export async function updateRuntimeSettings(
     auto_register?: boolean;
     rotate_enrollment_token?: boolean;
     global_muted_until?: number;
+    site_title?: string | null;
+    site_links?: SiteLink[];
   },
 ): Promise<RuntimeSettings> {
   const now = unixNow();
@@ -88,6 +115,20 @@ export async function updateRuntimeSettings(
         String(next.globalMutedUntil),
         now,
       ),
+    );
+  }
+
+  if (patch.site_title !== undefined) {
+    next.siteTitle = patch.site_title;
+    statements.push(
+      upsertSettingStmt("site_title", patch.site_title ?? "", now),
+    );
+  }
+
+  if (patch.site_links !== undefined) {
+    next.siteLinks = patch.site_links;
+    statements.push(
+      upsertSettingStmt("site_links", JSON.stringify(patch.site_links), now),
     );
   }
 

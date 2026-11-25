@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import { computed } from "vue";
 
+import PasskeysSection from "../components/settings/PasskeysSection.vue";
+import StatusPageSettingsForm from "../components/settings/StatusPageSettingsForm.vue";
+import CopyField from "../components/ui/CopyField.vue";
+import PageHeader from "../components/ui/PageHeader.vue";
 import {
   apiFetch,
   formatRemaining,
   useAction,
   useSnapshot,
-} from "../../lib/index.ts";
-import CopyField from "../ui/CopyField.vue";
-import PasskeysSection from "./PasskeysSection.vue";
-
-const open = defineModel<boolean>("open", { default: false });
+} from "../lib/index.ts";
 
 const toast = useToast();
 const snap = useSnapshot();
@@ -66,11 +66,18 @@ const onSendTestNotification = () =>
 </script>
 
 <template>
-  <UModal v-model:open="open" title="Settings" :ui="{ content: 'max-w-lg' }">
-    <template #body>
-      <div class="space-y-6">
-        <section class="space-y-3">
-          <h3 class="text-xs font-semibold text-muted">Node registration</h3>
+  <div class="space-y-6">
+    <PageHeader title="Settings" />
+
+    <div class="divide-y divide-default border-y border-default">
+      <section class="grid grid-cols-1 gap-4 py-6 md:grid-cols-[14rem_1fr]">
+        <h2 class="text-sm font-semibold">Status page</h2>
+        <StatusPageSettingsForm />
+      </section>
+
+      <section class="grid grid-cols-1 gap-4 py-6 md:grid-cols-[14rem_1fr]">
+        <h2 class="text-sm font-semibold">Node registration</h2>
+        <div class="max-w-lg space-y-4">
           <USwitch
             :disabled="busy === 'enroll'"
             label="Auto-register with enrollment token"
@@ -107,16 +114,16 @@ const onSendTestNotification = () =>
               Rotate
             </UButton>
           </CopyField>
-        </section>
+        </div>
+      </section>
 
-        <USeparator />
-
-        <section class="space-y-3">
-          <h3 class="text-xs font-semibold text-muted">Notifications</h3>
+      <section class="grid grid-cols-1 gap-4 py-6 md:grid-cols-[14rem_1fr]">
+        <h2 class="text-sm font-semibold">Notifications</h2>
+        <div class="max-w-lg space-y-4">
           <div
             class="flex flex-wrap items-center justify-between gap-2 text-sm"
           >
-            <div class="flex items-center gap-3">
+            <div class="flex items-center gap-2.5">
               <span class="text-muted">Channels</span>
               <UBadge
                 v-for="[name, on] in [
@@ -145,7 +152,7 @@ const onSendTestNotification = () =>
           <div
             class="flex flex-wrap items-center justify-between gap-2 text-sm"
           >
-            <div class="flex items-center gap-3">
+            <div class="flex items-center gap-2.5">
               <span class="text-muted">Mute all</span>
               <span
                 :class="
@@ -199,12 +206,15 @@ const onSendTestNotification = () =>
               </UButton>
             </div>
           </div>
-        </section>
+        </div>
+      </section>
 
-        <USeparator />
-
-        <PasskeysSection />
-      </div>
-    </template>
-  </UModal>
+      <section class="grid grid-cols-1 gap-4 py-6 md:grid-cols-[14rem_1fr]">
+        <h2 class="text-sm font-semibold">Sign-in &amp; passkeys</h2>
+        <div class="max-w-lg">
+          <PasskeysSection />
+        </div>
+      </section>
+    </div>
+  </div>
 </template>

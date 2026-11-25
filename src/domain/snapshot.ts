@@ -482,6 +482,8 @@ export async function getDashboardSnapshot(
       auto_register: settings.autoRegister,
       enrollment_token: settings.enrollmentToken,
       global_muted_until: settings.globalMutedUntil,
+      site_title: settings.siteTitle,
+      site_links: settings.siteLinks,
       channels: {
         telegram: config.telegram !== null,
         matrix: config.matrix !== null,
@@ -539,12 +541,14 @@ export async function getPublicStatusSnapshot(
 ): Promise<PublicStatusSnapshot> {
   const now = unixNow();
   const [
+    settingRows,
     passkeyCountRows,
     monitorRows,
     nodeRows,
     openAlertStates,
     recentAlertEvents,
   ] = (await db.allBatch([
+    { sql: SELECT_SETTINGS_SQL },
     { sql: "SELECT COUNT(*) AS count FROM admin_passkeys" },
     {
       sql: `SELECT id, name, group_name, probe_json, public_url, enabled, last_checked_at, last_status, last_http_status, last_latency_ms, samples_json, rollup_json
@@ -563,12 +567,15 @@ export async function getPublicStatusSnapshot(
             FROM alert_events WHERE target_type IN ('monitor', 'node') ORDER BY created_at DESC LIMIT 60`,
     },
   ])) as [
+    SettingRow[],
     { count: number }[],
     MonitorRow[],
     NodeCoreRow[],
     PublicAlertStateRow[],
     PublicAlertEventRow[],
   ];
+
+  const settings = parseRuntimeSettings(settingRows, config);
 
   const publicMonitorsById = new Map<
     string,
@@ -636,6 +643,8 @@ export async function getPublicStatusSnapshot(
     now,
     version: manifest.version,
     public_base_url: config.publicBaseUrl,
+    site_title: settings.siteTitle,
+    site_links: settings.siteLinks,
     auth: buildAuthSummary(config, passkeyCountRows[0]?.count ?? 0),
     monitors,
     nodes,

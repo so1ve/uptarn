@@ -9,6 +9,7 @@ import type {
   NodeMonitorSpec,
   NodeReportPayload,
   SeriesUnit,
+  SiteLink,
   SystemSnapshot,
   TargetType,
 } from "./shared/index.ts";
@@ -527,6 +528,20 @@ export function parseMuteInput(raw: unknown) {
   };
 }
 
+export const normalizeSiteTitle = (
+  val: unknown,
+  field = "site_title",
+): string | null => str(val, field, 60) ?? null;
+
+export const normalizeSiteLinks = (
+  raw: unknown,
+  field = "site_links",
+): SiteLink[] =>
+  list(raw, field, 6, (item, p) => ({
+    label: reqStr(item.label, `${p}.label`, 32),
+    url: httpUrl(item.url, `${p}.url`) ?? bad(`${p}.url is required`),
+  }));
+
 export function parseSettingsPatch(raw: unknown) {
   const obj = asObj(raw, "settings patch");
 
@@ -538,5 +553,11 @@ export function parseSettingsPatch(raw: unknown) {
     ),
     global_muted_until: int(obj.global_muted_until, "global_muted_until", 0),
     global_mute_secs: int(obj.global_mute_secs, "global_mute_secs", 0),
+    site_title: Object.hasOwn(obj, "site_title")
+      ? normalizeSiteTitle(obj.site_title)
+      : undefined,
+    site_links: Object.hasOwn(obj, "site_links")
+      ? normalizeSiteLinks(obj.site_links)
+      : undefined,
   };
 }

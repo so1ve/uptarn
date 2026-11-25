@@ -270,10 +270,17 @@ export interface AuthMethodsSummary {
   passkey_count: number;
 }
 
+export interface SiteLink {
+  label: string;
+  url: string;
+}
+
 export interface AdminSettingsSummary {
   auto_register: boolean;
   enrollment_token: string | null;
   global_muted_until: number;
+  site_title: string | null;
+  site_links: SiteLink[];
   channels: {
     telegram: boolean;
     matrix: boolean;
@@ -337,6 +344,8 @@ export interface PublicStatusSnapshot {
   now: number;
   version: string;
   public_base_url: string;
+  site_title: string | null;
+  site_links: SiteLink[];
   auth: AuthMethodsSummary;
   monitors: PublicMonitorSummary[];
   nodes: PublicNodeSummary[];

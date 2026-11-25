@@ -4,6 +4,7 @@ import { RouterLink } from "vue-router";
 import { useUptarnStore } from "../../lib/index.ts";
 
 defineProps<{
+  title?: string | null;
   host?: string;
   to?: string;
 }>();
@@ -25,7 +26,7 @@ const { isDark } = useUptarnStore();
       width="22"
     />
     <span class="shrink-0 text-[15px] font-semibold tracking-tight">
-      Uptarn
+      {{ title || "Uptarn" }}
     </span>
     <template v-if="host">
       <span class="hidden text-dimmed sm:inline">/</span>

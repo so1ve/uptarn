@@ -588,6 +588,13 @@ export function renderSettingsDetail(
   ].filter(Boolean);
 
   return renderKv(theme, [
+    settings.site_title ? ["Site title", settings.site_title] : false,
+    settings.site_links.length > 0
+      ? [
+          "Site links",
+          settings.site_links.map((l) => `${l.label} (${l.url})`).join(", "),
+        ]
+      : false,
     [
       "Auto-register",
       settings.auto_register ? theme.warn("enabled") : theme.muted("disabled"),

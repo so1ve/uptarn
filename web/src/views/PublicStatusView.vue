@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
+import { computed, reactive, ref, watchEffect } from "vue";
 import { useRouter } from "vue-router";
 
 import PublicIncidentsSection from "../components/incidents/PublicIncidentsSection.vue";
@@ -43,7 +43,11 @@ function toggleExpand(key: string) {
   }
 }
 
-document.title = "Status - Uptarn";
+watchEffect(() => {
+  document.title = props.status.site_title
+    ? `${props.status.site_title} - Status`
+    : "Status - Uptarn";
+});
 useLiveRefresh("public", 10_000, 3000);
 
 const hasContent = computed(
@@ -109,7 +113,12 @@ async function onSignedIn() {
 </script>
 
 <template>
-  <AppLayout :host="hostOf(status.public_base_url)" :version="status.version">
+  <AppLayout
+    :host="hostOf(status.public_base_url)"
+    :links="status.site_links"
+    :title="status.site_title"
+    :version="status.version"
+  >
     <template #actions>
       <UButton
         v-if="adminPreview"

@@ -247,6 +247,8 @@ export function createApp(db: SqlDatabase, config: LoadedConfig): Hono {
         body.global_muted_until,
         body.global_mute_secs,
       ),
+      site_title: body.site_title,
+      site_links: body.site_links,
     });
 
     return c.json({
@@ -254,6 +256,8 @@ export function createApp(db: SqlDatabase, config: LoadedConfig): Hono {
       auto_register: settings.autoRegister,
       enrollment_token: settings.enrollmentToken,
       global_muted_until: settings.globalMutedUntil,
+      site_title: settings.siteTitle,
+      site_links: settings.siteLinks,
     });
   });
 

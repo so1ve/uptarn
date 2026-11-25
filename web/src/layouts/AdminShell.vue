@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, watch } from "vue";
 import { useRoute } from "vue-router";
 
 import IssuedTokenModal from "../components/modals/IssuedTokenModal.vue";
-import SettingsModal from "../components/modals/SettingsModal.vue";
 import MutedBadge from "../components/ui/MutedBadge.vue";
 import StatusBanner from "../components/ui/StatusBanner.vue";
 import {
@@ -20,14 +19,13 @@ const ROUTE_TITLES: Record<string, string> = {
   monitors: "Monitors",
   jobs: "Jobs",
   incidents: "Incidents",
+  settings: "Settings",
 };
 
 const route = useRoute();
 const snap = useSnapshot();
 const { busy, run } = useAction();
 const { signOutState } = useUptarnStore();
-
-const settingsOpen = ref(false);
 
 const totalIncidents = computed(() => snap.value.incidents.length);
 const openIncidents = computed(
@@ -172,11 +170,11 @@ async function onSignOut() {
       </UButton>
       <UButton
         aria-label="Settings"
-        color="neutral"
+        :color="route.name === 'settings' ? 'primary' : 'neutral'"
         icon="i-lucide-sliders-horizontal"
         size="sm"
-        variant="ghost"
-        @click="settingsOpen = true"
+        to="/admin/settings"
+        :variant="route.name === 'settings' ? 'soft' : 'ghost'"
       >
         <span class="hidden sm:inline">Settings</span>
       </UButton>
@@ -215,7 +213,6 @@ async function onSignOut() {
 
     <RouterView />
 
-    <SettingsModal v-model:open="settingsOpen" />
     <IssuedTokenModal />
   </AppLayout>
 </template>

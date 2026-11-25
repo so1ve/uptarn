@@ -8,6 +8,7 @@ import JobsView from "./views/JobsView.vue";
 import MonitorsView from "./views/MonitorsView.vue";
 import NodeDetailView from "./views/NodeDetailView.vue";
 import NodesView from "./views/NodesView.vue";
+import SettingsView from "./views/SettingsView.vue";
 
 import "./main.css";
 
@@ -29,6 +30,7 @@ const router = createRouter({
     { path: "/admin/monitors", name: "monitors", component: MonitorsView },
     { path: "/admin/jobs", name: "jobs", component: JobsView },
     { path: "/admin/incidents", name: "incidents", component: IncidentsView },
+    { path: "/admin/settings", name: "settings", component: SettingsView },
     { path: "/:pathMatch(.*)*", redirect: "/" },
   ],
 });

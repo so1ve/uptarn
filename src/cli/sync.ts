@@ -1,9 +1,15 @@
 import type { Theme } from "clerc";
 
-import type { DashboardSnapshot, MonitorSummary } from "../shared/index.ts";
+import type {
+  DashboardSnapshot,
+  MonitorSummary,
+  SiteLink,
+} from "../shared/index.ts";
 import {
   normalizeGroup,
   normalizePrimaryMount,
+  normalizeSiteLinks,
+  normalizeSiteTitle,
   parseMonitorInput,
   parseMonitorPatch,
 } from "../validation.ts";
@@ -24,6 +30,8 @@ export type SyncMonitorEntry =
 export interface SyncSpec {
   hub_url?: string;
   auto_register?: boolean;
+  site_title?: string | null;
+  site_links?: SiteLink[];
   nodes?: {
     id: string;
     is_public?: boolean;
@@ -34,7 +42,11 @@ export interface SyncSpec {
 }
 
 export interface SyncPlan {
-  settingsPatch: { auto_register: boolean } | null;
+  settingsPatch: {
+    auto_register?: boolean;
+    site_title?: string | null;
+    site_links?: SiteLink[];
+  } | null;
   nodePatches: {
     id: string;
     patch: {
@@ -128,6 +140,12 @@ export function parseSyncSpec(raw: unknown): SyncSpec {
   const autoRegister = optionalBool(obj.auto_register, "auto_register");
   if (autoRegister !== undefined) {
     spec.auto_register = autoRegister;
+  }
+  if (Object.hasOwn(obj, "site_title")) {
+    spec.site_title = normalizeSiteTitle(obj.site_title, "site_title");
+  }
+  if (Object.hasOwn(obj, "site_links")) {
+    spec.site_links = normalizeSiteLinks(obj.site_links, "site_links");
   }
 
   spec.nodes = parseUniqueArray(obj.nodes, "nodes", (node, label) => {
@@ -243,11 +261,28 @@ export function computeSyncPlan(
   options: { prune?: boolean } = {},
 ): SyncPlan {
   const prune = options.prune ?? false;
-  const settingsPatch =
+  const nextSettings: NonNullable<SyncPlan["settingsPatch"]> = {};
+  if (
     spec.auto_register !== undefined &&
     spec.auto_register !== current.settings.auto_register
-      ? { auto_register: spec.auto_register }
-      : null;
+  ) {
+    nextSettings.auto_register = spec.auto_register;
+  }
+  if (
+    spec.site_title !== undefined &&
+    spec.site_title !== current.settings.site_title
+  ) {
+    nextSettings.site_title = spec.site_title;
+  }
+  if (
+    spec.site_links !== undefined &&
+    JSON.stringify(spec.site_links) !==
+      JSON.stringify(current.settings.site_links)
+  ) {
+    nextSettings.site_links = spec.site_links;
+  }
+  const settingsPatch =
+    Object.keys(nextSettings).length > 0 ? nextSettings : null;
 
   const nodePatches: SyncPlan["nodePatches"] = [];
   const missingNodes: string[] = [];
@@ -494,7 +529,21 @@ export function renderSyncPlan(
     "Settings",
     plan.settingsPatch
       ? [
-          `  ${theme.warn("~")} auto_register ${theme.muted("->")} ${theme.bold(String(plan.settingsPatch.auto_register))}`,
+          ...(plan.settingsPatch.auto_register === undefined
+            ? []
+            : [
+                `  ${theme.warn("~")} auto_register ${theme.muted("->")} ${theme.bold(String(plan.settingsPatch.auto_register))}`,
+              ]),
+          ...(plan.settingsPatch.site_title === undefined
+            ? []
+            : [
+                `  ${theme.warn("~")} site_title ${theme.muted("->")} ${theme.bold(JSON.stringify(plan.settingsPatch.site_title))}`,
+              ]),
+          ...(plan.settingsPatch.site_links === undefined
+            ? []
+            : [
+                `  ${theme.warn("~")} site_links ${theme.muted("->")} ${theme.bold(`${plan.settingsPatch.site_links.length} link(s)`)}`,
+              ]),
         ]
       : [],
   );

@@ -1943,4 +1943,91 @@ describe("uptarn portable server", () => {
     expect(pub.incidents).toHaveLength(4);
     expect(pub.incidents.at(-1)?.state).toBe("resolved");
   });
+
+  it("persists status page title and links via settings PATCH, exposes them publicly, and reconciles via sync", async () => {
+    const config = loadConfig({
+      PUBLIC_BASE_URL: "https://status.example.com",
+      ADMIN_TOKEN: "admin-tok",
+    });
+    const app = createApp(db, config);
+    const adminHeaders = {
+      "Authorization": "Bearer admin-tok",
+      "Content-Type": "application/json",
+    };
+
+    const badLink = await app.request("/api/v1/admin/settings", {
+      method: "PATCH",
+      headers: adminHeaders,
+      body: JSON.stringify({
+        site_links: [{ label: "Bad", url: "javascript:alert(1)" }],
+      }),
+    });
+
+    expect(badLink.status).toBe(400);
+
+    const patchRes = await app.request("/api/v1/admin/settings", {
+      method: "PATCH",
+      headers: adminHeaders,
+      body: JSON.stringify({
+        site_title: "  Acme Status  ",
+        site_links: [
+          { label: "Homepage", url: "https://example.com" },
+          { label: "Docs", url: "https://docs.example.com" },
+        ],
+      }),
+    });
+
+    expect(patchRes.status).toBe(200);
+
+    const pub = await (
+      await app.request("/api/v1/public/status")
+    ).json<{
+      site_title: string | null;
+      site_links: { label: string; url: string }[];
+    }>();
+
+    expect(pub.site_title).toBe("Acme Status");
+    expect(pub.site_links).toEqual([
+      { label: "Homepage", url: "https://example.com/" },
+      { label: "Docs", url: "https://docs.example.com/" },
+    ]);
+
+    const snap = await (
+      await app.request("/api/v1/admin/snapshot", { headers: adminHeaders })
+    ).json<DashboardSnapshot>();
+    const spec = parseSyncSpec({
+      site_title: null,
+      site_links: [{ label: "Blog", url: "https://blog.example.com" }],
+    });
+    const plan = computeSyncPlan(snap, spec);
+
+    expect(plan.settingsPatch).toEqual({
+      site_title: null,
+      site_links: [{ label: "Blog", url: "https://blog.example.com/" }],
+    });
+
+    await applySyncPlan(async (method, apiPath, body) => {
+      const res = await app.request(apiPath, {
+        method,
+        headers: adminHeaders,
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+
+      expect(res.ok).toBeTruthy();
+
+      return await res.json();
+    }, plan);
+
+    const pubAfter = await (
+      await app.request("/api/v1/public/status")
+    ).json<{
+      site_title: string | null;
+      site_links: { label: string; url: string }[];
+    }>();
+
+    expect(pubAfter.site_title).toBeNull();
+    expect(pubAfter.site_links).toEqual([
+      { label: "Blog", url: "https://blog.example.com/" },
+    ]);
+  });
 });
