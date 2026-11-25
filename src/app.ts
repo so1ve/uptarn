@@ -11,6 +11,7 @@ import {
   handlePasskeyRegisterOptions,
   handlePasskeyRegisterVerify,
   handlePasswordLogin,
+  publicNodeKey,
   requireAdmin,
 } from "./auth/index.ts";
 import type { LoadedConfig } from "./config.ts";
@@ -85,7 +86,20 @@ async function removeOr404(
   return c.json({ ok: true });
 }
 
-export function createApp(db: SqlDatabase, config: LoadedConfig): Hono {
+export interface LiveSyncHooks {
+  onNodeVisibility?: (
+    nodeId: string,
+    publicKey: string,
+    isPublic: boolean,
+  ) => void;
+  onNodeDeleted?: (nodeId: string) => void;
+}
+
+export function createApp(
+  db: SqlDatabase,
+  config: LoadedConfig,
+  liveHooks?: LiveSyncHooks,
+): Hono {
   const app = new Hono();
 
   app.get("/healthz", (c) => c.text("ok\n"));
@@ -132,6 +146,14 @@ export function createApp(db: SqlDatabase, config: LoadedConfig): Hono {
       token,
       c.req.header("X-Uptarn-Enroll"),
     );
+
+    if (payload.is_public !== undefined && liveHooks?.onNodeVisibility) {
+      liveHooks.onNodeVisibility(
+        payload.node_id,
+        await publicNodeKey(payload.node_id),
+        payload.is_public,
+      );
+    }
 
     return c.json({ ok: true, registered });
   });
@@ -193,17 +215,29 @@ export function createApp(db: SqlDatabase, config: LoadedConfig): Hono {
   );
 
   app.patch("/api/v1/admin/nodes/:id", async (c) => {
+    const nodeId = c.req.param("id");
     const patch = parseNodePatch(await readJson(c));
-    if (!(await updateNode(db, c.req.param("id"), patch))) {
+    if (!(await updateNode(db, nodeId, patch))) {
       throw httpError(404, "Not found");
+    }
+    if (patch.is_public !== undefined && liveHooks?.onNodeVisibility) {
+      liveHooks.onNodeVisibility(
+        nodeId,
+        await publicNodeKey(nodeId),
+        patch.is_public,
+      );
     }
 
     return c.json({ ok: true, ...patch });
   });
 
-  app.delete("/api/v1/admin/nodes/:id", (c) =>
-    removeOr404(c, db, "node", c.req.param("id")),
-  );
+  app.delete("/api/v1/admin/nodes/:id", async (c) => {
+    const nodeId = c.req.param("id");
+    const res = await removeOr404(c, db, "node", nodeId);
+    liveHooks?.onNodeDeleted?.(nodeId);
+
+    return res;
+  });
 
   app.post("/api/v1/admin/monitors", async (c) =>
     c.json({ ok: true, id: await upsertMonitor(db, await readJson(c)) }),

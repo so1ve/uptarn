@@ -30,6 +30,20 @@
       "migrations_dir": "migrations"
     }
   ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "LIVE_HUB",
+        "class_name": "LiveHub"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["LiveHub"]
+    }
+  ],
   "vars": {
     "PUBLIC_BASE_URL": "https://status.example.com",
     "RETENTION_DAYS": "14",

@@ -172,4 +172,162 @@ describe("uptarn Cloudflare Worker runtime", () => {
       snapshot: { settings: { site_title: "Edge Cached Check" } },
     });
   });
+
+  it("streams live 3s telemetry through LiveHub Durable Object with auth and public redaction", async () => {
+    const testEnv: CloudflareWorkerEnv = {
+      DB: env.DB,
+      LIVE_HUB: (env as unknown as CloudflareWorkerEnv).LIVE_HUB,
+      PUBLIC_BASE_URL: "https://status.example.com",
+      ADMIN_TOKEN: "cf-test-admin",
+      AUTO_REGISTER: "true",
+      ENROLLMENT_TOKEN: "cf-enroll-token",
+    };
+
+    async function run(request: Request) {
+      const ctx = createExecutionContext();
+      const response = await worker.fetch(request, testEnv, ctx);
+      await waitOnExecutionContext(ctx);
+
+      return response;
+    }
+
+    // Create one public node and one private node.
+    const pubNode = await (
+      await run(
+        new Request("https://status.example.com/api/v1/admin/nodes", {
+          method: "POST",
+          headers: {
+            "Authorization": "Bearer cf-test-admin",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ id: "live-pub", is_public: true }),
+        }),
+      )
+    ).json<{ token: string }>();
+
+    // Bad token is rejected before touching DO.
+    const badUpgrade = await run(
+      new Request(
+        "https://status.example.com/api/v1/ingest/live?node_id=live-pub",
+        {
+          headers: {
+            Upgrade: "websocket",
+            Authorization: "Bearer wrong-token",
+          },
+        },
+      ),
+    );
+
+    expect(badUpgrade.status).toBe(401);
+
+    type CfSocket = Parameters<DurableObjectState["acceptWebSocket"]>[0];
+    const socketOf = (res: Response) =>
+      (res as Response & { webSocket?: CfSocket }).webSocket;
+    const nextMessage = (ws: CfSocket) =>
+      new Promise<string>((resolve) => {
+        ws.addEventListener("message", (ev) => resolve(String(ev.data)), {
+          once: true,
+        });
+      });
+
+    // Connect admin viewer and public viewer.
+    const adminResp = await run(
+      new Request("https://status.example.com/api/v1/live", {
+        headers: {
+          Upgrade: "websocket",
+          Authorization: "Bearer cf-test-admin",
+        },
+      }),
+    );
+
+    expect(adminResp.status).toBe(101);
+
+    const adminWs = socketOf(adminResp);
+    const adminInitPromise = nextMessage(adminWs);
+    adminWs.accept();
+
+    expect(JSON.parse(await adminInitPromise)).toMatchObject({ type: "init" });
+
+    const pubResp = await run(
+      new Request("https://status.example.com/api/v1/live", {
+        headers: { Upgrade: "websocket" },
+      }),
+    );
+
+    expect(pubResp.status).toBe(101);
+
+    const pubWs = socketOf(pubResp);
+    const pubInitPromise = nextMessage(pubWs);
+    pubWs.accept();
+
+    expect(JSON.parse(await pubInitPromise)).toMatchObject({ type: "init" });
+
+    // Ping/pong auto-response works without waking DO.
+    const pongPromise = nextMessage(pubWs);
+    pubWs.send("ping");
+
+    await expect(pongPromise).resolves.toBe("pong");
+
+    // Connect agent and push a live telemetry frame.
+    const agentResp = await run(
+      new Request(
+        "https://status.example.com/api/v1/ingest/live?node_id=live-pub",
+        {
+          headers: {
+            Upgrade: "websocket",
+            Authorization: `Bearer ${pubNode.token}`,
+          },
+        },
+      ),
+    );
+
+    expect(agentResp.status).toBe(101);
+
+    const agentWs = socketOf(agentResp);
+    agentWs.accept();
+
+    const adminTickPromise = nextMessage(adminWs);
+    const pubTickPromise = nextMessage(pubWs);
+    agentWs.send(
+      JSON.stringify({
+        uptime_secs: 9999,
+        cpu_pct: 23.4,
+        load_1m: 0.75,
+        mem_used_bytes: 500,
+        mem_total_bytes: 1000,
+        rx_bytes: 50_000,
+        tx_bytes: 25_000,
+      }),
+    );
+
+    const adminTick = JSON.parse(await adminTickPromise) as {
+      type: string;
+      sample: Record<string, unknown>;
+    };
+
+    expect(adminTick).toMatchObject({
+      type: "tick",
+      sample: {
+        node_id: "live-pub",
+        cpu_pct: 23.4,
+        load_1m: 0.75,
+      },
+    });
+
+    const pubTick = JSON.parse(await pubTickPromise) as {
+      type: string;
+      sample: Record<string, unknown>;
+    };
+
+    expect(pubTick.type).toBe("tick");
+    expect(pubTick.sample.cpu_pct).toBe(23.4);
+    expect(pubTick.sample.mem_pct).toBe(50);
+    expect(pubTick.sample).not.toHaveProperty("node_id");
+    expect(pubTick.sample).not.toHaveProperty("load_1m");
+    expect(pubTick.sample).not.toHaveProperty("rx_bps");
+
+    agentWs.close();
+    adminWs.close();
+    pubWs.close();
+  });
 });

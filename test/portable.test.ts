@@ -17,6 +17,7 @@ import {
   upsertMonitor,
 } from "../src/domain/index.ts";
 import type { DashboardSnapshot } from "../src/shared/index.ts";
+import { LiveStateBuffer, parseLiveIngestFrame } from "../src/shared/index.ts";
 
 describe("uptarn portable server", () => {
   let db: NodeDatabase;
@@ -2556,5 +2557,82 @@ describe("uptarn portable server", () => {
     expect(lastBody.get("secret")).toBe("0x4AAAAAAA-test-secret");
     expect(lastBody.get("response")).toBe("tok-valid");
     expect(lastBody.get("remoteip")).toBe("203.0.113.10");
+  });
+
+  it("buffers 3s live telemetry with rate limiting, reboot-safe bps, and strict public redaction", () => {
+    expect(parseLiveIngestFrame("not-json")).toBeNull();
+    expect(parseLiveIngestFrame(JSON.stringify({ cpu_pct: 10 }))).toBeNull();
+    expect(parseLiveIngestFrame("x".repeat(5000))).toBeNull();
+
+    const f1 = parseLiveIngestFrame(
+      JSON.stringify({
+        uptime_secs: 1000,
+        cpu_pct: 12.34,
+        load_1m: 0.456,
+        mem_used_bytes: 512,
+        mem_total_bytes: 1024,
+        rx_bytes: 10_000,
+        tx_bytes: 5000,
+      }),
+    );
+
+    expect(f1).toEqual({
+      uptime_secs: 1000,
+      cpu_pct: 12.3,
+      load_1m: 0.46,
+      mem_used_bytes: 512,
+      mem_total_bytes: 1024,
+      rx_bytes: 10_000,
+      tx_bytes: 5000,
+    });
+
+    const buf = new LiveStateBuffer();
+    const t1 = buf.ingest("web-1", "n_aaaa1111", true, f1!, 1000);
+
+    expect(t1?.admin).toMatchObject({
+      node_id: "web-1",
+      cpu_pct: 12.3,
+      rx_bps: null,
+      tx_bps: null,
+    });
+    expect(t1?.pub).toEqual({
+      key: "n_aaaa1111",
+      ts: 1000,
+      uptime_secs: 1000,
+      cpu_pct: 12.3,
+      mem_pct: 50,
+    });
+
+    // Sub-1s duplicate frame is ignored.
+    expect(buf.ingest("web-1", "n_aaaa1111", true, f1!, 1000)).toBeNull();
+
+    // 3s later computes accurate bps.
+    const t2 = buf.ingest(
+      "web-1",
+      "n_aaaa1111",
+      true,
+      { ...f1!, rx_bytes: 13_000, tx_bytes: 6500 },
+      1003,
+    );
+
+    expect(t2?.admin.rx_bps).toBe(1000);
+    expect(t2?.admin.tx_bps).toBe(500);
+
+    // Private node is never included in public payloads.
+    const priv = buf.ingest("priv-1", "n_bbbb2222", false, f1!, 1003);
+
+    expect(priv?.pub).toBeNull();
+    expect(Object.keys(buf.publicInitPayload(1003).nodes)).toEqual([
+      "n_aaaa1111",
+    ]);
+    expect(Object.keys(buf.adminInitPayload(1003).nodes)).toEqual([
+      "web-1",
+      "priv-1",
+    ]);
+
+    // Toggling visibility immediately hides node from public init.
+    buf.setNodeVisibility("web-1", "n_aaaa1111", false);
+
+    expect(buf.publicInitPayload(1003).nodes).toEqual({});
   });
 });

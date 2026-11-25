@@ -1,11 +1,16 @@
 import { createApp } from "./app.ts";
+import { authenticateLiveAgent, authenticateLiveViewer } from "./auth/index.ts";
 import type { ServerRuntimeEnv } from "./config.ts";
 import { loadConfig } from "./config.ts";
 import { d1Adapter } from "./db/index.ts";
 import { runTick } from "./domain/index.ts";
+import type { LiveHub } from "./live/durable-object.ts";
+
+export { LiveHub } from "./live/durable-object.ts";
 
 export interface CloudflareWorkerEnv extends ServerRuntimeEnv {
   DB: D1Database;
+  LIVE_HUB?: DurableObjectNamespace<LiveHub>;
 }
 
 const PUBLIC_CACHE_TTL_SECS = 10;
@@ -29,23 +34,84 @@ function hasAuthCredentials(request: Request): boolean {
   );
 }
 
+async function handleLiveUpgrade(
+  request: Request,
+  env: CloudflareWorkerEnv,
+  pathname: string,
+): Promise<Response> {
+  if (!env.LIVE_HUB) {
+    return new Response("Live hub not configured", { status: 503 });
+  }
+  const db = d1Adapter(env.DB);
+  const stub = env.LIVE_HUB.getByName("global");
+
+  if (pathname === "/api/v1/ingest/live") {
+    const auth = await authenticateLiveAgent(db, request);
+    if (!auth) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+    const headers = new Headers(request.headers);
+    headers.set("X-Uptarn-Role", "agent");
+    headers.set("X-Uptarn-Node-Id", auth.nodeId);
+    headers.set("X-Uptarn-Public-Key", auth.publicKey);
+    headers.set("X-Uptarn-Is-Public", auth.isPublic ? "1" : "0");
+
+    return stub.fetch(new Request(request.url, { headers }));
+  }
+
+  const scope = await authenticateLiveViewer(db, loadConfig(env), request);
+  const headers = new Headers(request.headers);
+  headers.set("X-Uptarn-Role", "viewer");
+  headers.set("X-Uptarn-Scope", scope);
+
+  return stub.fetch(new Request(request.url, { headers }));
+}
+
+function buildWorkerApp(env: CloudflareWorkerEnv, ctx: ExecutionContext) {
+  const liveHub = env.LIVE_HUB;
+
+  return createApp(
+    d1Adapter(env.DB),
+    loadConfig(env),
+    liveHub
+      ? {
+          onNodeVisibility: (nodeId, publicKey, isPublic) => {
+            ctx.waitUntil(
+              liveHub
+                .getByName("global")
+                .setNodeVisibility(nodeId, publicKey, isPublic),
+            );
+          },
+          onNodeDeleted: (nodeId) => {
+            ctx.waitUntil(liveHub.getByName("global").removeNode(nodeId));
+          },
+        }
+      : undefined,
+  );
+}
+
 async function handleFetch(
   request: Request,
   env: CloudflareWorkerEnv,
   ctx: ExecutionContext,
 ): Promise<Response> {
   const url = new URL(request.url);
+  if (
+    request.method === "GET" &&
+    (url.pathname === "/api/v1/ingest/live" ||
+      url.pathname === "/api/v1/live") &&
+    request.headers.get("Upgrade")?.toLowerCase() === "websocket"
+  ) {
+    return handleLiveUpgrade(request, env, url.pathname);
+  }
+
   const canCache =
     request.method === "GET" &&
     CACHEABLE_PUBLIC_PATHS.has(url.pathname) &&
     !hasAuthCredentials(request);
 
   if (!canCache) {
-    return createApp(d1Adapter(env.DB), loadConfig(env)).fetch(
-      request,
-      env,
-      ctx,
-    );
+    return buildWorkerApp(env, ctx).fetch(request, env, ctx);
   }
 
   const cache = (caches as unknown as { default: Cache }).default;
@@ -57,11 +123,7 @@ async function handleFetch(
     return cached;
   }
 
-  const response = await createApp(d1Adapter(env.DB), loadConfig(env)).fetch(
-    request,
-    env,
-    ctx,
-  );
+  const response = await buildWorkerApp(env, ctx).fetch(request, env, ctx);
   if (response.ok) {
     const cacheable = new Response(response.body, response);
     cacheable.headers.set(

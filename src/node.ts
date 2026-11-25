@@ -9,6 +9,7 @@ import { createApp } from "./app.ts";
 import { loadConfig } from "./config.ts";
 import { applyMigrations, openNodeSqlite } from "./db/node.ts";
 import { runTick } from "./domain/index.ts";
+import { NodeLiveHub } from "./live/node-hub.ts";
 import { errorMessage } from "./shared/index.ts";
 
 const DIST_DIR = path.resolve(import.meta.dirname, "../web/dist");
@@ -95,7 +96,15 @@ export async function startNodeServer(
     ? fs.readFileSync(indexPath, "utf8")
     : null;
 
-  const app = createApp(db, config);
+  const liveHub = new NodeLiveHub();
+  const app = createApp(db, config, {
+    onNodeVisibility: (nodeId, publicKey, isPublic) => {
+      liveHub.setNodeVisibility(nodeId, publicKey, isPublic);
+    },
+    onNodeDeleted: (nodeId) => {
+      liveHub.removeNode(nodeId);
+    },
+  });
   const staticHandler = serveStatic({ root: DIST_DIR });
   for (const route of [
     "/assets/*",
@@ -155,11 +164,17 @@ export async function startNodeServer(
       }),
     );
   });
+  server.on("upgrade", (req, socket, head) => {
+    void liveHub.handleUpgrade(req, socket, head, db, config).catch(() => {
+      socket.destroy();
+    });
+  });
 
   return {
     close: () =>
       new Promise<void>((resolve) => {
         clearInterval(tickTimer);
+        liveHub.close();
         server.close(() => {
           db.close();
           resolve();

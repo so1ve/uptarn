@@ -3,7 +3,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 
 import type { LoadedConfig } from "../config.ts";
 import type { SqlDatabase } from "../db/index.ts";
-import { extractBearer, httpError, readJson } from "../http.ts";
+import { httpError, readJson } from "../http.ts";
 import { unixNow } from "../shared/index.ts";
 import { verifyCloudflareAccessJwt } from "./cf-access.ts";
 import {
@@ -110,13 +110,36 @@ export async function createAdminSession(
   });
 }
 
-export async function checkAdminAuth(
-  c: Context,
+function readCookieHeader(header: string | null, name: string): string | null {
+  if (!header) {
+    return null;
+  }
+  const prefix = `${name}=`;
+  for (const part of header.split(";")) {
+    const trimmed = part.trim();
+    if (trimmed.startsWith(prefix)) {
+      const raw = trimmed.slice(prefix.length).trim();
+      try {
+        return decodeURIComponent(raw) || null;
+      } catch {
+        return raw || null;
+      }
+    }
+  }
+
+  return null;
+}
+
+export async function checkAdminAuthRequest(
+  request: Request,
   db: SqlDatabase,
   config: LoadedConfig,
 ): Promise<boolean> {
   const now = unixNow();
-  const bearer = extractBearer(c);
+  const authHeader = request.headers.get("Authorization");
+  const bearer = authHeader?.startsWith("Bearer ")
+    ? authHeader.slice(7).trim() || null
+    : null;
   if (bearer) {
     if (
       config.adminToken !== null &&
@@ -129,15 +152,16 @@ export async function checkAdminAuth(
     }
   }
 
-  const sessionToken = getCookie(c, SESSION_COOKIE);
+  const cookieHeader = request.headers.get("Cookie");
+  const sessionToken = readCookieHeader(cookieHeader, SESSION_COOKIE);
   if (sessionToken && (await hasActiveSession(db, sessionToken, now))) {
     return true;
   }
 
   if (config.cfAccess) {
     const cfJwt =
-      c.req.header("Cf-Access-Jwt-Assertion") ??
-      getCookie(c, "CF_Authorization");
+      request.headers.get("Cf-Access-Jwt-Assertion") ??
+      readCookieHeader(cookieHeader, "CF_Authorization");
     if (
       cfJwt &&
       (await verifyCloudflareAccessJwt(
@@ -152,6 +176,12 @@ export async function checkAdminAuth(
 
   return false;
 }
+
+export const checkAdminAuth = (
+  c: Context,
+  db: SqlDatabase,
+  config: LoadedConfig,
+): Promise<boolean> => checkAdminAuthRequest(c.req.raw, db, config);
 
 export const requireAdmin =
   (db: SqlDatabase, config: LoadedConfig): MiddlewareHandler =>

@@ -1,5 +1,5 @@
 import manifest from "../../package.json" with { type: "json" };
-import { hasPasswordLogin } from "../auth/index.ts";
+import { hasPasswordLogin, publicNodeKey } from "../auth/index.ts";
 import type { LoadedConfig } from "../config.ts";
 import type { SqlDatabase } from "../db/index.ts";
 import type {
@@ -656,9 +656,12 @@ export async function getPublicStatusSnapshot(
     };
   });
 
+  const nodePublicKeys = await Promise.all(
+    nodeRows.map((row) => publicNodeKey(row.id)),
+  );
   const publicNodesById = new Map<string, { key: string; label: string }>();
   const nodes = nodeRows.map((row, idx) => {
-    const key = `n${idx}`;
+    const key = nodePublicKeys[idx];
     publicNodesById.set(row.id, { key, label: row.label });
     const { system, mounts, overallStatus } = parseNodeCore(row, now);
     const hist = parseNodeSpark(row.spark_json, PUBLIC_SPARK_KEYS, now);
