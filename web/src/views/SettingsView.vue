@@ -70,14 +70,20 @@ const onSendTestNotification = () =>
     <PageHeader title="Settings" />
 
     <div class="divide-y divide-default border-y border-default">
-      <section class="grid grid-cols-1 gap-4 py-6 md:grid-cols-[14rem_1fr]">
-        <h2 class="text-sm font-semibold">Status page</h2>
-        <StatusPageSettingsForm />
+      <section
+        class="grid grid-cols-1 gap-4 py-6 md:grid-cols-[14rem_1fr] md:gap-6"
+      >
+        <h2 class="text-sm font-semibold md:pt-0.5">Status page</h2>
+        <div class="max-w-xl">
+          <StatusPageSettingsForm />
+        </div>
       </section>
 
-      <section class="grid grid-cols-1 gap-4 py-6 md:grid-cols-[14rem_1fr]">
-        <h2 class="text-sm font-semibold">Node registration</h2>
-        <div class="max-w-lg space-y-4">
+      <section
+        class="grid grid-cols-1 gap-4 py-6 md:grid-cols-[14rem_1fr] md:gap-6"
+      >
+        <h2 class="text-sm font-semibold md:pt-0.5">Node registration</h2>
+        <div class="max-w-xl space-y-4">
           <USwitch
             :disabled="busy === 'enroll'"
             label="Auto-register with enrollment token"
@@ -100,7 +106,7 @@ const onSendTestNotification = () =>
             <UButton
               color="neutral"
               :loading="busy === 'rotate'"
-              size="sm"
+              size="md"
               variant="soft"
               @click="
                 patchSettings(
@@ -117,29 +123,36 @@ const onSendTestNotification = () =>
         </div>
       </section>
 
-      <section class="grid grid-cols-1 gap-4 py-6 md:grid-cols-[14rem_1fr]">
-        <h2 class="text-sm font-semibold">Notifications</h2>
-        <div class="max-w-lg space-y-4">
+      <section
+        class="grid grid-cols-1 gap-4 py-6 md:grid-cols-[14rem_1fr] md:gap-6"
+      >
+        <h2 class="text-sm font-semibold md:pt-0.5">Notifications</h2>
+        <div class="max-w-xl space-y-4">
           <div
-            class="flex flex-wrap items-center justify-between gap-2 text-sm"
+            class="flex items-start justify-between gap-3 text-sm sm:items-center"
           >
-            <div class="flex items-center gap-2.5">
-              <span class="text-muted">Channels</span>
-              <UBadge
-                v-for="[name, on] in [
-                  ['Telegram', settings.channels.telegram],
-                  ['Matrix', settings.channels.matrix],
-                  ['Webhook', Boolean(settings.channels.webhook)],
-                ] as const"
-                :key="name"
-                :color="on ? 'success' : 'neutral'"
-                size="sm"
-                variant="subtle"
-              >
-                {{ name }} {{ on ? "on" : "off" }}
-              </UBadge>
+            <div class="flex min-w-0 flex-1 items-start gap-2 sm:items-center">
+              <span class="w-20 shrink-0 pt-0.5 text-muted sm:pt-0">
+                Channels
+              </span>
+              <div class="flex flex-wrap items-center gap-1.5">
+                <UBadge
+                  v-for="[name, on] in [
+                    ['Telegram', settings.channels.telegram],
+                    ['Matrix', settings.channels.matrix],
+                    ['Webhook', Boolean(settings.channels.webhook)],
+                  ] as const"
+                  :key="name"
+                  :color="on ? 'success' : 'neutral'"
+                  size="sm"
+                  variant="subtle"
+                >
+                  {{ name }} {{ on ? "on" : "off" }}
+                </UBadge>
+              </div>
             </div>
             <UButton
+              class="shrink-0"
               color="neutral"
               :loading="busy === 'test'"
               size="xs"
@@ -153,8 +166,8 @@ const onSendTestNotification = () =>
           <div
             class="flex flex-wrap items-center justify-between gap-2 text-sm"
           >
-            <div class="flex items-center gap-2.5">
-              <span class="text-muted">Mute all</span>
+            <div class="flex items-center gap-2">
+              <span class="w-20 shrink-0 text-muted">Mute all</span>
               <span
                 :class="
                   globalMuted
@@ -210,9 +223,11 @@ const onSendTestNotification = () =>
         </div>
       </section>
 
-      <section class="grid grid-cols-1 gap-4 py-6 md:grid-cols-[14rem_1fr]">
-        <h2 class="text-sm font-semibold">Sign-in &amp; passkeys</h2>
-        <div class="max-w-lg">
+      <section
+        class="grid grid-cols-1 gap-4 py-6 md:grid-cols-[14rem_1fr] md:gap-6"
+      >
+        <h2 class="text-sm font-semibold md:pt-0.5">Sign-in &amp; passkeys</h2>
+        <div class="max-w-xl">
           <PasskeysSection />
         </div>
       </section>

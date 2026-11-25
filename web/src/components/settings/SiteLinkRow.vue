@@ -13,7 +13,7 @@ defineProps<{
 
 <template>
   <div
-    class="grid grid-cols-[minmax(7rem,10rem)_minmax(0,1fr)_auto] items-center gap-2"
+    class="grid grid-cols-[minmax(5.5rem,7.5rem)_minmax(0,1fr)_auto] items-center gap-2 sm:grid-cols-[9.5rem_minmax(0,1fr)_auto]"
   >
     <UInput
       aria-label="Link label"
@@ -22,7 +22,6 @@ defineProps<{
       :model-value="link.label"
       placeholder="Homepage"
       required
-      size="sm"
       @update:model-value="emit('update', 'label', String($event))"
     />
     <UInput
@@ -31,7 +30,6 @@ defineProps<{
       :model-value="link.url"
       placeholder="https://example.com"
       required
-      size="sm"
       type="url"
       @update:model-value="emit('update', 'url', String($event))"
     />
@@ -39,7 +37,7 @@ defineProps<{
       aria-label="Remove link"
       color="neutral"
       icon="i-lucide-x"
-      size="xs"
+      size="md"
       type="button"
       variant="ghost"
       @click="emit('remove')"

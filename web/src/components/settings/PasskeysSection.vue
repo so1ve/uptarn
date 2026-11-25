@@ -54,7 +54,7 @@ const onDeletePasskey = (pk: PasskeySummary) =>
 <template>
   <div class="space-y-4">
     <div class="flex flex-wrap items-center gap-2 text-sm">
-      <span class="mr-1 text-muted">Methods</span>
+      <span class="w-20 shrink-0 text-muted">Methods</span>
       <UBadge
         v-for="[name, on] in [
           ['Password', snap.settings.auth.password_enabled],
@@ -101,10 +101,7 @@ const onDeletePasskey = (pk: PasskeySummary) =>
       </li>
     </ul>
 
-    <form
-      class="flex max-w-md items-center gap-2"
-      @submit.prevent="onRegisterPasskey"
-    >
+    <form class="flex items-center gap-2" @submit.prevent="onRegisterPasskey">
       <UInput
         v-model="passkeyName"
         aria-label="Passkey device name"
@@ -115,7 +112,7 @@ const onDeletePasskey = (pk: PasskeySummary) =>
       <UButton
         color="neutral"
         :loading="busy === 'passkey'"
-        size="sm"
+        size="md"
         type="submit"
         variant="soft"
       >

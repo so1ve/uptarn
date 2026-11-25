@@ -23,7 +23,7 @@ const { copy } = useAction();
         :aria-label="`Copy ${(copyLabel ?? label).toLowerCase()}`"
         color="neutral"
         icon="i-lucide-copy"
-        size="sm"
+        size="md"
         variant="soft"
         @click="copy(value, copyLabel ?? label)"
       >

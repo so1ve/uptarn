@@ -95,7 +95,7 @@ async function onSubmit() {
 
 <template>
   <form class="space-y-4" @submit.prevent="onSubmit">
-    <UFormField class="max-w-md" label="Title" name="site_title">
+    <UFormField label="Title" name="site_title">
       <UInput
         class="w-full"
         :maxlength="60"
@@ -105,7 +105,7 @@ async function onSubmit() {
       />
     </UFormField>
 
-    <div class="space-y-2.5">
+    <div class="space-y-2">
       <div class="flex items-center justify-between gap-2">
         <span class="text-xs font-medium text-default">Navigation links</span>
         <UButton
