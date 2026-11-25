@@ -129,6 +129,7 @@ const onSendTestNotification = () =>
                 v-for="[name, on] in [
                   ['Telegram', settings.channels.telegram],
                   ['Matrix', settings.channels.matrix],
+                  ['Webhook', Boolean(settings.channels.webhook)],
                 ] as const"
                 :key="name"
                 :color="on ? 'success' : 'neutral'"

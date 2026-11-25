@@ -284,6 +284,7 @@ export interface AdminSettingsSummary {
   channels: {
     telegram: boolean;
     matrix: boolean;
+    webhook?: boolean;
   };
   auth: AuthMethodsSummary;
 }

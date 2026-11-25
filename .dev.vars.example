@@ -10,3 +10,6 @@ ADMIN_TOKEN=uptarn-dev-admin-token
 # MATRIX_HOMESERVER=https://matrix.example.com
 # MATRIX_ACCESS_TOKEN=
 # MATRIX_ROOM_ID=!room:example.com
+# WEBHOOK_URL=https://hooks.example.com/uptarn
+# WEBHOOK_SECRET=
+# WEBHOOK_HEADERS={"Authorization":"Bearer example"}

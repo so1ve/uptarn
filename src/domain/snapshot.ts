@@ -497,6 +497,7 @@ export async function getDashboardSnapshot(
       channels: {
         telegram: config.telegram !== null,
         matrix: config.matrix !== null,
+        webhook: config.webhook !== null,
       },
       auth: buildAuthSummary(config, passkeys.length),
     },

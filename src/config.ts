@@ -12,6 +12,9 @@ export interface ServerRuntimeEnv {
   MATRIX_HOMESERVER?: string;
   MATRIX_ACCESS_TOKEN?: string;
   MATRIX_ROOM_ID?: string;
+  WEBHOOK_URL?: string;
+  WEBHOOK_SECRET?: string;
+  WEBHOOK_HEADERS?: string;
   RETENTION_DAYS?: string;
   FAILURE_THRESHOLD?: string;
 }
@@ -32,6 +35,12 @@ export interface MatrixConfig {
   roomId: string;
 }
 
+export interface WebhookConfig {
+  url: string;
+  secret: string | null;
+  headers: Record<string, string>;
+}
+
 export interface LoadedConfig {
   publicBaseUrl: string;
   adminPassword: string | null;
@@ -42,6 +51,7 @@ export interface LoadedConfig {
   cfAccess: CfAccessConfig | null;
   telegram: TelegramConfig | null;
   matrix: MatrixConfig | null;
+  webhook: WebhookConfig | null;
   retentionDays: number;
   failureThreshold: number;
 }
@@ -65,6 +75,49 @@ function envInt(
 const envBool = (value: string | undefined): boolean =>
   ["1", "true", "yes"].includes(envStr(value)?.toLowerCase() ?? "");
 
+function parseHttpUrl(value: string | undefined): string | null {
+  const raw = envStr(value);
+  if (!raw) {
+    return null;
+  }
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      return parsed.toString();
+    }
+  } catch {
+    // Ignore malformed webhook URL
+  }
+
+  return null;
+}
+
+function parseHeaderRecord(value: string | undefined): Record<string, string> {
+  const raw = envStr(value);
+  if (!raw) {
+    return {};
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+    const headers: Record<string, string> = {};
+    for (const [key, val] of Object.entries(
+      parsed as Record<string, unknown>,
+    )) {
+      const name = key.trim();
+      if (name && typeof val === "string") {
+        headers[name] = val;
+      }
+    }
+
+    return headers;
+  } catch {
+    return {};
+  }
+}
+
 export function loadConfig(env: ServerRuntimeEnv): LoadedConfig {
   const publicBaseUrl = (
     envStr(env.PUBLIC_BASE_URL) ?? "http://localhost:8787"
@@ -82,6 +135,8 @@ export function loadConfig(env: ServerRuntimeEnv): LoadedConfig {
   const mxToken = envStr(env.MATRIX_ACCESS_TOKEN);
   const mxRoom = envStr(env.MATRIX_ROOM_ID);
 
+  const webhookUrl = parseHttpUrl(env.WEBHOOK_URL);
+
   return {
     publicBaseUrl,
     adminPassword: envStr(env.ADMIN_PASSWORD),
@@ -96,6 +151,13 @@ export function loadConfig(env: ServerRuntimeEnv): LoadedConfig {
       mxServer && mxToken && mxRoom
         ? { homeserver: mxServer, accessToken: mxToken, roomId: mxRoom }
         : null,
+    webhook: webhookUrl
+      ? {
+          url: webhookUrl,
+          secret: envStr(env.WEBHOOK_SECRET),
+          headers: parseHeaderRecord(env.WEBHOOK_HEADERS),
+        }
+      : null,
     retentionDays: envInt(env.RETENTION_DAYS, 14, 1, 365),
     failureThreshold: envInt(env.FAILURE_THRESHOLD, 2, 1, 10),
   };

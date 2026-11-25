@@ -1,3 +1,4 @@
+import { hmacSha256Hex } from "../auth/index.ts";
 import type { LoadedConfig } from "../config.ts";
 import type { SqlStatement } from "../db/index.ts";
 import { readBoundedText } from "../http.ts";
@@ -8,6 +9,7 @@ import {
   formatDuration,
   incidentTargetPath,
   splitAlertLabel,
+  unixNow,
 } from "../shared/index.ts";
 
 export interface AlertPayload {
@@ -119,6 +121,7 @@ function formatBatchBodies(alerts: readonly AlertPayload[]) {
   }
 
   return {
+    title: `${heading}${suffix}`,
     plain: `${icon} ${heading}${suffix}\n${plainBody}\n${action.url}`,
     telegramHtml: `${icon} <b>${escapeHtml(defangDomain(heading))}</b>${escapeHtml(suffix)}\n<blockquote>${telegramBody}</blockquote>`,
     matrixHtml: `${icon} <b>${escapeHtml(heading)}</b>${escapeHtml(suffix)}<br/><blockquote>${matrixBody}</blockquote><a href="${escapeHtml(action.url)}">${escapeHtml(action.label)}</a>`,
@@ -151,7 +154,8 @@ export async function dispatchNotificationBatch(
     return { status: "no_alerts" };
   }
 
-  const { plain, telegramHtml, matrixHtml, action } = formatBatchBodies(alerts);
+  const { title, plain, telegramHtml, matrixHtml, action } =
+    formatBatchBodies(alerts);
   const tasks: [string, Promise<void>][] = [];
 
   if (config.telegram) {
@@ -199,6 +203,44 @@ export async function dispatchNotificationBatch(
           }),
         },
       ),
+    ]);
+  }
+
+  if (config.webhook) {
+    const { url, secret, headers: extraHeaders } = config.webhook;
+    const event = `alert.${alerts[0].kind}`;
+    const body = JSON.stringify({
+      event,
+      kind: alerts[0].kind,
+      title,
+      text: plain,
+      url: action.url,
+      timestamp: unixNow(),
+      alerts: alerts.map((a) => ({
+        kind: a.kind,
+        target_type: a.targetType,
+        target_id: a.targetId,
+        label: a.label,
+        summary: a.summary,
+        ...(a.durationSecs === undefined
+          ? {}
+          : { duration_secs: a.durationSecs }),
+      })),
+    });
+    tasks.push([
+      "webhook",
+      (async () => {
+        const headers = new Headers(extraHeaders);
+        headers.set("Content-Type", "application/json");
+        headers.set("X-Uptarn-Event", event);
+        if (secret) {
+          headers.set(
+            "X-Uptarn-Signature-256",
+            `sha256=${await hmacSha256Hex(secret, body)}`,
+          );
+        }
+        await sendJson(url, { method: "POST", headers, body });
+      })(),
     ]);
   }
 

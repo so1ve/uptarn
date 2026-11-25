@@ -18,6 +18,9 @@ let
     (lib.optionalString (
       cfg.matrixAccessTokenFile != null
     ) "matrix-access-token:${cfg.matrixAccessTokenFile}")
+    (lib.optionalString (cfg.webhookUrlFile != null) "webhook-url:${cfg.webhookUrlFile}")
+    (lib.optionalString (cfg.webhookSecretFile != null) "webhook-secret:${cfg.webhookSecretFile}")
+    (lib.optionalString (cfg.webhookHeadersFile != null) "webhook-headers:${cfg.webhookHeadersFile}")
   ];
 in
 {
@@ -125,6 +128,24 @@ in
       description = "Optional file containing MATRIX_ACCESS_TOKEN.";
     };
 
+    webhookUrlFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = "Optional file containing WEBHOOK_URL.";
+    };
+
+    webhookSecretFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = "Optional file containing WEBHOOK_SECRET for HMAC-SHA256 signing.";
+    };
+
+    webhookHeadersFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = "Optional file containing WEBHOOK_HEADERS JSON object.";
+    };
+
     environmentFile = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       default = null;
@@ -177,6 +198,15 @@ in
       }
       // lib.optionalAttrs (cfg.matrixAccessTokenFile != null) {
         MATRIX_ACCESS_TOKEN_FILE = "/run/credentials/uptarn.service/matrix-access-token";
+      }
+      // lib.optionalAttrs (cfg.webhookUrlFile != null) {
+        WEBHOOK_URL_FILE = "/run/credentials/uptarn.service/webhook-url";
+      }
+      // lib.optionalAttrs (cfg.webhookSecretFile != null) {
+        WEBHOOK_SECRET_FILE = "/run/credentials/uptarn.service/webhook-secret";
+      }
+      // lib.optionalAttrs (cfg.webhookHeadersFile != null) {
+        WEBHOOK_HEADERS_FILE = "/run/credentials/uptarn.service/webhook-headers";
       };
 
       serviceConfig = {

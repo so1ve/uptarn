@@ -21,6 +21,9 @@ const FILE_BACKED_ENV_KEYS = [
   "CF_ACCESS_AUD",
   "TELEGRAM_BOT_TOKEN",
   "MATRIX_ACCESS_TOKEN",
+  "WEBHOOK_URL",
+  "WEBHOOK_SECRET",
+  "WEBHOOK_HEADERS",
 ] as const;
 
 export interface NodeServerOptions {

@@ -3,10 +3,26 @@ const encoder = new TextEncoder();
 const sha256Bytes = async (input: string): Promise<Uint8Array> =>
   new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(input)));
 
-export async function sha256Hex(input: string): Promise<string> {
-  const bytes = await sha256Bytes(input);
+const bytesToHex = (bytes: Uint8Array): string =>
+  Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+export const sha256Hex = async (input: string): Promise<string> =>
+  bytesToHex(await sha256Bytes(input));
+
+export async function hmacSha256Hex(
+  secret: string,
+  input: string,
+): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, encoder.encode(input));
+
+  return bytesToHex(new Uint8Array(sig));
 }
 
 export async function timingSafeEqualText(

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.ts";
-import { sha256Hex } from "../src/auth/index.ts";
+import { hmacSha256Hex, sha256Hex } from "../src/auth/index.ts";
 import {
   applySyncPlan,
   computeSyncPlan,
@@ -2231,6 +2231,89 @@ describe("uptarn portable server", () => {
     expect(localDev.status).toBe(200);
     await expect(localDev.json()).resolves.toMatchObject({
       options: { rpId: "localhost" },
+    });
+  });
+
+  it("delivers signed webhook notifications with custom headers", async () => {
+    const config = loadConfig({
+      PUBLIC_BASE_URL: "https://status.example.com",
+      ADMIN_TOKEN: "admin-tok",
+      WEBHOOK_URL: "https://hooks.example.com/uptarn",
+      WEBHOOK_SECRET: "whsec-test-secret",
+      WEBHOOK_HEADERS: JSON.stringify({
+        "Authorization": "Bearer hook-token",
+        "X-Custom": "uptarn",
+      }),
+    });
+    const app = createApp(db, config);
+
+    const snapRes = await app.request("/api/v1/admin/snapshot", {
+      headers: { Authorization: "Bearer admin-tok" },
+    });
+
+    expect(snapRes.status).toBe(200);
+    await expect(snapRes.json()).resolves.toMatchObject({
+      settings: {
+        channels: { telegram: false, matrix: false, webhook: true },
+      },
+    });
+
+    const delivered: {
+      url: string;
+      method?: string;
+      headers: Record<string, string>;
+      body: string;
+    }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      (input: string | URL | Request, init?: RequestInit) => {
+        delivered.push({
+          url: String(input),
+          method: init?.method,
+          headers: Object.fromEntries(new Headers(init?.headers).entries()),
+          body: String(init?.body ?? ""),
+        });
+
+        return Promise.resolve(new Response("ok", { status: 200 }));
+      },
+    );
+
+    const testRes = await app.request("/api/v1/admin/notifications/test", {
+      method: "POST",
+      headers: { Authorization: "Bearer admin-tok" },
+    });
+
+    expect(testRes.status).toBe(200);
+    await expect(testRes.json()).resolves.toEqual({
+      ok: true,
+      delivery: { webhook: "ok" },
+    });
+
+    expect(delivered).toHaveLength(1);
+
+    const req = delivered[0];
+
+    expect(req.url).toBe("https://hooks.example.com/uptarn");
+    expect(req.method).toBe("POST");
+    expect(req.headers.authorization).toBe("Bearer hook-token");
+    expect(req.headers["x-custom"]).toBe("uptarn");
+    expect(req.headers["x-uptarn-event"]).toBe("alert.resolved");
+    expect(req.headers["x-uptarn-signature-256"]).toBe(
+      `sha256=${await hmacSha256Hex("whsec-test-secret", req.body)}`,
+    );
+    expect(JSON.parse(req.body)).toMatchObject({
+      event: "alert.resolved",
+      kind: "resolved",
+      title: "Uptarn test notification",
+      url: "https://status.example.com/admin/monitors",
+      alerts: [
+        {
+          kind: "resolved",
+          target_type: "monitor",
+          target_id: "test",
+          label: "Uptarn test notification",
+        },
+      ],
     });
   });
 });
