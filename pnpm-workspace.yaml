@@ -1,8 +1,4 @@
-minimumReleaseAgeExclude:
-  - "@clerc/logger@2.0.0-beta.2"
-  - "@clerc/plugin-completions@2.0.0-beta.2"
-  - "@clerc/theme@2.0.0-beta.2"
-  - clerc@2.0.0-beta.2
+minimumReleaseAge: 0
 shellEmulator: true
 
 overrides:

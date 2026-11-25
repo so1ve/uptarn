@@ -404,6 +404,9 @@ describe("uptarn CLI commands", () => {
     expect(badRangeTerminal.stderrText()).toContain(
       "'--status-max' must be greater than or equal to '--status-min'",
     );
+    expect(badRangeTerminal.stderrText()).toContain(
+      "received status-min=300, status-max=200",
+    );
 
     const outOfBoundsTerminal = createMemoryTerminal({
       env: { UPTARN_SERVER: SERVER_URL, UPTARN_ADMIN_TOKEN: ADMIN_TOKEN },
@@ -426,6 +429,11 @@ describe("uptarn CLI commands", () => {
     });
 
     expect(dupOrder.ok).toBeFalsy();
-    expect(dupOrderTerminal.stderrText()).toContain("duplicate identifier 'a'");
+    expect(dupOrderTerminal.stderrText()).toContain("duplicate value 'a'");
+
+    // Verify default subcommand & alias dispatch (mon -> monitor ls)
+    const defaultMon = await runCli(["mon", "--json"]);
+
+    expect(JSON.parse(defaultMon.stdoutText())).toEqual([]);
   });
 });

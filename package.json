@@ -36,10 +36,10 @@
     "types:cloudflare": "wrangler types"
   },
   "dependencies": {
-    "@clerc/plugin-completions": "2.0.0-beta.2",
+    "@clerc/plugin-completions": "2.0.0-beta.3",
     "@hono/node-server": "^2.1.11",
     "@simplewebauthn/server": "^13.2.2",
-    "clerc": "2.0.0-beta.2",
+    "clerc": "2.0.0-beta.3",
     "hono": "^4.12.0"
   },
   "devDependencies": {
