@@ -60,21 +60,18 @@ const canReorder = computed(
 
 const {
   dragAttrs,
+  groupDropAttrs,
   moveBy,
   commit: onReorderNodes,
 } = usePersistedReorder(
   "nodes",
   () => groupedNodes.value.flatMap((g) => g.items.map((n) => n.id)),
-  "ring-2 ring-primary/50",
+  () =>
+    nodesView.value === "cards"
+      ? "ring-2 ring-primary/50"
+      : "bg-elevated/80 ring-1 ring-primary/50 ring-inset",
   (id) => groupById.value.get(id) ?? null,
 );
-
-function onReorderTableGroup(groupKey: string, nextGroupIds: string[]) {
-  const nextAllIds = groupedNodes.value.flatMap((g) =>
-    g.key === groupKey ? nextGroupIds : g.items.map((n) => n.id),
-  );
-  onReorderNodes(nextAllIds);
-}
 
 function moveGroup(index: number, delta: -1 | 1) {
   const next = reorderNamedGroups(
@@ -155,7 +152,18 @@ const incidentHeadline = computed(() => {
         :key="group.key"
         :class="nodesView === 'cards' ? 'space-y-2.5' : 'space-y-2'"
       >
-        <div v-if="group.label" class="flex items-center justify-between gap-2">
+        <div
+          v-if="group.label"
+          class="flex items-center justify-between gap-2 transition-colors"
+          v-bind="
+            groupDropAttrs(
+              group.key,
+              group.isNamed ? group.label : null,
+              group.items.map((n) => n.id),
+              canReorder,
+            )
+          "
+        >
           <h3 class="text-xs font-medium text-muted">{{ group.label }}</h3>
           <div
             v-if="canReorder && group.isNamed && namedGroupCount > 1"
@@ -190,10 +198,10 @@ const incidentHeadline = computed(() => {
             v-for="node in group.items"
             :key="node.id"
             class="group/card relative flex flex-col rounded-xl transition-opacity"
-            v-bind="dragAttrs(node.id, canReorder && group.items.length > 1)"
+            v-bind="dragAttrs(node.id, canReorder)"
           >
             <DragHandle
-              v-if="canReorder && group.items.length > 1"
+              v-if="canReorder"
               class="absolute top-3.5 left-1.5 z-10 text-dimmed/50 opacity-0 transition-opacity group-hover/card:opacity-100 focus-visible:opacity-100"
               label="node"
               @move-down="moveBy(node.id, 1)"
@@ -205,10 +213,12 @@ const incidentHeadline = computed(() => {
 
         <NodeTable
           v-else
+          :drag-attrs
           :nodes="group.items"
           :now="snap.now"
-          :reorderable="canReorder && group.items.length > 1"
-          @reorder="(ids) => onReorderTableGroup(group.key, ids)"
+          :reorderable="canReorder"
+          @move-down="(id) => moveBy(id, 1)"
+          @move-up="(id) => moveBy(id, -1)"
         />
       </div>
     </div>

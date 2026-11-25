@@ -12,29 +12,24 @@ import {
   nodeIssueSummary,
   statusTextClass,
   summarizeDisk,
-  useReorder,
 } from "../../lib/index.ts";
 import DragHandle from "../ui/DragHandle.vue";
 import StatusDot from "../ui/StatusDot.vue";
 
 const emit = defineEmits<{
-  reorder: [ids: string[]];
+  moveUp: [id: string];
+  moveDown: [id: string];
 }>();
 
 const props = defineProps<{
   nodes: readonly NodeSummary[];
   now: number;
   reorderable?: boolean;
+  dragAttrs?: (id: string, enabled: boolean) => Record<string, unknown>;
 }>();
 
 const router = useRouter();
 const METRIC_COLS = ["CPU", "Mem", "Disk", "Net", "Uptime", "Seen"] as const;
-
-const { dragAttrs, moveBy } = useReorder(
-  () => props.nodes.map((n) => n.id),
-  (ids) => emit("reorder", ids),
-  "bg-elevated/80 ring-1 ring-primary/50 ring-inset",
-);
 
 const rows = computed(() =>
   props.nodes.map((node) => ({
@@ -71,14 +66,14 @@ const rows = computed(() =>
           v-for="{ node, mem, disk, issue } in rows"
           :key="node.id"
           class="cursor-pointer transition-colors hover:bg-elevated/60"
-          v-bind="dragAttrs(node.id, Boolean(reorderable))"
+          v-bind="dragAttrs ? dragAttrs(node.id, Boolean(reorderable)) : {}"
           @click="router.push(`/admin/nodes/${encodeURIComponent(node.id)}`)"
         >
           <td v-if="reorderable" class="w-7 py-3 pr-1" @click.stop>
             <DragHandle
               label="node"
-              @move-down="moveBy(node.id, 1)"
-              @move-up="moveBy(node.id, -1)"
+              @move-down="emit('moveDown', node.id)"
+              @move-up="emit('moveUp', node.id)"
             />
           </td>
           <td class="py-3 pr-4">

@@ -60,6 +60,7 @@ const groupById = computed(
 const canReorder = computed(() => snap.value.monitors.length > 1);
 const {
   dragAttrs,
+  groupDropAttrs,
   moveBy,
   commit: commitOrder,
 } = usePersistedReorder(
@@ -126,7 +127,18 @@ function openMonitorModal(mon: MonitorSummary | null) {
         :key="group.key"
         class="space-y-2"
       >
-        <div v-if="group.label" class="flex items-center justify-between gap-2">
+        <div
+          v-if="group.label"
+          class="flex items-center justify-between gap-2 transition-colors"
+          v-bind="
+            groupDropAttrs(
+              group.key,
+              group.isNamed ? group.label : null,
+              group.items.map((r) => r.mon.id),
+              canReorder,
+            )
+          "
+        >
           <h3 class="text-xs font-medium text-muted">{{ group.label }}</h3>
           <div
             v-if="canReorder && group.isNamed && namedGroupCount > 1"
@@ -157,13 +169,13 @@ function openMonitorModal(mon: MonitorSummary | null) {
           <div
             v-for="{ mon, stats, chartOption } in group.items"
             :key="mon.id"
-            v-bind="dragAttrs(mon.id, canReorder && group.items.length > 1)"
+            v-bind="dragAttrs(mon.id, canReorder)"
           >
             <MonitorRow
               :expanded="expandedIds.has(mon.id)"
               :monitor="mon"
               :now="snap.now"
-              :reorderable="canReorder && group.items.length > 1"
+              :reorderable="canReorder"
               :window="monitorWindow"
               @edit="openMonitorModal(mon)"
               @move-down="moveBy(mon.id, 1)"

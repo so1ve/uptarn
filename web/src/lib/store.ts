@@ -175,17 +175,37 @@ function sortByOrder<T extends { id: string }>(
 async function persistOrder<K extends "nodes" | "monitors">(
   kind: K,
   ids: string[],
+  groupUpdate?: { id: string; group: string | null },
 ) {
   if (!snapshot.value) {
     return;
   }
   const prev = snapshot.value[kind];
+  const updated = groupUpdate
+    ? prev.map((item) =>
+        item.id === groupUpdate.id
+          ? { ...item, group: groupUpdate.group }
+          : item,
+      )
+    : prev;
   snapshot.value = {
     ...snapshot.value,
-    [kind]: sortByOrder<DashboardSnapshot[K][number]>(prev, ids),
+    [kind]: sortByOrder<DashboardSnapshot[K][number]>(updated, ids),
   };
   try {
-    await apiFetch(`/api/v1/admin/${kind}/order`, "PUT", { ids });
+    const reqs: Promise<unknown>[] = [
+      apiFetch(`/api/v1/admin/${kind}/order`, "PUT", { ids }),
+    ];
+    if (groupUpdate) {
+      reqs.push(
+        apiFetch(
+          `/api/v1/admin/${kind}/${encodeURIComponent(groupUpdate.id)}`,
+          "PATCH",
+          { group: groupUpdate.group },
+        ),
+      );
+    }
+    await Promise.all(reqs);
   } catch (err) {
     if (snapshot.value) {
       snapshot.value = { ...snapshot.value, [kind]: prev };
