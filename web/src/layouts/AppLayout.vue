@@ -29,14 +29,14 @@ const isDemo = import.meta.env.VITE_DEMO === "true";
 
         <div
           v-if="$slots.nav"
-          class="order-3 -mx-4 flex w-[calc(100%+2rem)] items-center overflow-x-auto border-t border-default/70 px-4 py-1.5 sm:-mx-5 sm:w-[calc(100%+2.5rem)] sm:px-5 md:order-2 md:mx-0 md:mr-auto md:w-auto md:overflow-visible md:border-t-0 md:p-0"
+          class="order-3 -mx-4 flex w-[calc(100%+2rem)] items-center overflow-x-auto border-t border-default/70 py-1.5 pr-4 pl-1.5 [scrollbar-width:none] sm:-mx-5 sm:w-[calc(100%+2.5rem)] sm:pr-5 sm:pl-2.5 md:order-2 md:mx-0 md:mr-auto md:w-auto md:overflow-visible md:border-t-0 md:p-0 [&::-webkit-scrollbar]:hidden"
         >
           <slot name="nav" />
         </div>
         <nav
           v-else-if="links && links.length > 0"
           aria-label="External links"
-          class="order-3 -mx-4 flex w-[calc(100%+2rem)] items-center gap-1 overflow-x-auto border-t border-default/70 px-4 py-1.5 sm:-mx-5 sm:w-[calc(100%+2.5rem)] sm:px-5 md:order-2 md:mx-0 md:mr-auto md:w-auto md:overflow-visible md:border-t-0 md:p-0"
+          class="order-3 -mx-4 flex w-[calc(100%+2rem)] items-center gap-1 overflow-x-auto border-t border-default/70 py-1.5 pr-4 pl-1.5 [scrollbar-width:none] sm:-mx-5 sm:w-[calc(100%+2.5rem)] sm:pr-5 sm:pl-2.5 md:order-2 md:mx-0 md:mr-auto md:w-auto md:overflow-visible md:border-t-0 md:p-0 [&::-webkit-scrollbar]:hidden"
         >
           <a
             v-for="link in links"
@@ -78,18 +78,20 @@ const isDemo = import.meta.env.VITE_DEMO === "true";
       <div
         class="flex flex-wrap items-center justify-between gap-3 border-t border-default pt-4 font-mono text-xs text-dimmed"
       >
-        <div class="flex items-center gap-1.5">
-          <a
-            class="transition-colors hover:text-highlighted"
-            href="https://github.com/so1ve/uptarn"
-            rel="noopener noreferrer"
-            target="_blank"
-          >
-            Uptarn
-          </a>
-          <span>v{{ version }}</span>
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <div class="flex items-center gap-1.5">
+            <a
+              class="transition-colors hover:text-highlighted"
+              href="https://github.com/so1ve/uptarn"
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              Uptarn
+            </a>
+            <span>v{{ version }}</span>
+          </div>
           <span v-if="isDemo" class="font-sans text-muted">
-            · Interactive demo (resets on reload)
+            Interactive demo (resets on reload)
           </span>
         </div>
         <div

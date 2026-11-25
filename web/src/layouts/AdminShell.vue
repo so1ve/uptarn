@@ -122,7 +122,11 @@ async function onSignOut() {
 </script>
 
 <template>
-  <AppLayout home-to="/admin" :version="snap.version">
+  <AppLayout
+    home-to="/admin"
+    :links="snap.settings.site_links"
+    :version="snap.version"
+  >
     <template #nav>
       <nav aria-label="Primary" class="flex items-center gap-1">
         <RouterLink
@@ -160,6 +164,7 @@ async function onSignOut() {
       />
       <UButton
         aria-label="Public status page"
+        class="px-1.5 sm:px-2.5"
         color="neutral"
         icon="i-lucide-globe"
         size="sm"
@@ -170,6 +175,7 @@ async function onSignOut() {
       </UButton>
       <UButton
         aria-label="Check now"
+        class="px-1.5 sm:px-2.5"
         color="neutral"
         icon="i-lucide-refresh-cw"
         :loading="busy === 'tick'"
@@ -181,6 +187,7 @@ async function onSignOut() {
       </UButton>
       <UButton
         aria-label="Settings"
+        class="px-1.5 sm:px-2.5"
         :color="route.name === 'settings' ? 'primary' : 'neutral'"
         icon="i-lucide-sliders-horizontal"
         size="sm"
@@ -194,6 +201,7 @@ async function onSignOut() {
     <template #actions>
       <UButton
         aria-label="Sign out"
+        class="-mr-1.5 px-1.5 sm:mr-0 sm:px-2.5"
         color="neutral"
         icon="i-lucide-log-out"
         size="sm"
