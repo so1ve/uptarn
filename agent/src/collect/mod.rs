@@ -73,6 +73,10 @@ pub async fn collect_report(cfg: &AgentConfig, cpu_tracker: &mut CpuTracker) -> 
         }),
     );
 
+    if let Some(ref sys) = system {
+        checks.extend(system::evaluate_thresholds(&cfg.system, sys));
+    }
+
     let mut series = Vec::new();
     if cfg.system.enabled
         && cfg.system.temperature

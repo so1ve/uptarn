@@ -3,7 +3,9 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::config::SystemCollectConfig;
-use crate::protocol::{HealthStatus, InfoSnapshot, SeriesSnapshot, SeriesUnit, SystemSnapshot};
+use crate::protocol::{
+    CheckSnapshot, HealthStatus, InfoSnapshot, SeriesSnapshot, SeriesUnit, SystemSnapshot,
+};
 
 const VIRTUAL_IFACE_PREFIXES: &[&str] = &[
     "veth",
@@ -321,9 +323,97 @@ pub fn collect_os_info() -> Vec<InfoSnapshot> {
     info
 }
 
+fn threshold_check(
+    key: &str,
+    label: &str,
+    value: f64,
+    warn: Option<f64>,
+    fail: Option<f64>,
+    format_val: fn(f64) -> String,
+) -> Option<CheckSnapshot> {
+    if warn.is_none() && fail.is_none() {
+        return None;
+    }
+    let (status, breached) = if let Some(limit) = fail
+        && value >= limit
+    {
+        (HealthStatus::Fail, Some(limit))
+    } else if let Some(limit) = warn
+        && value >= limit
+    {
+        (HealthStatus::Warn, Some(limit))
+    } else {
+        (HealthStatus::Ok, None)
+    };
+    let summary = match breached {
+        Some(limit) => format!("{} (>= {})", format_val(value), format_val(limit)),
+        None => format_val(value),
+    };
+
+    Some(CheckSnapshot {
+        key: key.to_string(),
+        label: label.to_string(),
+        group: Some("system".to_string()),
+        status,
+        summary: Some(summary),
+        detail: None,
+    })
+}
+
+pub fn evaluate_thresholds(cfg: &SystemCollectConfig, sys: &SystemSnapshot) -> Vec<CheckSnapshot> {
+    let fmt_pct = |v: f64| format!("{v:.1}%");
+    let fmt_load = |v: f64| format!("{v:.2}");
+    let mem_pct = match (sys.mem_used_bytes, sys.mem_total_bytes) {
+        (Some(used), Some(total)) if total > 0 => {
+            Some(((used as f64 / total as f64) * 1000.0).round() / 10.0)
+        }
+        _ => None,
+    };
+
+    [
+        sys.cpu_pct.and_then(|v| {
+            threshold_check(
+                "system_cpu",
+                "CPU",
+                v,
+                cfg.cpu_warn_pct,
+                cfg.cpu_fail_pct,
+                fmt_pct,
+            )
+        }),
+        mem_pct.and_then(|v| {
+            threshold_check(
+                "system_mem",
+                "Memory",
+                v,
+                cfg.mem_warn_pct,
+                cfg.mem_fail_pct,
+                fmt_pct,
+            )
+        }),
+        sys.load_1m.and_then(|v| {
+            threshold_check(
+                "system_load",
+                "Load",
+                v,
+                cfg.load_warn,
+                cfg.load_fail,
+                fmt_load,
+            )
+        }),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{is_virtual_interface_name, parse_meminfo, parse_os_pretty_name};
+    use super::{
+        SystemCollectConfig, evaluate_thresholds, is_virtual_interface_name, parse_meminfo,
+        parse_os_pretty_name,
+    };
+    use crate::protocol::{HealthStatus, SystemSnapshot};
 
     #[test]
     fn parses_memory_and_swap_from_meminfo() {
@@ -370,5 +460,42 @@ SwapFree: 0 kB
             parse_os_pretty_name(raw).as_deref(),
             Some("NixOS 26.11 (Zokor)")
         );
+    }
+
+    #[test]
+    fn evaluates_optional_system_thresholds() {
+        let sys = SystemSnapshot {
+            uptime_secs: 600,
+            cpu_pct: Some(92.4),
+            load_1m: Some(3.5),
+            mem_used_bytes: Some(850),
+            mem_total_bytes: Some(1000),
+            swap_used_bytes: None,
+            swap_total_bytes: None,
+            rx_bytes: None,
+            tx_bytes: None,
+        };
+
+        assert!(evaluate_thresholds(&SystemCollectConfig::default(), &sys).is_empty());
+
+        let cfg = SystemCollectConfig {
+            cpu_warn_pct: Some(80.0),
+            cpu_fail_pct: Some(90.0),
+            mem_warn_pct: Some(80.0),
+            mem_fail_pct: Some(95.0),
+            load_fail: Some(8.0),
+            ..SystemCollectConfig::default()
+        };
+        let checks = evaluate_thresholds(&cfg, &sys);
+        assert_eq!(checks.len(), 3);
+        assert_eq!(checks[0].key, "system_cpu");
+        assert_eq!(checks[0].status, HealthStatus::Fail);
+        assert_eq!(checks[0].summary.as_deref(), Some("92.4% (>= 90.0%)"));
+        assert_eq!(checks[1].key, "system_mem");
+        assert_eq!(checks[1].status, HealthStatus::Warn);
+        assert_eq!(checks[1].summary.as_deref(), Some("85.0% (>= 80.0%)"));
+        assert_eq!(checks[2].key, "system_load");
+        assert_eq!(checks[2].status, HealthStatus::Ok);
+        assert_eq!(checks[2].summary.as_deref(), Some("3.50"));
     }
 }

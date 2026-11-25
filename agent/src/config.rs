@@ -64,6 +64,12 @@ pub struct SystemCollectConfig {
     pub temperature: bool,
     pub os_info: bool,
     pub interfaces: Vec<String>,
+    pub cpu_warn_pct: Option<f64>,
+    pub cpu_fail_pct: Option<f64>,
+    pub mem_warn_pct: Option<f64>,
+    pub mem_fail_pct: Option<f64>,
+    pub load_warn: Option<f64>,
+    pub load_fail: Option<f64>,
 }
 
 impl Default for SystemCollectConfig {
@@ -77,6 +83,12 @@ impl Default for SystemCollectConfig {
             temperature: true,
             os_info: true,
             interfaces: Vec::new(),
+            cpu_warn_pct: None,
+            cpu_fail_pct: None,
+            mem_warn_pct: None,
+            mem_fail_pct: None,
+            load_warn: None,
+            load_fail: None,
         }
     }
 }
@@ -470,6 +482,28 @@ fn resolve_secret(
     Ok(None)
 }
 
+fn validate_thresholds(
+    name: &str,
+    warn: Option<f64>,
+    fail: Option<f64>,
+    max: Option<f64>,
+) -> Result<()> {
+    for (kind, value) in [("warn", warn), ("fail", fail)] {
+        if let Some(v) = value {
+            ensure!(
+                v.is_finite() && v > 0.0 && max.is_none_or(|limit| v <= limit),
+                "{name}_{kind} must be a positive finite number{}",
+                max.map(|limit| format!(" <= {limit}")).unwrap_or_default()
+            );
+        }
+    }
+    if let (Some(w), Some(f)) = (warn, fail) {
+        ensure!(w <= f, "{name}_warn must be <= {name}_fail");
+    }
+
+    Ok(())
+}
+
 impl AgentConfig {
     pub fn load(path: &Path) -> Result<Self> {
         let raw = fs::read_to_string(path)
@@ -478,6 +512,24 @@ impl AgentConfig {
             .with_context(|| format!("failed to parse TOML config {}", path.display()))?;
         cfg.hub_url = cfg.hub_url.trim().trim_end_matches('/').to_string();
         ensure!(!cfg.hub_url.is_empty(), "hub_url cannot be empty");
+        validate_thresholds(
+            "system.cpu",
+            cfg.system.cpu_warn_pct,
+            cfg.system.cpu_fail_pct,
+            Some(100.0),
+        )?;
+        validate_thresholds(
+            "system.mem",
+            cfg.system.mem_warn_pct,
+            cfg.system.mem_fail_pct,
+            Some(100.0),
+        )?;
+        validate_thresholds(
+            "system.load",
+            cfg.system.load_warn,
+            cfg.system.load_fail,
+            None,
+        )?;
         for m in &cfg.mounts {
             ensure!(!m.path.trim().is_empty(), "mounts[].path cannot be empty");
         }
@@ -595,4 +647,18 @@ pub fn parse_duration_secs(raw: &str) -> Result<u64> {
         .with_context(|| format!("invalid duration '{raw}'"))?;
 
     Ok(base.saturating_mul(mult))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_thresholds;
+
+    #[test]
+    fn validates_system_threshold_bounds_and_order() {
+        assert!(validate_thresholds("system.cpu", Some(80.0), Some(95.0), Some(100.0)).is_ok());
+        assert!(validate_thresholds("system.cpu", Some(95.0), Some(80.0), Some(100.0)).is_err());
+        assert!(validate_thresholds("system.cpu", None, Some(105.0), Some(100.0)).is_err());
+        assert!(validate_thresholds("system.load", Some(0.0), None, None).is_err());
+        assert!(validate_thresholds("system.load", Some(2.5), Some(6.0), None).is_ok());
+    }
 }
