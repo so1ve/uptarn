@@ -2183,4 +2183,54 @@ describe("uptarn portable server", () => {
       targets: [],
     });
   });
+
+  it("derives passkey rpID from the request host, reverse proxy origin, or loopback", async () => {
+    const config = loadConfig({
+      PUBLIC_BASE_URL: "https://status.example.com",
+      ADMIN_TOKEN: "admin-tok",
+    });
+    const app = createApp(db, config);
+    await db.run(
+      "INSERT INTO admin_passkeys (id, name, public_key, created_at) VALUES ('cred-1', 'Key', 'AAAA', 1000)",
+    );
+
+    // Custom domain hitting Worker directly even when PUBLIC_BASE_URL is a placeholder.
+    const customDomain = await app.request(
+      "https://status.custom.dev/api/v1/auth/passkey/login/options",
+      { method: "POST" },
+    );
+
+    expect(customDomain.status).toBe(200);
+    await expect(customDomain.json()).resolves.toMatchObject({
+      options: { rpId: "status.custom.dev" },
+    });
+
+    // Loopback behind a reverse proxy for PUBLIC_BASE_URL.
+    const proxied = await app.request(
+      "http://127.0.0.1:8787/api/v1/auth/passkey/login/options",
+      {
+        method: "POST",
+        headers: { Origin: "https://status.example.com" },
+      },
+    );
+
+    expect(proxied.status).toBe(200);
+    await expect(proxied.json()).resolves.toMatchObject({
+      options: { rpId: "status.example.com" },
+    });
+
+    // Direct local development on localhost ignores untrusted external Origin headers.
+    const localDev = await app.request(
+      "http://localhost:8787/api/v1/auth/passkey/login/options",
+      {
+        method: "POST",
+        headers: { Origin: "https://evil.example" },
+      },
+    );
+
+    expect(localDev.status).toBe(200);
+    await expect(localDev.json()).resolves.toMatchObject({
+      options: { rpId: "localhost" },
+    });
+  });
 });

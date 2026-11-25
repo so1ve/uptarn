@@ -20,21 +20,37 @@ export const hasPasswordLogin = (config: LoadedConfig): boolean =>
     config.adminPassword ?? config.adminPasswordSha256 ?? config.adminToken,
   );
 
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "[::1]", "localhost"]);
+
 export function resolveRpOrigin(
   c: Context,
   config: LoadedConfig,
 ): { rpID: string; origin: string } {
   const reqUrl = new URL(c.req.url);
-  if (
-    reqUrl.hostname === "localhost" ||
-    reqUrl.hostname === "127.0.0.1" ||
-    reqUrl.hostname === "[::1]"
-  ) {
-    return { rpID: reqUrl.hostname, origin: reqUrl.origin };
+  if (!LOOPBACK_HOSTS.has(reqUrl.hostname)) {
+    const forwardedProto = c.req
+      .header("X-Forwarded-Proto")
+      ?.split(",")[0]
+      ?.trim()
+      .toLowerCase();
+    const origin =
+      reqUrl.protocol === "http:" && forwardedProto === "https"
+        ? `https://${reqUrl.host}`
+        : reqUrl.origin;
+
+    return { rpID: reqUrl.hostname, origin };
   }
   const configured = new URL(config.publicBaseUrl);
+  const reqOrigin = c.req.header("Origin")?.trim();
+  const forwardedHost = c.req.header("X-Forwarded-Host")?.split(",")[0]?.trim();
+  if (
+    !LOOPBACK_HOSTS.has(configured.hostname) &&
+    (reqOrigin === configured.origin || forwardedHost === configured.host)
+  ) {
+    return { rpID: configured.hostname, origin: configured.origin };
+  }
 
-  return { rpID: configured.hostname, origin: configured.origin };
+  return { rpID: reqUrl.hostname, origin: reqUrl.origin };
 }
 
 async function verifyPassword(
