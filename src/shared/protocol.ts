@@ -200,6 +200,7 @@ export interface MonitorSummary {
   interval_secs: number;
   enabled: boolean;
   is_public: boolean;
+  public_managed: boolean;
   managed_by_node_id: string | null;
   muted_until: number;
   last_checked_at: number | null;

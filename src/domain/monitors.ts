@@ -20,6 +20,7 @@ export interface MonitorConfigFields {
   interval_secs: number;
   enabled: number;
   is_public: number;
+  public_managed: number;
 }
 
 export const MONITOR_CONFIG_KEYS = [
@@ -30,6 +31,7 @@ export const MONITOR_CONFIG_KEYS = [
   "interval_secs",
   "enabled",
   "is_public",
+  "public_managed",
 ] as const satisfies readonly (keyof MonitorConfigFields)[];
 
 export interface MonitorRow extends MonitorConfigFields {
@@ -267,8 +269,8 @@ export function buildMonitorUpsertStatements(
   const statements: SqlStatement[] = [
     {
       sql: `INSERT INTO monitors
-            (id, name, probe_from, probe_json, public_url, interval_secs, enabled, is_public, managed_by_node_id, sort_order, created_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, COALESCE((SELECT MAX(sort_order) + 1 FROM monitors), 0), ?10)
+            (id, name, probe_from, probe_json, public_url, interval_secs, enabled, is_public, public_managed, managed_by_node_id, sort_order, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, COALESCE((SELECT MAX(sort_order) + 1 FROM monitors), 0), ?11)
             ON CONFLICT(id) DO UPDATE SET
               last_checked_at = CASE
                 WHEN monitors.probe_json != excluded.probe_json
@@ -281,7 +283,12 @@ export function buildMonitorUpsertStatements(
               public_url = excluded.public_url,
               interval_secs = excluded.interval_secs,
               enabled = excluded.enabled,
-              is_public = excluded.is_public,
+              is_public = CASE
+                WHEN excluded.managed_by_node_id IS NULL OR excluded.public_managed = 1
+                THEN excluded.is_public
+                ELSE monitors.is_public
+              END,
+              public_managed = excluded.public_managed,
               managed_by_node_id = excluded.managed_by_node_id`,
       params: [
         mon.id,
@@ -292,6 +299,7 @@ export function buildMonitorUpsertStatements(
         mon.interval_secs,
         mon.enabled,
         mon.is_public,
+        mon.public_managed,
         managedByNodeId,
         now,
       ],
@@ -350,12 +358,52 @@ export async function upsertMonitor(
         interval_secs: parsed.interval_secs,
         enabled: parsed.enabled ? 1 : 0,
         is_public: parsed.is_public ? 1 : 0,
+        public_managed: 0,
       },
       unixNow(),
     ),
   );
 
   return parsed.id;
+}
+
+export async function updateMonitor(
+  db: SqlDatabase,
+  monitorId: string,
+  patch: { is_public?: boolean; public_url?: string | null },
+): Promise<boolean> {
+  const existing = await db.first<{
+    managed_by_node_id: string | null;
+    public_managed: number;
+  }>("SELECT managed_by_node_id, public_managed FROM monitors WHERE id = ?1", [
+    monitorId,
+  ]);
+  if (!existing) {
+    return false;
+  }
+  if (patch.is_public !== undefined && existing.public_managed === 1) {
+    throw httpError(
+      409,
+      `Monitor "${monitorId}" visibility is managed by node "${existing.managed_by_node_id}"`,
+    );
+  }
+  const sets: string[] = [];
+  const params: (string | number | null)[] = [];
+  if (patch.is_public !== undefined) {
+    params.push(patch.is_public ? 1 : 0);
+    sets.push(`is_public = ?${params.length}`);
+  }
+  if (patch.public_url !== undefined) {
+    params.push(patch.public_url);
+    sets.push(`public_url = ?${params.length}`);
+  }
+  params.push(monitorId);
+  const res = await db.run(
+    `UPDATE monitors SET ${sets.join(", ")} WHERE id = ?${params.length}`,
+    params,
+  );
+
+  return res.changes > 0;
 }
 
 export async function probeMonitor(

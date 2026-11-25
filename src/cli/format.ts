@@ -354,7 +354,7 @@ export const renderMonitorsTable = (
       col("STATUS", (m) => formatMonitorState(theme, m)),
       col("PROBE", (m) => theme.muted(formatMonitorProbe(m))),
       col("VISIBILITY", (m) =>
-        formatVisibility(theme, m.is_public, m.managed_by_node_id !== null),
+        formatVisibility(theme, m.is_public, m.public_managed),
       ),
       col(
         "LATENCY",
@@ -437,7 +437,7 @@ export function renderMonitorDetail(
           ] as KvEntry[])),
       [
         "Visibility",
-        formatVisibility(theme, mon.is_public, mon.managed_by_node_id !== null),
+        formatVisibility(theme, mon.is_public, mon.public_managed),
       ],
       [
         "Managed by",

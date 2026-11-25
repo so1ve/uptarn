@@ -176,19 +176,31 @@ function buildManagedMonitorStatements(
             expected_body: spec.expected_body ?? null,
             timeout_ms: spec.timeout_ms ?? 8000,
           };
+    nextIds.add(id);
+    const prev = existingById.get(id);
+    const publicManaged = spec.is_public === undefined ? 0 : 1;
+    const isPublic =
+      spec.is_public === undefined
+        ? (prev?.is_public ?? (spec.from === "hub" ? 1 : 0))
+        : spec.is_public
+          ? 1
+          : 0;
+    const publicUrl =
+      spec.public_url === undefined
+        ? (prev?.public_url ?? null)
+        : spec.public_url;
     const next: MonitorConfigFields = {
       id,
       name: spec.name,
       probe_from: probe.from,
       probe_json: JSON.stringify(probe),
-      public_url: spec.public_url ?? null,
+      public_url: publicUrl,
       interval_secs:
         spec.interval_secs ?? (spec.from === "agent" ? nodeIntervalSecs : 60),
       enabled: (spec.enabled ?? true) ? 1 : 0,
-      is_public: (spec.is_public ?? spec.from === "hub") ? 1 : 0,
+      is_public: isPublic,
+      public_managed: publicManaged,
     };
-    nextIds.add(id);
-    const prev = existingById.get(id);
     if (!prev || !MONITOR_CONFIG_KEYS.every((k) => prev[k] === next[k])) {
       statements.push(...buildMonitorUpsertStatements(next, now, nodeId));
     }
@@ -301,7 +313,7 @@ export async function ingestNodeReport(
     batchQueries.push(
       {
         sql: `SELECT id, name, probe_from, probe_json, public_url, interval_secs,
-                     enabled, is_public, muted_until, samples_json, rollup_json
+                     enabled, is_public, public_managed, muted_until, samples_json, rollup_json
               FROM monitors WHERE managed_by_node_id = ?1`,
         params: [payload.node_id],
       },

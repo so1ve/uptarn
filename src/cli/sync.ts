@@ -1,16 +1,29 @@
 import type { Theme } from "clerc";
 
 import type { DashboardSnapshot, MonitorSummary } from "../shared/index.ts";
-import { normalizePrimaryMount, parseMonitorInput } from "../validation.ts";
+import {
+  normalizePrimaryMount,
+  parseMonitorInput,
+  parseMonitorPatch,
+} from "../validation.ts";
 import { renderSection } from "./format.ts";
 
 export type NormalizedSyncMonitor = ReturnType<typeof parseMonitorInput>;
+
+export type SyncMonitorEntry =
+  | ({ kind: "hub" } & NormalizedSyncMonitor)
+  | {
+      kind: "override";
+      id: string;
+      is_public?: boolean;
+      public_url?: string | null;
+    };
 
 export interface SyncSpec {
   hub_url?: string;
   auto_register?: boolean;
   nodes?: { id: string; is_public?: boolean; primary_mount?: string | null }[];
-  monitors?: NormalizedSyncMonitor[];
+  monitors?: SyncMonitorEntry[];
 }
 
 export interface SyncPlan {
@@ -25,9 +38,15 @@ export interface SyncPlan {
   nodeOrder: string[] | null;
   monitorsCreate: NormalizedSyncMonitor[];
   monitorsUpdate: { monitor: NormalizedSyncMonitor; changes: string[] }[];
+  monitorPatches: {
+    id: string;
+    patch: { is_public?: boolean; public_url?: string | null };
+    changes: string[];
+  }[];
+  missingMonitors: string[];
   monitorsDelete: { id: string; name: string }[];
   unmanagedMonitors: { id: string; name: string }[];
-  managedMonitorConflicts: { id: string; nodeId: string }[];
+  managedMonitorConflicts: { id: string; nodeId: string; reason: string }[];
   monitorOrder: string[] | null;
   hasChanges: boolean;
   hasConflicts: boolean;
@@ -112,13 +131,24 @@ export function parseSyncSpec(raw: unknown): SyncSpec {
     };
   });
 
-  spec.monitors = parseUniqueArray(obj.monitors, "monitors", (mon, label) => {
-    if (typeof mon.id !== "string" || !mon.id.trim()) {
-      throw new Error(`${label}.id is required for declarative sync`);
-    }
+  spec.monitors = parseUniqueArray<SyncMonitorEntry>(
+    obj.monitors,
+    "monitors",
+    (mon, label) => {
+      if (typeof mon.id !== "string" || !mon.id.trim()) {
+        throw new Error(`${label}.id is required for declarative sync`);
+      }
+      if (mon.url === undefined || mon.url === null) {
+        const hasPatch =
+          mon.is_public !== undefined || Object.hasOwn(mon, "public_url");
+        const patch = hasPatch ? parseMonitorPatch(mon) : {};
 
-    return parseMonitorInput(mon);
-  });
+        return { kind: "override", id: mon.id.trim(), ...patch };
+      }
+
+      return { kind: "hub", ...parseMonitorInput(mon) };
+    },
+  );
 
   return spec;
 }
@@ -260,6 +290,8 @@ export function computeSyncPlan(
 
   const monitorsCreate: NormalizedSyncMonitor[] = [];
   const monitorsUpdate: SyncPlan["monitorsUpdate"] = [];
+  const monitorPatches: SyncPlan["monitorPatches"] = [];
+  const missingMonitors: string[] = [];
   const monitorsDelete: SyncPlan["monitorsDelete"] = [];
   const unmanagedMonitors: SyncPlan["unmanagedMonitors"] = [];
   const managedMonitorConflicts: SyncPlan["managedMonitorConflicts"] = [];
@@ -273,24 +305,68 @@ export function computeSyncPlan(
     for (const desired of spec.monitors) {
       declaredSet.add(desired.id);
       const existing = byId.get(desired.id);
-      if (!existing) {
-        monitorsCreate.push(desired);
+      if (desired.kind === "override") {
+        if (!existing) {
+          missingMonitors.push(desired.id);
+
+          continue;
+        }
         declaredOrder.push(desired.id);
+        const patch: { is_public?: boolean; public_url?: string | null } = {};
+        const changes: string[] = [];
+        if (
+          desired.is_public !== undefined &&
+          desired.is_public !== existing.is_public
+        ) {
+          if (existing.public_managed) {
+            managedMonitorConflicts.push({
+              id: desired.id,
+              nodeId: existing.managed_by_node_id ?? "agent",
+              reason: `is_public is managed by node "${existing.managed_by_node_id ?? "agent"}"`,
+            });
+          } else {
+            patch.is_public = desired.is_public;
+            changes.push(
+              `is_public: ${existing.is_public} -> ${desired.is_public}`,
+            );
+          }
+        }
+        if (
+          desired.public_url !== undefined &&
+          desired.public_url !== existing.public_url
+        ) {
+          patch.public_url = desired.public_url;
+          changes.push(
+            `public_url: ${JSON.stringify(existing.public_url)} -> ${JSON.stringify(desired.public_url)}`,
+          );
+        }
+        if (changes.length > 0) {
+          monitorPatches.push({ id: desired.id, patch, changes });
+        }
+
+        continue;
+      }
+
+      const { kind: _kind, ...hubSpec } = desired;
+      if (!existing) {
+        monitorsCreate.push(hubSpec);
+        declaredOrder.push(hubSpec.id);
 
         continue;
       }
       if (existing.managed_by_node_id) {
         managedMonitorConflicts.push({
-          id: desired.id,
+          id: hubSpec.id,
           nodeId: existing.managed_by_node_id,
+          reason: `managed by node "${existing.managed_by_node_id}"`,
         });
 
         continue;
       }
-      declaredOrder.push(desired.id);
-      const changes = diffMonitor(existing, desired);
+      declaredOrder.push(hubSpec.id);
+      const changes = diffMonitor(existing, hubSpec);
       if (changes.length > 0) {
-        monitorsUpdate.push({ monitor: desired, changes });
+        monitorsUpdate.push({ monitor: hubSpec, changes });
       }
     }
 
@@ -327,6 +403,8 @@ export function computeSyncPlan(
     nodeOrder,
     monitorsCreate,
     monitorsUpdate,
+    monitorPatches,
+    missingMonitors,
     monitorsDelete,
     unmanagedMonitors,
     managedMonitorConflicts,
@@ -337,6 +415,7 @@ export function computeSyncPlan(
       nodeOrder !== null ||
       monitorsCreate.length > 0 ||
       monitorsUpdate.length > 0 ||
+      monitorPatches.length > 0 ||
       monitorsDelete.length > 0 ||
       monitorOrder !== null,
     hasConflicts:
@@ -416,10 +495,24 @@ export function renderSyncPlan(
       row(theme.warn("~"), theme.bold(monitor.id), monitor.name),
       ...changes.map((c) => `      ${theme.muted(c)}`),
     ]),
+    ...plan.monitorPatches.map((item) =>
+      row(
+        theme.warn("~"),
+        theme.bold(item.id),
+        theme.muted(item.changes.join(", ")),
+      ),
+    ),
     ...plan.monitorsDelete.map((m) =>
       row(theme.error("-"), theme.bold(m.id), theme.muted(m.name)),
     ),
     ...orderRow(plan.monitorOrder),
+    ...plan.missingMonitors.map((id) =>
+      row(
+        theme.warn("!"),
+        theme.bold(id),
+        theme.muted("not reported by agent yet (skipped)"),
+      ),
+    ),
     ...plan.unmanagedMonitors.map((m) =>
       row(
         theme.muted("?"),
@@ -428,11 +521,7 @@ export function renderSyncPlan(
       ),
     ),
     ...plan.managedMonitorConflicts.map((c) =>
-      row(
-        theme.error("!"),
-        theme.bold(c.id),
-        theme.error(`managed by node "${c.nodeId}"`),
-      ),
+      row(theme.error("!"), theme.bold(c.id), theme.error(c.reason)),
     ),
   ]);
 
@@ -443,6 +532,7 @@ export function renderSyncPlan(
   } else if (options.dryRun) {
     const updateCount =
       plan.monitorsUpdate.length +
+      plan.monitorPatches.length +
       plan.nodePatches.length +
       (plan.settingsPatch ? 1 : 0);
     const parts = [
@@ -469,7 +559,7 @@ export async function applySyncPlan(
         (c) => `node "${c.id}" is_public is managed by its agent`,
       ),
       ...plan.managedMonitorConflicts.map(
-        (c) => `monitor "${c.id}" is managed by node "${c.nodeId}"`,
+        (c) => `monitor "${c.id}" ${c.reason}`,
       ),
     ];
 
@@ -496,6 +586,13 @@ export async function applySyncPlan(
     ...plan.monitorsUpdate.map((u) => u.monitor),
   ]) {
     await request("POST", "/api/v1/admin/monitors", mon);
+  }
+  for (const item of plan.monitorPatches) {
+    await request(
+      "PATCH",
+      `/api/v1/admin/monitors/${encodeURIComponent(item.id)}`,
+      item.patch,
+    );
   }
   for (const mon of plan.monitorsDelete) {
     await request(

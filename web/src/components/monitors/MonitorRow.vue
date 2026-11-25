@@ -245,30 +245,16 @@ const errorText = computed(() =>
       </UTooltip>
     </div>
 
-    <UTooltip
+    <UButton
       v-if="adminMon"
-      :disabled="!adminMon.managed_by_node_id"
-      :text="
-        adminMon.managed_by_node_id
-          ? `Managed by ${adminMon.managed_by_node_id}`
-          : undefined
-      "
-    >
-      <UButton
-        :aria-label="
-          adminMon.managed_by_node_id
-            ? `Managed by ${adminMon.managed_by_node_id}`
-            : 'Edit monitor'
-        "
-        class="order-3 self-start lg:order-5 lg:self-center"
-        color="neutral"
-        :disabled="Boolean(adminMon.managed_by_node_id)"
-        icon="i-lucide-pencil"
-        size="xs"
-        variant="ghost"
-        @click.stop="!adminMon.managed_by_node_id && emit('edit')"
-      />
-    </UTooltip>
+      aria-label="Edit monitor"
+      class="order-3 self-start lg:order-5 lg:self-center"
+      color="neutral"
+      icon="i-lucide-pencil"
+      size="xs"
+      variant="ghost"
+      @click.stop="emit('edit')"
+    />
 
     <div
       :class="

@@ -14,6 +14,8 @@ const open = defineModel<boolean>("open", { default: false });
 const { busy, run } = useAction();
 const methods = ["GET", "HEAD", "POST"];
 const isEdit = computed(() => props.monitor !== null);
+const managedByNode = computed(() => props.monitor?.managed_by_node_id ?? null);
+const publicManaged = computed(() => props.monitor?.public_managed ?? false);
 
 const form = useModalForm(open, () => {
   const m = props.monitor;
@@ -40,6 +42,22 @@ async function onSubmit() {
     "save",
     "Could not save monitor",
     async () => {
+      if (managedByNode.value) {
+        const patch: { is_public?: boolean; public_url?: string | null } = {
+          public_url: form.is_public ? form.public_url.trim() || null : null,
+        };
+        if (!publicManaged.value) {
+          patch.is_public = form.is_public;
+        }
+        await apiFetch(
+          `/api/v1/admin/monitors/${encodeURIComponent(form.id)}`,
+          "PATCH",
+          patch,
+        );
+
+        return "Monitor updated";
+      }
+
       await apiFetch("/api/v1/admin/monitors", "POST", {
         id: form.id.trim() || undefined,
         name: form.name.trim(),
@@ -88,83 +106,117 @@ async function onDelete() {
 </script>
 
 <template>
-  <UModal v-model:open="open" :title="isEdit ? 'Edit monitor' : 'Add monitor'">
+  <UModal
+    v-model:open="open"
+    :title="
+      managedByNode
+        ? form.name || 'Edit monitor'
+        : isEdit
+          ? 'Edit monitor'
+          : 'Add monitor'
+    "
+  >
     <template #body>
       <form id="form-monitor" class="space-y-4" @submit.prevent="onSubmit">
-        <UFormField label="Name" name="name" required>
-          <UInput v-model="form.name" class="w-full" required />
-        </UFormField>
+        <p v-if="managedByNode" class="text-xs text-muted">
+          Probe settings are managed by
+          <span class="font-mono text-default">{{ managedByNode }}</span>
+          .
+        </p>
 
-        <UFormField label="URL" name="url" required>
-          <UInput
-            v-model="form.url"
-            class="w-full font-mono"
-            placeholder="https://example.com/healthz"
-            required
-            type="url"
-          />
-        </UFormField>
+        <template v-else>
+          <UFormField label="Name" name="name" required>
+            <UInput v-model="form.name" class="w-full" required />
+          </UFormField>
 
-        <div class="grid grid-cols-3 gap-3">
-          <UFormField label="Method" name="method">
-            <USelect
-              v-model="form.method"
-              class="w-full font-mono"
-              :items="methods"
-            />
-          </UFormField>
-          <UFormField label="Status from" name="expected_status_min" required>
+          <UFormField label="URL" name="url" required>
             <UInput
-              v-model.number="form.expected_status_min"
+              v-model="form.url"
               class="w-full font-mono"
-              :max="599"
-              :min="100"
+              placeholder="https://example.com/healthz"
               required
-              type="number"
+              type="url"
             />
           </UFormField>
-          <UFormField label="Status to" name="expected_status_max" required>
-            <UInput
-              v-model.number="form.expected_status_max"
-              class="w-full font-mono"
-              :max="599"
-              :min="100"
-              required
-              type="number"
-            />
-          </UFormField>
-        </div>
 
-        <UFormField label="Response must contain" name="expected_body">
-          <UInput v-model="form.expected_body" class="w-full font-mono" />
-        </UFormField>
+          <div class="grid grid-cols-3 gap-3">
+            <UFormField label="Method" name="method">
+              <USelect
+                v-model="form.method"
+                class="w-full font-mono"
+                :items="methods"
+              />
+            </UFormField>
+            <UFormField label="Status from" name="expected_status_min" required>
+              <UInput
+                v-model.number="form.expected_status_min"
+                class="w-full font-mono"
+                :max="599"
+                :min="100"
+                required
+                type="number"
+              />
+            </UFormField>
+            <UFormField label="Status to" name="expected_status_max" required>
+              <UInput
+                v-model.number="form.expected_status_max"
+                class="w-full font-mono"
+                :max="599"
+                :min="100"
+                required
+                type="number"
+              />
+            </UFormField>
+          </div>
 
-        <div class="grid grid-cols-2 gap-3">
-          <UFormField label="Interval (s)" name="interval_secs" required>
-            <UInput
-              v-model.number="form.interval_secs"
-              class="w-full font-mono"
-              :max="86400"
-              :min="30"
-              required
-              type="number"
-            />
+          <UFormField label="Response must contain" name="expected_body">
+            <UInput v-model="form.expected_body" class="w-full font-mono" />
           </UFormField>
-          <UFormField label="Timeout (ms)" name="timeout_ms" required>
-            <UInput
-              v-model.number="form.timeout_ms"
-              class="w-full font-mono"
-              :max="30000"
-              :min="500"
-              required
-              type="number"
-            />
-          </UFormField>
-        </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <UFormField label="Interval (s)" name="interval_secs" required>
+              <UInput
+                v-model.number="form.interval_secs"
+                class="w-full font-mono"
+                :max="86400"
+                :min="30"
+                required
+                type="number"
+              />
+            </UFormField>
+            <UFormField label="Timeout (ms)" name="timeout_ms" required>
+              <UInput
+                v-model.number="form.timeout_ms"
+                class="w-full font-mono"
+                :max="30000"
+                :min="500"
+                required
+                type="number"
+              />
+            </UFormField>
+          </div>
+        </template>
 
         <div class="flex flex-wrap items-center gap-6">
-          <USwitch v-model="form.enabled" label="Enabled" />
-          <USwitch v-model="form.is_public" label="Show on status page" />
+          <USwitch
+            v-if="!managedByNode"
+            v-model="form.enabled"
+            label="Enabled"
+          />
+          <UTooltip
+            :disabled="!publicManaged"
+            :text="
+              managedByNode
+                ? `Visibility is managed by ${managedByNode}`
+                : undefined
+            "
+          >
+            <USwitch
+              v-model="form.is_public"
+              :disabled="publicManaged"
+              label="Show on status page"
+            />
+          </UTooltip>
         </div>
 
         <UFormField
@@ -180,7 +232,9 @@ async function onDelete() {
               type="url"
             />
             <UButton
-              v-if="form.url.trim() && !form.public_url.trim()"
+              v-if="
+                !managedByNode && form.url.trim() && !form.public_url.trim()
+              "
               color="neutral"
               size="xs"
               variant="soft"
@@ -197,7 +251,7 @@ async function onDelete() {
       <div class="flex w-full items-center justify-between gap-2">
         <div>
           <ConfirmPopover
-            v-if="isEdit"
+            v-if="isEdit && !managedByNode"
             color="error"
             confirm-label="Delete"
             label="Delete monitor"

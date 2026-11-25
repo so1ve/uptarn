@@ -318,6 +318,7 @@ export async function getDashboardSnapshot(
       interval_secs: row.interval_secs,
       enabled: row.enabled === 1,
       is_public: row.is_public === 1,
+      public_managed: row.public_managed === 1,
       managed_by_node_id: row.managed_by_node_id,
       muted_until: row.muted_until,
       last_checked_at: row.last_checked_at,

@@ -1435,5 +1435,76 @@ describe("uptarn portable server", () => {
     expect(
       snapRecovered.incidents.some((inc) => inc.target_type === "monitor"),
     ).toBeFalsy();
+
+    // Hub can PATCH is_public and public_url on agent-managed monitor when agent omits is_public,
+    // and subsequent agent reports preserve those hub-side display settings.
+    const patchImmich = await app.request(
+      "/api/v1/admin/monitors/homelab%3Aimmich",
+      {
+        method: "PATCH",
+        headers: adminHeaders,
+        body: JSON.stringify({
+          is_public: true,
+          public_url: "https://photos.example.com",
+        }),
+      },
+    );
+
+    expect(patchImmich.status).toBe(200);
+
+    // Agent explicitly set is_public on pg -> Hub cannot override its visibility (409).
+    const lockedPg = await app.request("/api/v1/admin/monitors/homelab%3Apg", {
+      method: "PATCH",
+      headers: adminHeaders,
+      body: JSON.stringify({ is_public: false }),
+    });
+
+    expect(lockedPg.status).toBe(409);
+
+    // Next agent report does not wipe hub-edited is_public / public_url on immich.
+    vi.setSystemTime((10_180 + 360) * 1000);
+    await report(true, true);
+
+    const snapAfterPatch = await (
+      await app.request("/api/v1/admin/snapshot", { headers: adminHeaders })
+    ).json<DashboardSnapshot>();
+    const immichAfter = snapAfterPatch.monitors.find(
+      (m) => m.id === "homelab:immich",
+    )!;
+    const pgAfter = snapAfterPatch.monitors.find((m) => m.id === "homelab:pg")!;
+
+    expect(immichAfter).toMatchObject({
+      is_public: true,
+      public_managed: false,
+      public_url: "https://photos.example.com/",
+    });
+    expect(pgAfter.public_managed).toBeTruthy();
+
+    // Declarative sync can override visibility/public_url/order for unmanaged-visibility agent monitors.
+    const overrideSpec = parseSyncSpec({
+      monitors: [
+        {
+          id: "homelab:immich",
+          is_public: false,
+          public_url: null,
+        },
+        {
+          id: "homelab:pg",
+        },
+      ],
+    });
+    const overridePlan = computeSyncPlan(snapAfterPatch, overrideSpec);
+
+    expect(overridePlan.hasConflicts).toBeFalsy();
+    expect(overridePlan.monitorPatches).toEqual([
+      {
+        id: "homelab:immich",
+        patch: { is_public: false, public_url: null },
+        changes: [
+          "is_public: true -> false",
+          'public_url: "https://photos.example.com/" -> null',
+        ],
+      },
+    ]);
   });
 });

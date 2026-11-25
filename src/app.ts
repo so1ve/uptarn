@@ -28,6 +28,7 @@ import {
   runTick,
   sendTestNotification,
   setTargetMute,
+  updateMonitor,
   updateNode,
   updateRuntimeSettings,
   upsertMonitor,
@@ -38,6 +39,7 @@ import { errorMessage, unixNow } from "./shared/index.ts";
 import {
   parseCreateNodeInput,
   parseJobReportPayload,
+  parseMonitorPatch,
   parseMuteInput,
   parseNodePatch,
   parseNodeReportPayload,
@@ -199,6 +201,15 @@ export function createApp(db: SqlDatabase, config: LoadedConfig): Hono {
   app.post("/api/v1/admin/monitors", async (c) =>
     c.json({ ok: true, id: await upsertMonitor(db, await readJson(c)) }),
   );
+
+  app.patch("/api/v1/admin/monitors/:id", async (c) => {
+    const patch = parseMonitorPatch(await readJson(c));
+    if (!(await updateMonitor(db, c.req.param("id"), patch))) {
+      throw httpError(404, "Not found");
+    }
+
+    return c.json({ ok: true, ...patch });
+  });
 
   app.put("/api/v1/admin/monitors/order", async (c) => {
     await reorderTargets(db, "monitor", parseOrderInput(await readJson(c)));

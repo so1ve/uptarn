@@ -742,9 +742,40 @@ export function createCli() {
         throw new Error(`Monitor "${ctx.args.id}" not found`);
       }
       if (existing.managed_by_node_id || existing.probe.from !== "hub") {
-        throw new Error(
-          `Monitor "${existing.id}" is managed by node "${existing.managed_by_node_id ?? "agent"}"`,
+        const hasHubOnlyFlag =
+          ctx.flags.name !== undefined ||
+          ctx.flags.url !== undefined ||
+          ctx.flags.method !== undefined ||
+          ctx.flags.statusMin !== undefined ||
+          ctx.flags.statusMax !== undefined ||
+          ctx.flags.body !== undefined ||
+          ctx.flags.interval !== undefined ||
+          ctx.flags.timeout !== undefined ||
+          ctx.flags.enabled !== undefined;
+        if (hasHubOnlyFlag) {
+          throw new Error(
+            `Monitor "${existing.id}" is managed by node "${existing.managed_by_node_id ?? "agent"}"; only --public and --public-url can be updated on the hub`,
+          );
+        }
+        const patch: { is_public?: boolean; public_url?: string | null } = {};
+        if (ctx.flags.public !== undefined) {
+          patch.is_public = ctx.flags.public === "on";
+        }
+        if (ctx.flags.publicUrl !== undefined) {
+          patch.public_url = ctx.flags.publicUrl.trim() || null;
+        }
+        const res = await ctx.state.request<{ ok: boolean }>(
+          "PATCH",
+          `/api/v1/admin/monitors/${encodeURIComponent(existing.id)}`,
+          patch,
         );
+        emitJsonOr(ctx, res, () => {
+          ctx.log.success(
+            `Updated monitor ${ctx.log.theme.bold(existing.id)}.`,
+          );
+        });
+
+        return;
       }
 
       const payload: MonitorInput = {

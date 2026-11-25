@@ -322,13 +322,29 @@ function parseNodeMonitorSpec(
   key: string,
 ): NodeMonitorSpec {
   const from = reqOneOf(obj.from, `${prefix}.from`, MONITOR_SOURCES);
+  const isPublic = bool(obj.is_public, `${prefix}.is_public`);
+  const publicUrl = Object.hasOwn(obj, "public_url")
+    ? httpUrl(obj.public_url, `${prefix}.public_url`)
+    : undefined;
+
   if (from === "hub") {
     if (obj.type !== undefined && obj.type !== "http") {
       bad(`${prefix}: hub-probed monitors only support type "http"`);
     }
-    const { id: _id, ...spec } = parseMonitorInput({ ...obj, id: key });
+    const {
+      id: _id,
+      is_public: _pub,
+      public_url: _pubUrl,
+      ...spec
+    } = parseMonitorInput({ ...obj, id: key });
 
-    return { key, from: "hub", ...spec };
+    return {
+      key,
+      from: "hub",
+      ...spec,
+      ...(isPublic === undefined ? {} : { is_public: isPublic }),
+      ...(publicUrl === undefined ? {} : { public_url: publicUrl }),
+    };
   }
 
   const type = reqOneOf(obj.type, `${prefix}.type`, MONITOR_KINDS);
@@ -346,7 +362,7 @@ function parseNodeMonitorSpec(
     from: "agent",
     type,
     target,
-    public_url: httpUrl(obj.public_url, `${prefix}.public_url`),
+    ...(publicUrl === undefined ? {} : { public_url: publicUrl }),
     interval_secs: int(
       obj.interval_secs,
       `${prefix}.interval_secs`,
@@ -355,7 +371,7 @@ function parseNodeMonitorSpec(
     ),
     grace_secs: int(obj.grace_secs, `${prefix}.grace_secs`, 10, 604_800),
     enabled: obj.enabled === undefined ? true : Boolean(obj.enabled),
-    is_public: bool(obj.is_public, `${prefix}.is_public`) ?? false,
+    ...(isPublic === undefined ? {} : { is_public: isPublic }),
     result: parseMonitorResult(obj.result, `${prefix}.result`),
   };
 }
@@ -436,6 +452,25 @@ export function normalizePrimaryMount(
   const cleaned = str(val, field, 128);
 
   return !cleaned || cleaned === "sum" ? null : cleaned;
+}
+
+export function parseMonitorPatch(raw: unknown): {
+  is_public?: boolean;
+  public_url?: string | null;
+} {
+  const obj = asObj(raw, "monitor patch");
+  const isPublic = bool(obj.is_public, "is_public");
+  const publicUrl = Object.hasOwn(obj, "public_url")
+    ? httpUrl(obj.public_url, "public_url")
+    : undefined;
+  if (isPublic === undefined && publicUrl === undefined) {
+    bad("At least one of is_public or public_url is required");
+  }
+
+  return {
+    ...(isPublic === undefined ? {} : { is_public: isPublic }),
+    ...(publicUrl === undefined ? {} : { public_url: publicUrl }),
+  };
 }
 
 export function parseNodePatch(raw: unknown): {
