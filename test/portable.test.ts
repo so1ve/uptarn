@@ -260,6 +260,7 @@ describe("uptarn portable server", () => {
           {
             key: "nas_web",
             name: "NAS Web",
+            from: "hub",
             url: "https://nas.example.com/healthz",
             public_url: "https://nas.example.com",
             is_public: true,
@@ -673,12 +674,12 @@ describe("uptarn portable server", () => {
 
     const { id: redirectId } = await redirectMon.json<{ id: string }>();
 
-    await expect(
-      db.first<{ expected_status_min: number; expected_status_max: number }>(
-        "SELECT expected_status_min, expected_status_max FROM monitors WHERE id = ?1",
-        [redirectId],
-      ),
-    ).resolves.toEqual({
+    const redirectRow = await db.first<{ probe_json: string }>(
+      "SELECT probe_json FROM monitors WHERE id = ?1",
+      [redirectId],
+    );
+
+    expect(JSON.parse(redirectRow!.probe_json)).toMatchObject({
       expected_status_min: 301,
       expected_status_max: 301,
     });
@@ -1085,6 +1086,7 @@ describe("uptarn portable server", () => {
           {
             key: "agent_mon",
             name: "Agent Managed",
+            from: "hub",
             url: "https://agent.example.com/healthz",
           },
         ],
@@ -1205,5 +1207,233 @@ describe("uptarn portable server", () => {
     await expect(applySyncPlan(adminRequest, conflictPlan)).rejects.toThrow(
       /agent-managed conflicts/,
     );
+  });
+
+  it("tracks agent-probed http, tcp, and exec monitors with rollups, alerts, staleness, and public redaction", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000 * 1000);
+
+    const config = loadConfig({
+      PUBLIC_BASE_URL: "https://status.example.com",
+      ADMIN_TOKEN: "admin-agent-mon",
+      FAILURE_THRESHOLD: "2",
+    });
+    const app = createApp(db, config);
+    const adminHeaders = {
+      "Authorization": "Bearer admin-agent-mon",
+      "Content-Type": "application/json",
+    };
+
+    const nodeRes = await app.request("/api/v1/admin/nodes", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({ id: "homelab", label: "Homelab" }),
+    });
+    const { token } = await nodeRes.json<{ token: string }>();
+
+    // Reject hub-probed non-HTTP monitor spec.
+    const badSpec = await app.request("/api/v1/ingest/report", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        node_id: "homelab",
+        monitors: [
+          {
+            key: "bad",
+            name: "Bad",
+            type: "tcp",
+            from: "hub",
+            target: "127.0.0.1:5432",
+          },
+        ],
+      }),
+    });
+
+    expect(badSpec.status).toBe(400);
+
+    const report = (
+      pgOk: boolean,
+      caddyOk: boolean,
+      caddyErr: string | null = null,
+    ) =>
+      app.request("/api/v1/ingest/report", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          node_id: "homelab",
+          interval_secs: 60,
+          grace_secs: 120,
+          system: { uptime_secs: 1000 },
+          monitors: [
+            {
+              key: "immich",
+              name: "Immich",
+              type: "http",
+              from: "agent",
+              target: "http://127.0.0.1:2283/api/server/ping",
+              result: { ok: true, http_status: 200, latency_ms: 4.2 },
+            },
+            {
+              key: "pg",
+              name: "PostgreSQL",
+              from: "agent",
+              type: "tcp",
+              target: "10.0.0.8:5432",
+              is_public: true,
+              result: pgOk
+                ? { ok: true, latency_ms: 1.5 }
+                : {
+                    ok: false,
+                    latency_ms: 3000,
+                    error: "connection refused 10.0.0.8:5432",
+                  },
+            },
+            {
+              key: "caddy",
+              name: "Caddy",
+              from: "agent",
+              type: "exec",
+              target: "systemctl is-active caddy",
+              is_public: true,
+              result: caddyOk
+                ? { ok: true }
+                : { ok: false, error: caddyErr ?? "inactive" },
+            },
+          ],
+        }),
+      });
+
+    expect((await report(true, true)).status).toBe(200);
+
+    // Hub tick must not fetch agent-probed monitors when fresh.
+    const fetchMock = vi.fn(
+      async () => new Response("unexpected", { status: 500 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const freshTick = await runTick(db, config, { forceMonitors: true });
+
+    expect(freshTick.probed_monitors).toBe(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const snap1 = await (
+      await app.request("/api/v1/admin/snapshot", { headers: adminHeaders })
+    ).json<DashboardSnapshot>();
+
+    const immich = snap1.monitors.find((m) => m.id === "homelab:immich")!;
+    const pg = snap1.monitors.find((m) => m.id === "homelab:pg")!;
+    const caddy = snap1.monitors.find((m) => m.id === "homelab:caddy")!;
+
+    expect(immich).toMatchObject({
+      probe: {
+        from: "agent",
+        type: "http",
+        target: "http://127.0.0.1:2283/api/server/ping",
+        grace_secs: 120,
+      },
+      is_public: false,
+      last_status: "ok",
+      last_http_status: 200,
+      last_latency_ms: 4.2,
+    });
+    expect(pg).toMatchObject({
+      probe: {
+        from: "agent",
+        type: "tcp",
+        target: "10.0.0.8:5432",
+        grace_secs: 120,
+      },
+      is_public: true,
+      last_status: "ok",
+      last_latency_ms: 1.5,
+    });
+    expect(caddy).toMatchObject({
+      probe: {
+        from: "agent",
+        type: "exec",
+        target: "systemctl is-active caddy",
+        grace_secs: 120,
+      },
+      is_public: true,
+      last_status: "ok",
+      last_latency_ms: null,
+    });
+
+    // Two consecutive exec failures open an incident and redact private details on public status.
+    vi.setSystemTime(10_060 * 1000);
+    await report(false, false, "secret stderr token");
+    vi.setSystemTime(10_120 * 1000);
+    await report(false, false, "secret stderr token");
+
+    const pubRes = await app.request("/api/v1/public/status");
+    const pubRaw = await pubRes.text();
+    const pub = JSON.parse(pubRaw) as {
+      monitors: {
+        name: string;
+        last_status: string;
+        status_detail: string | null;
+      }[];
+    };
+
+    expect(
+      pub.monitors.map((m) => [m.name, m.last_status, m.status_detail]),
+    ).toEqual([
+      ["PostgreSQL", "fail", "Unreachable"],
+      ["Caddy", "fail", "Failed"],
+    ]);
+
+    for (const secret of [
+      "Immich",
+      "127.0.0.1:2283",
+      "10.0.0.8:5432",
+      "systemctl",
+      "secret stderr token",
+    ]) {
+      expect(pubRaw).not.toContain(secret);
+    }
+
+    // Recover before testing staleness.
+    vi.setSystemTime(10_180 * 1000);
+    await report(true, true);
+
+    // Advance past interval (60s) + grace (120s) without any agent report -> Hub marks monitors stale.
+    vi.setSystemTime((10_180 + 240) * 1000);
+    await runTick(db, config);
+
+    const snapStale = await (
+      await app.request("/api/v1/admin/snapshot", { headers: adminHeaders })
+    ).json<DashboardSnapshot>();
+    const stalePg = snapStale.monitors.find((m) => m.id === "homelab:pg")!;
+
+    expect(stalePg.last_status).toBe("fail");
+    expect(stalePg.last_checked_at).toBe(10_180);
+    expect(stalePg.last_error).toContain("No report from homelab");
+    expect(stalePg.samples.at(-1)?.ok).toBeFalsy();
+    expect(
+      snapStale.incidents.some(
+        (inc) =>
+          inc.incident_key === "monitor:homelab:pg" && inc.state === "open",
+      ),
+    ).toBeTruthy();
+
+    // Agent returns and clears the stale incident.
+    vi.setSystemTime((10_180 + 300) * 1000);
+    await report(true, true);
+
+    const snapRecovered = await (
+      await app.request("/api/v1/admin/snapshot", { headers: adminHeaders })
+    ).json<DashboardSnapshot>();
+
+    expect(
+      snapRecovered.monitors.find((m) => m.id === "homelab:pg")!.last_status,
+    ).toBe("ok");
+    expect(
+      snapRecovered.incidents.some((inc) => inc.target_type === "monitor"),
+    ).toBeFalsy();
   });
 });

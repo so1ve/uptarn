@@ -108,7 +108,11 @@ function openMonitorModal(mon: MonitorSummary | null) {
           v-if="expandedIds.has(mon.id)"
           class="mb-4 sm:ml-6"
           compact
-          empty-text="No samples yet."
+          :empty-text="
+            mon.samples.length > 0 && mon.probe.type === 'exec'
+              ? 'No latency data for command checks.'
+              : 'No samples yet.'
+          "
           height="180px"
           :option="chartOption"
         >

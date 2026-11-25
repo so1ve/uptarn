@@ -741,26 +741,31 @@ export function createCli() {
       if (!existing) {
         throw new Error(`Monitor "${ctx.args.id}" not found`);
       }
+      if (existing.managed_by_node_id || existing.probe.from !== "hub") {
+        throw new Error(
+          `Monitor "${existing.id}" is managed by node "${existing.managed_by_node_id ?? "agent"}"`,
+        );
+      }
 
       const payload: MonitorInput = {
         id: existing.id,
         name: ctx.flags.name ?? existing.name,
-        url: ctx.flags.url ?? existing.url,
+        url: ctx.flags.url ?? existing.probe.url,
         public_url:
           ctx.flags.publicUrl === undefined
             ? existing.public_url
             : ctx.flags.publicUrl.trim() || null,
-        method: ctx.flags.method ?? existing.method,
+        method: ctx.flags.method ?? existing.probe.method,
         expected_status_min:
-          ctx.flags.statusMin ?? existing.expected_status_min,
+          ctx.flags.statusMin ?? existing.probe.expected_status_min,
         expected_status_max:
-          ctx.flags.statusMax ?? existing.expected_status_max,
+          ctx.flags.statusMax ?? existing.probe.expected_status_max,
         expected_body:
           ctx.flags.body === undefined
-            ? existing.expected_body
+            ? existing.probe.expected_body
             : ctx.flags.body.trim() || null,
         interval_secs: ctx.flags.interval ?? existing.interval_secs,
-        timeout_ms: ctx.flags.timeout ?? existing.timeout_ms,
+        timeout_ms: ctx.flags.timeout ?? existing.probe.timeout_ms,
         enabled:
           ctx.flags.enabled === undefined
             ? existing.enabled

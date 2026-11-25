@@ -177,9 +177,9 @@ export function splitAlertLabel(
 ): { kind: string; scope: string | null; subject: string } {
   if (targetType === "monitor") {
     return {
-      kind: "HTTP",
+      kind: "Monitor",
       scope: null,
-      subject: label.replace(/^HTTP:\s*/i, ""),
+      subject: label.replace(/^Monitor:\s*/i, ""),
     };
   }
   if (targetType === "job") {

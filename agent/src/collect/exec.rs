@@ -120,7 +120,7 @@ fn parse_exit_output(
 
 pub async fn collect_item(cfg: &ExecCheckConfig) -> StructuredExecOutput {
     let Some((program, args)) = cfg.command.split_first() else {
-        return failed_exec(cfg, "empty command in [[exec]]", None);
+        return failed_exec(cfg, "empty command in [[checks]]", None);
     };
 
     let mut cmd = Command::new(program);

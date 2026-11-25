@@ -6,7 +6,11 @@ import {
 import type { LoadedConfig } from "../config.ts";
 import type { SqlDatabase, SqlStatement } from "../db/index.ts";
 import { httpError } from "../http.ts";
-import type { NodeMonitorSpec, NodeReportPayload } from "../shared/index.ts";
+import type {
+  MonitorProbe,
+  NodeMonitorSpec,
+  NodeReportPayload,
+} from "../shared/index.ts";
 import {
   formatSeriesWithLoss,
   formatUsage,
@@ -17,10 +21,12 @@ import {
 } from "../shared/index.ts";
 import type { AlertObservation, AlertStateRow } from "./alerts.ts";
 import { ALERT_STATE_COLUMNS, buildAlertStatements } from "./alerts.ts";
-import type { MonitorConfigFields } from "./monitors.ts";
+import type { MonitorConfigFields, ProbeResult } from "./monitors.ts";
 import {
   MONITOR_CONFIG_KEYS,
+  buildMonitorResultStatement,
   buildMonitorUpsertStatements,
+  monitorOkSummary,
 } from "./monitors.ts";
 import type { SettingRow } from "./settings.ts";
 import { SELECT_SETTINGS_SQL, parseRuntimeSettings } from "./settings.ts";
@@ -128,38 +134,100 @@ export async function rotateNodeToken(
   return { id: nodeId, token };
 }
 
+interface ManagedMonitorRow extends MonitorConfigFields {
+  muted_until: number;
+  samples_json: string;
+  rollup_json: string;
+}
+
 function buildManagedMonitorStatements(
   nodeId: string,
+  nodeIntervalSecs: number,
+  nodeGraceSecs: number,
+  failureThreshold: number,
   specs: readonly NodeMonitorSpec[],
-  existing: readonly MonitorConfigFields[],
+  existing: readonly ManagedMonitorRow[],
   now: number,
-): SqlStatement[] {
+): { statements: SqlStatement[]; observations: AlertObservation[] } {
   const statements: SqlStatement[] = [];
+  const observations: AlertObservation[] = [];
   const existingById = new Map(existing.map((row) => [row.id, row]));
   const nextIds = new Set<string>();
 
   for (const spec of specs) {
-    const minStatus = spec.expected_status_min ?? 200;
+    const id = `${nodeId}:${spec.key}`.slice(0, 64);
+    const probe: MonitorProbe =
+      spec.from === "agent"
+        ? {
+            from: "agent",
+            type: spec.type,
+            target: spec.target ?? null,
+            grace_secs: spec.grace_secs ?? nodeGraceSecs,
+          }
+        : {
+            from: "hub",
+            type: "http",
+            url: spec.url,
+            method: spec.method ?? "GET",
+            expected_status_min: spec.expected_status_min ?? 200,
+            expected_status_max:
+              spec.expected_status_max ??
+              Math.max(299, spec.expected_status_min ?? 200),
+            expected_body: spec.expected_body ?? null,
+            timeout_ms: spec.timeout_ms ?? 8000,
+          };
     const next: MonitorConfigFields = {
-      id: `${nodeId}:${spec.key}`.slice(0, 64),
+      id,
       name: spec.name,
-      url: spec.url,
+      probe_from: probe.from,
+      probe_json: JSON.stringify(probe),
       public_url: spec.public_url ?? null,
-      method: spec.method ?? "GET",
-      expected_status_min: minStatus,
-      expected_status_max: spec.expected_status_max ?? Math.max(299, minStatus),
-      expected_body: spec.expected_body ?? null,
-      timeout_ms: spec.timeout_ms ?? 8000,
-      interval_secs: spec.interval_secs ?? 60,
+      interval_secs:
+        spec.interval_secs ?? (spec.from === "agent" ? nodeIntervalSecs : 60),
       enabled: (spec.enabled ?? true) ? 1 : 0,
-      is_public: (spec.is_public ?? true) ? 1 : 0,
+      is_public: (spec.is_public ?? spec.from === "hub") ? 1 : 0,
     };
-    nextIds.add(next.id);
-    const prev = existingById.get(next.id);
-    if (prev && MONITOR_CONFIG_KEYS.every((k) => prev[k] === next[k])) {
-      continue;
+    nextIds.add(id);
+    const prev = existingById.get(id);
+    if (!prev || !MONITOR_CONFIG_KEYS.every((k) => prev[k] === next[k])) {
+      statements.push(...buildMonitorUpsertStatements(next, now, nodeId));
     }
-    statements.push(...buildMonitorUpsertStatements(next, now, nodeId));
+
+    if (spec.from === "agent" && next.enabled === 1 && spec.result) {
+      const probeRes: ProbeResult = {
+        ok: spec.result.ok,
+        httpStatus: spec.result.http_status ?? null,
+        latencyMs:
+          spec.result.latency_ms === undefined ||
+          spec.result.latency_ms === null
+            ? null
+            : round1(spec.result.latency_ms),
+        error: spec.result.ok ? null : (spec.result.error ?? "Check failed"),
+      };
+      statements.push(
+        buildMonitorResultStatement(
+          {
+            id,
+            samples_json: prev?.samples_json ?? "[]",
+            rollup_json: prev?.rollup_json ?? "{}",
+          },
+          probeRes,
+          now,
+        ),
+      );
+      observations.push({
+        incidentKey: `monitor:${id}`,
+        targetType: "monitor",
+        targetId: id,
+        label: `Monitor: ${next.name}`,
+        failing: !probeRes.ok,
+        summary: probeRes.ok
+          ? monitorOkSummary(spec.type, probeRes)
+          : (probeRes.error ?? "Check failed"),
+        threshold: failureThreshold,
+        targetMutedUntil: prev?.muted_until ?? 0,
+      });
+    }
   }
 
   for (const prev of existing) {
@@ -177,7 +245,7 @@ function buildManagedMonitorStatements(
     }
   }
 
-  return statements;
+  return { statements, observations };
 }
 
 function computeNetworkRates(
@@ -230,25 +298,39 @@ export async function ingestNodeReport(
     },
   ];
   if (payload.monitors !== undefined) {
-    batchQueries.push({
-      sql: `SELECT id, name, url, public_url, method, expected_status_min, expected_status_max,
-                   expected_body, timeout_ms, interval_secs, enabled, is_public
-            FROM monitors WHERE managed_by_node_id = ?1`,
-      params: [payload.node_id],
-    });
+    batchQueries.push(
+      {
+        sql: `SELECT id, name, probe_from, probe_json, public_url, interval_secs,
+                     enabled, is_public, muted_until, samples_json, rollup_json
+              FROM monitors WHERE managed_by_node_id = ?1`,
+        params: [payload.node_id],
+      },
+      {
+        sql: `SELECT ${ALERT_STATE_COLUMNS} FROM alert_states
+              WHERE target_type = 'monitor'
+                AND target_id IN (SELECT id FROM monitors WHERE managed_by_node_id = ?1)`,
+        params: [payload.node_id],
+      },
+    );
   }
 
   const [incomingHash, batchResults] = await Promise.all([
     sha256Hex(bearerToken),
     db.allBatch(batchQueries),
   ]);
-  const [settingRows, nodeRows, existingAlertStates, managedMonitorRows = []] =
-    batchResults as [
-      SettingRow[],
-      NodeIngestRow[],
-      AlertStateRow[],
-      MonitorConfigFields[]?,
-    ];
+  const [
+    settingRows,
+    nodeRows,
+    existingAlertStates,
+    managedMonitorRows = [],
+    existingMonitorAlertStates = [],
+  ] = batchResults as [
+    SettingRow[],
+    NodeIngestRow[],
+    AlertStateRow[],
+    ManagedMonitorRow[]?,
+    AlertStateRow[]?,
+  ];
 
   const settings = parseRuntimeSettings(settingRows, config);
   const existing = nodeRows[0] ?? null;
@@ -348,15 +430,19 @@ export async function ingestNodeReport(
       ],
     },
   ];
+  let monitorObservations: AlertObservation[] = [];
   if (payload.monitors !== undefined) {
-    statements.push(
-      ...buildManagedMonitorStatements(
-        nodeId,
-        payload.monitors,
-        managedMonitorRows,
-        now,
-      ),
+    const managed = buildManagedMonitorStatements(
+      nodeId,
+      intervalSecs,
+      graceSecs,
+      config.failureThreshold,
+      payload.monitors,
+      managedMonitorRows,
+      now,
     );
+    statements.push(...managed.statements);
+    monitorObservations = managed.observations;
   }
 
   const sampleValues: Record<string, number | [number, number]> = {};
@@ -443,6 +529,18 @@ export async function ingestNodeReport(
       true,
     )),
   );
+  if (monitorObservations.length > 0) {
+    statements.push(
+      ...(await buildAlertStatements(
+        config,
+        monitorObservations,
+        existingMonitorAlertStates,
+        settings.globalMutedUntil,
+        now,
+        false,
+      )),
+    );
+  }
 
   await db.batch(statements);
 

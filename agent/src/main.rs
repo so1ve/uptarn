@@ -145,9 +145,12 @@ mod tests {
     use std::io::Write;
 
     use tempfile::NamedTempFile;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
     use super::*;
     use crate::config::parse_duration_secs;
+    use crate::protocol::{HealthStatus, MonitorProbeType, MonitorSpec};
 
     fn write_test_file(path: impl AsRef<Path>, body: &str, executable: bool) {
         use std::os::unix::fs::PermissionsExt;
@@ -167,7 +170,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn collects_minimal_dsm_and_structured_exec_snapshot() {
+    async fn collects_minimal_dsm_and_structured_check_snapshot() {
         let mut token_file = NamedTempFile::new().unwrap();
         writeln!(token_file, "uptn_node_secret").unwrap();
 
@@ -192,7 +195,7 @@ os_info = false
 path = "/tmp"
 label = "Temp"
 
-[[exec]]
+[[checks]]
 key = "router_ext"
 label = "Router checks"
 format = "json"
@@ -219,7 +222,7 @@ command = ["sh", "-c", 'printf "%s" "{{\"checks\":[{{\"key\":\"tailscale\",\"lab
     }
 
     #[tokio::test]
-    async fn discovers_exec_dirs_and_dynamic_mounts_without_reload() {
+    async fn discovers_check_dirs_and_dynamic_mounts_without_reload() {
         let dir = tempfile::tempdir().unwrap();
         let write_script = |name: &str, body: &str, executable: bool| {
             write_test_file(dir.path().join(name), body, executable);
@@ -241,7 +244,7 @@ command = ["sh", "-c", 'printf "%s" "{{\"checks\":[{{\"key\":\"tailscale\",\"lab
 hub_url = "https://status.example.com"
 node_id = "nas"
 token = "uptn_tok"
-exec_dirs = ["{dir_path}"]
+check_dirs = ["{dir_path}"]
 
 [system]
 enabled = false
@@ -261,8 +264,6 @@ enabled = false
         assert_eq!(first.checks[0].key, "20-plain");
         assert_eq!(first.checks[0].summary.as_deref(), Some("all good"));
 
-        // Drop a new script in without reloading AgentConfig, including a
-        // failing script that logs to both stdout and stderr.
         write_script(
             "30-extra.sh",
             "#!/bin/sh\necho progress step\necho fatal: disk offline >&2\nexit 1\n",
@@ -279,23 +280,18 @@ enabled = false
     }
 
     #[tokio::test]
-    async fn supports_toml_dropins_and_script_header_metadata_in_exec_dirs() {
-        use crate::protocol::HealthStatus;
-
+    async fn supports_toml_dropins_and_script_header_metadata_in_check_dirs() {
         let dir = tempfile::tempdir().unwrap();
         let lib_dir = dir.path().join(".lib");
         std::fs::create_dir(&lib_dir).unwrap();
         let write_file = write_test_file;
 
-        // Shared helper script inside hidden .lib/ (not executed directly).
         write_file(
             lib_dir.join("unit.sh"),
             "#!/bin/sh\necho \"checked $1 ${2:-}\"\nif [ \"$1\" = \"warn.service\" ]; then exit 2; fi\n",
             true,
         );
 
-        // 1. Single-check .toml drop-in with command args, relative ./ path,
-        //    and custom metadata.
         write_file(
             dir.path().join("10-ddclient.toml"),
             r#"
@@ -306,17 +302,15 @@ command = ["./.lib/unit.sh", "ddclient.service", "ddclient.timer"]
             false,
         );
 
-        // 2. Multi-check [[exec]] .toml drop-in inheriting directory
-        //    warn_exit_code.
         write_file(
             dir.path().join("20-units.toml"),
             r#"
-[[exec]]
+[[checks]]
 key = "warn_svc"
 label = "Warn Service"
 command = ["./.lib/unit.sh", "warn.service"]
 
-[[exec]]
+[[checks]]
 key = "json_svc"
 label = "JSON Service"
 command = ["sh", "-c", 'printf "%s" "{\"checks\":[{\"key\":\"inner\",\"label\":\"Inner\",\"status\":\"ok\",\"summary\":\"ready\"}]}"']
@@ -324,16 +318,12 @@ command = ["sh", "-c", 'printf "%s" "{\"checks\":[{\"key\":\"inner\",\"label\":\
             false,
         );
 
-        // 3. Executable script with # uptarn.* header metadata (overrides
-        //    key/label/group/warn_exit_code).
         write_file(
             dir.path().join("30-reboot.sh"),
             "#!/bin/sh\n# uptarn.key = reboot\n# uptarn.label = \"Kernel\"\n# uptarn.group = system\n# uptarn.warn_exit_code = 3\necho reboot required\nexit 3\n",
             true,
         );
 
-        // 4. Invalid .toml drop-in surfaces a failed check without breaking
-        //    other items.
         write_file(
             dir.path().join("40-broken.toml"),
             "unknown_field = 123\n",
@@ -351,7 +341,7 @@ token = "uptn_tok"
 [system]
 enabled = false
 
-[[exec_dirs]]
+[[check_dirs]]
 path = "{dir_path}"
 group = "custom"
 warn_exit_code = 2
@@ -398,5 +388,208 @@ warn_exit_code = 2
 
         let broken = by_key("40-broken");
         assert_eq!(broken.status, HealthStatus::Fail);
+    }
+
+    #[tokio::test]
+    async fn probes_agent_http_tcp_exec_monitors_and_typed_checks() {
+        let http_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let http_addr = http_listener.local_addr().unwrap();
+        let http_task = tokio::spawn(async move {
+            if let Ok((mut stream, _)) = http_listener.accept().await {
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf).await;
+                let _ = stream
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\npong",
+                    )
+                    .await;
+            }
+        });
+
+        let tcp_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let tcp_addr = tcp_listener.local_addr().unwrap();
+        let tcp_task = tokio::spawn(async move {
+            for _ in 0..3 {
+                let _ = tcp_listener.accept().await;
+            }
+        });
+
+        let mut cfg_file = NamedTempFile::new().unwrap();
+        write!(
+            cfg_file,
+            r#"
+hub_url = "https://status.example.com"
+node_id = "homelab"
+token = "uptn_tok"
+interval_secs = 30
+grace_secs = 90
+
+[system]
+enabled = false
+
+[[checks]]
+type = "tcp"
+key = "tcp.local"
+label = "Local TCP"
+group = "network"
+target = "{tcp_addr}"
+count = 2
+
+[[monitors]]
+key = "blog"
+name = "Blog"
+url = "https://blog.example.com"
+
+[[monitors]]
+key = "immich"
+name = "Immich"
+from = "agent"
+url = "http://{http_addr}/ping"
+expected_body = "pong"
+
+[[monitors]]
+key = "pg"
+name = "PostgreSQL"
+type = "tcp"
+target = "{tcp_addr}"
+
+[[monitors]]
+key = "svc_ok"
+name = "Service OK"
+type = "exec"
+command = ["sh", "-c", "exit 0"]
+
+[[monitors]]
+key = "svc_fail"
+name = "Service Fail"
+type = "exec"
+command = ["sh", "-c", "echo unit inactive >&2; exit 3"]
+"#
+        )
+        .unwrap();
+
+        let cfg = AgentConfig::load(cfg_file.path()).unwrap();
+        let mut cpu = CpuTracker::default();
+        let report = collect_report(&cfg, &mut cpu).await;
+
+        assert_eq!(report.series.len(), 1);
+        assert_eq!(report.series[0].key, "tcp.local");
+        assert_eq!(report.series[0].status, Some(HealthStatus::Ok));
+
+        let monitors = report.monitors.expect("monitors present");
+        assert_eq!(monitors.len(), 5);
+
+        assert!(matches!(
+            &monitors[0],
+            MonitorSpec::Hub { key, url, .. }
+            if key == "blog" && url == "https://blog.example.com"
+        ));
+
+        match &monitors[1] {
+            MonitorSpec::Agent {
+                probe_type,
+                target,
+                interval_secs,
+                grace_secs,
+                result,
+                ..
+            } => {
+                assert_eq!(*probe_type, MonitorProbeType::Http);
+                assert_eq!(
+                    target.as_deref(),
+                    Some(format!("http://{http_addr}/ping").as_str())
+                );
+                assert_eq!(*interval_secs, Some(30));
+                assert_eq!(*grace_secs, Some(90));
+                let res = result.as_ref().expect("immich result");
+                assert!(res.ok);
+                assert_eq!(res.http_status, Some(200));
+                assert!(res.latency_ms.is_some());
+            }
+            MonitorSpec::Hub { .. } => panic!("expected agent monitor for immich"),
+        }
+
+        match &monitors[2] {
+            MonitorSpec::Agent {
+                probe_type,
+                target,
+                result,
+                ..
+            } => {
+                assert_eq!(*probe_type, MonitorProbeType::Tcp);
+                assert_eq!(target.as_deref(), Some(tcp_addr.to_string().as_str()));
+                let res = result.as_ref().expect("pg result");
+                assert!(res.ok);
+                assert!(res.latency_ms.is_some());
+            }
+            MonitorSpec::Hub { .. } => panic!("expected agent monitor for pg"),
+        }
+
+        match &monitors[3] {
+            MonitorSpec::Agent {
+                probe_type,
+                target,
+                result,
+                ..
+            } => {
+                assert_eq!(*probe_type, MonitorProbeType::Exec);
+                assert_eq!(target.as_deref(), Some("sh -c exit 0"));
+                let res = result.as_ref().expect("svc_ok result");
+                assert!(res.ok);
+                assert!(res.latency_ms.is_none());
+            }
+            MonitorSpec::Hub { .. } => panic!("expected agent monitor for svc_ok"),
+        }
+
+        match &monitors[4] {
+            MonitorSpec::Agent { result, .. } => {
+                let res = result.as_ref().expect("svc_fail result");
+                assert!(!res.ok);
+                assert_eq!(res.error.as_deref(), Some("unit inactive"));
+            }
+            MonitorSpec::Hub { .. } => panic!("expected agent monitor for svc_fail"),
+        }
+
+        http_task.abort();
+        tcp_task.abort();
+    }
+
+    #[test]
+    fn rejects_invalid_monitor_and_legacy_top_level_configs() {
+        let mut legacy = NamedTempFile::new().unwrap();
+        write!(
+            legacy,
+            r#"
+hub_url = "https://status.example.com"
+node_id = "box"
+token = "tok"
+
+[[tcp_probes]]
+key = "x"
+label = "X"
+target = "127.0.0.1:80"
+"#
+        )
+        .unwrap();
+        assert!(AgentConfig::load(legacy.path()).is_err());
+
+        let mut hub_tcp = NamedTempFile::new().unwrap();
+        write!(
+            hub_tcp,
+            r#"
+hub_url = "https://status.example.com"
+node_id = "box"
+token = "tok"
+
+[[monitors]]
+key = "pg"
+name = "PG"
+type = "tcp"
+from = "hub"
+target = "127.0.0.1:5432"
+"#
+        )
+        .unwrap();
+        assert!(AgentConfig::load(hub_tcp.path()).is_err());
     }
 }

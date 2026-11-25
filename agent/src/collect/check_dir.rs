@@ -5,35 +5,24 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use crate::config::{ExecCheckConfig, ExecDirConfig, ExecDirDefaults, ExecOutputFormat, non_empty};
+use crate::config::{
+    CheckConfig, CheckDirConfig, CheckDirDefaults, CheckKind, RawCheckConfig, non_empty,
+};
 use crate::protocol::CheckSnapshot;
 
 const SCRIPT_HEADER_CAP_BYTES: usize = 2048;
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ExecDropIn {
-    key: Option<String>,
-    label: Option<String>,
-    group: Option<String>,
-    #[serde(default)]
-    command: Vec<String>,
-    format: Option<ExecOutputFormat>,
-    warn_exit_code: Option<i32>,
-    timeout_ms: Option<u64>,
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MultiDropIn {
-    exec: Vec<ExecDropIn>,
+    checks: Vec<RawCheckConfig>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum DropInFile {
     Multi(MultiDropIn),
-    Single(ExecDropIn),
+    Single(Box<RawCheckConfig>),
 }
 
 fn sanitize_slug(stem: &str) -> String {
@@ -65,83 +54,74 @@ fn unquote(raw: &str) -> &str {
 }
 
 fn build_check(
-    mut item: ExecDropIn,
+    mut item: RawCheckConfig,
     fallback_stem: Option<&str>,
     base_dir: &Path,
-    defaults: ExecDirDefaults<'_>,
-) -> Result<ExecCheckConfig, &'static str> {
-    let Some(first) = item.command.first_mut() else {
-        return Err("missing command");
-    };
-    if first.trim().is_empty() {
-        return Err("missing command");
-    }
-    if first.starts_with("./") || first.starts_with("../") {
+    defaults: CheckDirDefaults<'_>,
+) -> Result<CheckConfig, String> {
+    if item.kind == CheckKind::Exec
+        && let Some(first) = item.command.first_mut()
+        && (first.starts_with("./") || first.starts_with("../"))
+    {
         *first = base_dir.join(&*first).to_string_lossy().into_owned();
     }
 
     let raw_key = item.key.as_deref().and_then(non_empty);
     let Some(key_src) = raw_key.or(fallback_stem) else {
-        return Err("missing key");
+        return Err("missing key".to_string());
     };
+    let key = sanitize_slug(key_src);
     let label = item
         .label
         .as_deref()
         .and_then(non_empty)
         .unwrap_or(key_src)
         .to_string();
+    let group = item
+        .group
+        .as_deref()
+        .and_then(non_empty)
+        .or(defaults.group)
+        .map(str::to_string);
 
-    Ok(ExecCheckConfig {
-        key: sanitize_slug(key_src),
-        label,
-        group: item
-            .group
-            .as_deref()
-            .and_then(non_empty)
-            .or(defaults.group)
-            .map(str::to_string),
-        command: item.command,
-        format: item.format.unwrap_or(defaults.format),
-        warn_exit_code: item.warn_exit_code.or(defaults.warn_exit_code),
-        timeout_ms: item.timeout_ms.unwrap_or(defaults.timeout_ms),
-    })
+    item.into_check(key, label, group, defaults)
 }
 
 fn load_toml_dropin(
     path: &Path,
     stem: &str,
     base_dir: &Path,
-    defaults: ExecDirDefaults<'_>,
-) -> Result<Vec<ExecCheckConfig>, String> {
+    defaults: CheckDirDefaults<'_>,
+) -> Result<Vec<CheckConfig>, String> {
     let raw = fs::read_to_string(path).map_err(|err| format!("failed to read drop-in: {err}"))?;
     let parsed: DropInFile =
         toml::from_str(&raw).map_err(|err| format!("invalid drop-in TOML: {err}"))?;
 
     match parsed {
-        DropInFile::Multi(MultiDropIn { exec }) => {
-            if exec.is_empty() {
-                return Err("drop-in [[exec]] list is empty".to_string());
+        DropInFile::Multi(MultiDropIn { checks }) => {
+            if checks.is_empty() {
+                return Err("drop-in [[checks]] list is empty".to_string());
             }
 
-            exec.into_iter()
+            checks
+                .into_iter()
                 .enumerate()
                 .map(|(idx, item)| {
                     build_check(item, None, base_dir, defaults)
-                        .map_err(|msg| format!("exec[{idx}]: {msg}"))
+                        .map_err(|msg| format!("checks[{idx}]: {msg}"))
                 })
                 .collect()
         }
         DropInFile::Single(item) => {
-            let check =
-                build_check(item, Some(stem), base_dir, defaults).map_err(str::to_string)?;
+            let check = build_check(*item, Some(stem), base_dir, defaults)?;
 
             Ok(vec![check])
         }
     }
 }
 
-fn parse_script_metadata(path: &Path) -> ExecDropIn {
-    let mut meta = ExecDropIn::default();
+fn parse_script_metadata(path: &Path) -> RawCheckConfig {
+    let mut meta = RawCheckConfig::default();
     let Ok(file) = File::open(path) else {
         return meta;
     };
@@ -187,7 +167,7 @@ fn parse_script_metadata(path: &Path) -> ExecDropIn {
     meta
 }
 
-pub fn discover(dirs: &[ExecDirConfig]) -> (Vec<ExecCheckConfig>, Vec<CheckSnapshot>) {
+pub fn discover(dirs: &[CheckDirConfig]) -> (Vec<CheckConfig>, Vec<CheckSnapshot>) {
     let mut discovered = Vec::new();
     let mut errors = Vec::new();
 
@@ -199,8 +179,8 @@ pub fn discover(dirs: &[ExecDirConfig]) -> (Vec<ExecCheckConfig>, Vec<CheckSnaps
             Err(err) if err.kind() == ErrorKind::NotFound => continue,
             Err(err) => {
                 errors.push(CheckSnapshot::failed(
-                    sanitize_slug(&format!("exec_dir_{dir_path}")),
-                    format!("exec_dir {dir_path}"),
+                    sanitize_slug(&format!("check_dir_{dir_path}")),
+                    format!("check_dir {dir_path}"),
                     defaults.group.map(str::to_string),
                     format!("failed to read directory: {err}"),
                     None,

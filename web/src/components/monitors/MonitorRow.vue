@@ -38,8 +38,10 @@ const props = withDefaults(
   { window: "24h" },
 );
 
+const PROBE_BADGE = { http: "Agent", tcp: "TCP", exec: "Exec" } as const;
+
 const adminMon = computed<MonitorSummary | null>(() =>
-  "url" in props.monitor ? props.monitor : null,
+  "probe" in props.monitor ? props.monitor : null,
 );
 
 const dotStatus = computed<DotStatus>(() =>
@@ -60,21 +62,44 @@ const uptimeBreakdown = computed(() =>
   }),
 );
 
+const probeBadge = computed<string | null>(() => {
+  const probe = adminMon.value?.probe;
+
+  return probe?.from === "agent" ? PROBE_BADGE[probe.type] : null;
+});
+
 const displayLink = computed(() => {
   if (adminMon.value) {
-    const hostPath = stripUrlScheme(adminMon.value.url);
+    const { probe } = adminMon.value;
+    if (probe.from === "hub") {
+      const hostPath = stripUrlScheme(probe.url);
 
-    return {
-      href: adminMon.value.url,
-      text:
-        adminMon.value.method === "GET"
-          ? hostPath
-          : `${adminMon.value.method} ${hostPath}`,
-    };
+      return {
+        href: probe.url,
+        text: probe.method === "GET" ? hostPath : `${probe.method} ${hostPath}`,
+      };
+    }
+    if (probe.type === "http" && probe.target) {
+      return { href: probe.target, text: stripUrlScheme(probe.target) };
+    }
+
+    return null;
   }
   const url = (props.monitor as PublicMonitorSummary).public_url;
 
   return url ? { href: url, text: stripUrlScheme(url) } : null;
+});
+
+const titleHref = computed(
+  () =>
+    displayLink.value?.href ??
+    (adminMon.value ? adminMon.value.public_url : null),
+);
+
+const targetText = computed(() => {
+  const probe = adminMon.value?.probe;
+
+  return probe?.from === "agent" && probe.type !== "http" ? probe.target : null;
 });
 
 const errorText = computed(() =>
@@ -119,9 +144,9 @@ const errorText = computed(() =>
       >
         <div class="flex min-w-0 items-center gap-1.5">
           <a
-            v-if="displayLink"
+            v-if="titleHref"
             class="monitor-link truncate text-[13.5px] leading-5 font-semibold transition-colors"
-            :href="displayLink.href"
+            :href="titleHref"
             rel="noreferrer"
             target="_blank"
             @click.stop
@@ -132,6 +157,15 @@ const errorText = computed(() =>
             {{ monitor.name }}
           </span>
 
+          <UBadge
+            v-if="probeBadge"
+            class="shrink-0"
+            color="neutral"
+            size="xs"
+            variant="subtle"
+          >
+            {{ probeBadge }}
+          </UBadge>
           <UBadge
             v-if="!monitor.enabled"
             class="shrink-0"
@@ -164,6 +198,13 @@ const errorText = computed(() =>
           <span class="truncate">{{ displayLink.text }}</span>
           <UIcon class="size-3 shrink-0" name="i-lucide-external-link" />
         </a>
+        <div
+          v-else-if="targetText"
+          class="truncate font-mono text-[11.5px] text-dimmed"
+          :title="targetText"
+        >
+          {{ targetText }}
+        </div>
       </div>
     </div>
 
@@ -255,8 +296,11 @@ const errorText = computed(() =>
       >
         {{ errorText }}
       </span>
-      <span v-else-if="monitor.last_latency_ms === null" class="text-dimmed">
-        -
+      <span
+        v-else-if="monitor.last_latency_ms === null"
+        :class="monitor.last_status === 'ok' ? 'text-muted' : 'text-dimmed'"
+      >
+        {{ monitor.last_status === "ok" ? "OK" : "-" }}
       </span>
       <span v-else class="inline-flex items-center gap-1.5">
         <span

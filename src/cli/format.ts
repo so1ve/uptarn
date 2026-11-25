@@ -337,6 +337,12 @@ export function renderNodeDetail(
   return lines.join("\n");
 }
 
+const formatMonitorProbe = (mon: MonitorSummary): string =>
+  mon.probe.from === "agent" ? `${mon.probe.type} (agent)` : mon.probe.type;
+
+const monitorTarget = (mon: MonitorSummary): string =>
+  mon.probe.from === "hub" ? mon.probe.url : (mon.probe.target ?? "-");
+
 export const renderMonitorsTable = (
   theme: Theme,
   monitors: readonly MonitorSummary[],
@@ -346,6 +352,7 @@ export const renderMonitorsTable = (
     [
       col("ID", (m) => theme.bold(m.id)),
       col("STATUS", (m) => formatMonitorState(theme, m)),
+      col("PROBE", (m) => theme.muted(formatMonitorProbe(m))),
       col("VISIBILITY", (m) =>
         formatVisibility(theme, m.is_public, m.managed_by_node_id !== null),
       ),
@@ -363,7 +370,7 @@ export const renderMonitorsTable = (
         "right",
       ),
       col("NAME", (m) => m.name),
-      col("URL", (m) => theme.muted(m.url)),
+      col("TARGET", (m) => theme.muted(monitorTarget(m))),
     ],
     monitors,
   );
@@ -400,20 +407,34 @@ export function renderMonitorDetail(
     ]),
     renderSection(theme, "Configuration"),
     renderKv(theme, [
-      ["URL", mon.url],
-      mon.public_url ? ["Public URL", mon.public_url] : false,
-      ["Method", mon.method],
-      [
-        "Expected status",
-        mon.expected_status_min === mon.expected_status_max
-          ? String(mon.expected_status_min)
-          : `${mon.expected_status_min}..${mon.expected_status_max}`,
-      ],
-      mon.expected_body ? ["Expected body", mon.expected_body] : false,
-      [
-        "Interval / Timeout",
-        `${formatDuration(mon.interval_secs)} / ${formatMs(mon.timeout_ms)}`,
-      ],
+      ["Probe", `${mon.probe.type} (${mon.probe.from})`],
+      ...(mon.probe.from === "hub"
+        ? ([
+            ["URL", mon.probe.url],
+            mon.public_url ? ["Public URL", mon.public_url] : false,
+            ["Method", mon.probe.method],
+            [
+              "Expected status",
+              mon.probe.expected_status_min === mon.probe.expected_status_max
+                ? String(mon.probe.expected_status_min)
+                : `${mon.probe.expected_status_min}..${mon.probe.expected_status_max}`,
+            ],
+            mon.probe.expected_body
+              ? ["Expected body", mon.probe.expected_body]
+              : false,
+            [
+              "Interval / Timeout",
+              `${formatDuration(mon.interval_secs)} / ${formatMs(mon.probe.timeout_ms)}`,
+            ],
+          ] as KvEntry[])
+        : ([
+            mon.probe.target ? ["Target", mon.probe.target] : false,
+            mon.public_url ? ["Public URL", mon.public_url] : false,
+            [
+              "Interval / Grace",
+              `${formatDuration(mon.interval_secs)} / ${formatDuration(mon.probe.grace_secs)}`,
+            ],
+          ] as KvEntry[])),
       [
         "Visibility",
         formatVisibility(theme, mon.is_public, mon.managed_by_node_id !== null),

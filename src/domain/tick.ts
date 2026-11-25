@@ -6,8 +6,10 @@ import { ALERT_STATE_COLUMNS, buildAlertStatements } from "./alerts.ts";
 import type { JobRow } from "./jobs.ts";
 import type { MonitorRow, ProbeResult } from "./monitors.ts";
 import {
-  appendMonitorRollup,
-  appendMonitorSample,
+  buildMonitorResultStatement,
+  monitorOkSummary,
+  parseMonitorProbe,
+  parseMonitorSamples,
   probeMonitor,
 } from "./monitors.ts";
 import type { SettingRow } from "./settings.ts";
@@ -47,9 +49,8 @@ export async function runTick(
 ): Promise<TickReport> {
   const probeStart = unixNow();
   const candidates = await db.all<MonitorRow>(
-    `SELECT id, url, method, expected_status_min, expected_status_max,
-            expected_body, timeout_ms, interval_secs, last_checked_at
-     FROM monitors WHERE enabled = 1`,
+    `SELECT id, probe_json, interval_secs, last_checked_at
+     FROM monitors WHERE enabled = 1 AND probe_from = 'hub'`,
   );
 
   const dueMonitors = options.forceMonitors
@@ -67,7 +68,16 @@ export async function runTick(
   const probeResults = new Map<string, ProbeResult>();
   for (let i = 0; i < dueMonitors.length; i += 6) {
     const slice = dueMonitors.slice(i, i + 6);
-    const results = await Promise.all(slice.map((m) => probeMonitor(m)));
+    const results = await Promise.all(
+      slice.map((m) => {
+        const probe = parseMonitorProbe(m.probe_json);
+        if (probe.from !== "hub") {
+          throw new Error(`Expected hub probe for monitor ${m.id}`);
+        }
+
+        return probeMonitor(probe);
+      }),
+    );
     for (const [idx, res] of results.entries()) {
       probeResults.set(slice[idx].id, res);
     }
@@ -78,7 +88,9 @@ export async function runTick(
     (await db.allBatch([
       { sql: SELECT_SETTINGS_SQL },
       {
-        sql: "SELECT id, name, enabled, muted_until, samples_json, rollup_json FROM monitors",
+        sql: `SELECT id, name, probe_from, probe_json, managed_by_node_id, interval_secs,
+                     enabled, muted_until, last_checked_at, last_status, samples_json, rollup_json
+              FROM monitors`,
       },
       {
         sql: "SELECT id, label, interval_secs, grace_secs, muted_until, last_seen_at FROM nodes WHERE last_seen_at IS NOT NULL",
@@ -98,47 +110,74 @@ export async function runTick(
   const settings = parseRuntimeSettings(settingRows, config);
   const observations: AlertObservation[] = [];
   const writeStatements: SqlStatement[] = [];
-  const sampleBucketTs = Math.floor(now / 30) * 30;
   let appliedProbes = 0;
 
   for (const m of allMonitors) {
-    const res = m.enabled === 1 ? probeResults.get(m.id) : undefined;
+    if (m.enabled !== 1) {
+      continue;
+    }
+    const probe = parseMonitorProbe(m.probe_json);
+    if (probe.from === "agent") {
+      if (
+        m.last_checked_at !== null &&
+        now > m.last_checked_at + m.interval_secs + probe.grace_secs
+      ) {
+        const staleSummary = m.managed_by_node_id
+          ? `No report from ${m.managed_by_node_id} since ${formatAge(m.last_checked_at, now)}`
+          : `No report since ${formatAge(m.last_checked_at, now)}`;
+        const lastSampleTs =
+          parseMonitorSamples(m.samples_json).at(-1)?.ts ?? null;
+        const needsSample =
+          lastSampleTs === null ||
+          now - lastSampleTs >= Math.max(30, m.interval_secs - 5);
+        if (needsSample) {
+          writeStatements.push(
+            buildMonitorResultStatement(
+              m,
+              {
+                ok: false,
+                httpStatus: null,
+                latencyMs: null,
+                error: staleSummary,
+              },
+              now,
+              { updateCheckedAt: false },
+            ),
+          );
+        } else if (m.last_status !== "fail") {
+          writeStatements.push({
+            sql: "UPDATE monitors SET last_status = 'fail', last_http_status = NULL, last_latency_ms = NULL, last_error = ?1 WHERE id = ?2",
+            params: [staleSummary, m.id],
+          });
+        }
+        observations.push({
+          incidentKey: `monitor:${m.id}`,
+          targetType: "monitor",
+          targetId: m.id,
+          label: `Monitor: ${m.name}`,
+          failing: true,
+          summary: staleSummary,
+          threshold: 1,
+          targetMutedUntil: m.muted_until,
+        });
+      }
+
+      continue;
+    }
+    const res = probeResults.get(m.id);
     if (!res) {
       continue;
     }
     appliedProbes += 1;
-    const sample = {
-      ts: sampleBucketTs,
-      ok: res.ok,
-      latency_ms: res.latencyMs,
-    };
-    writeStatements.push({
-      sql: `UPDATE monitors SET
-              last_checked_at = ?1, last_status = ?2, last_http_status = ?3,
-              last_latency_ms = ?4, last_error = ?5, samples_json = ?6, rollup_json = ?7
-            WHERE id = ?8`,
-      params: [
-        now,
-        res.ok ? "ok" : "fail",
-        res.httpStatus,
-        res.latencyMs,
-        res.error,
-        appendMonitorSample(m.samples_json, sample),
-        appendMonitorRollup(m.rollup_json, m.samples_json, {
-          ...sample,
-          ts: now,
-        }),
-        m.id,
-      ],
-    });
+    writeStatements.push(buildMonitorResultStatement(m, res, now));
     observations.push({
       incidentKey: `monitor:${m.id}`,
       targetType: "monitor",
       targetId: m.id,
-      label: `HTTP: ${m.name}`,
+      label: `Monitor: ${m.name}`,
       failing: !res.ok,
       summary: res.ok
-        ? `HTTP ${res.httpStatus ?? 200} in ${res.latencyMs ?? 0} ms`
+        ? monitorOkSummary(probe.type, res)
         : (res.error ?? "Request failed"),
       threshold: config.failureThreshold,
       targetMutedUntil: m.muted_until,

@@ -5,6 +5,33 @@ export type TargetType = "node" | "monitor" | "job";
 export type SeriesUnit =
   "ms" | "%" | "bytes" | "bps" | "celsius" | "count" | "days";
 
+export type MonitorKind = "http" | "tcp" | "exec";
+
+export interface MonitorResult {
+  ok: boolean;
+  latency_ms?: number | null;
+  http_status?: number | null;
+  error?: string | null;
+}
+
+export type MonitorProbe =
+  | {
+      from: "hub";
+      type: "http";
+      url: string;
+      method: string;
+      expected_status_min: number;
+      expected_status_max: number;
+      expected_body: string | null;
+      timeout_ms: number;
+    }
+  | {
+      from: "agent";
+      type: MonitorKind;
+      target: string | null;
+      grace_secs: number;
+    };
+
 export interface SystemSnapshot {
   uptime_secs: number;
   cpu_pct?: number;
@@ -53,9 +80,21 @@ export interface InfoSnapshot {
   value: string;
 }
 
-export interface NodeMonitorSpec extends Omit<MonitorInput, "id"> {
-  key: string;
-}
+export type NodeMonitorSpec =
+  | (Omit<MonitorInput, "id"> & { key: string; from: "hub" })
+  | {
+      key: string;
+      name: string;
+      from: "agent";
+      type: MonitorKind;
+      target?: string | null;
+      public_url?: string | null;
+      interval_secs?: number;
+      grace_secs?: number;
+      enabled?: boolean;
+      is_public?: boolean;
+      result?: MonitorResult | null;
+    };
 
 export interface NodeReportPayload {
   node_id: string;
@@ -156,13 +195,8 @@ export interface NodeSummary {
 export interface MonitorSummary {
   id: string;
   name: string;
-  url: string;
+  probe: MonitorProbe;
   public_url: string | null;
-  method: string;
-  expected_status_min: number;
-  expected_status_max: number;
-  expected_body: string | null;
-  timeout_ms: number;
   interval_secs: number;
   enabled: boolean;
   is_public: boolean;

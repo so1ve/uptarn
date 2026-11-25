@@ -85,7 +85,7 @@ async fn read_tls_days(cfg: &TlsCertConfig) -> Result<f64> {
     let connect_addr = cfg
         .connect
         .as_deref()
-        .context("tls_certs entry requires either path or connect")?;
+        .context("tls check requires either path or connect")?;
     let sni_host = cfg
         .server_name
         .as_deref()

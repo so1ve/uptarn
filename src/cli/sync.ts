@@ -1,6 +1,5 @@
 import type { Theme } from "clerc";
 
-import { MONITOR_CONFIG_KEYS } from "../domain/monitors.ts";
 import type { DashboardSnapshot, MonitorSummary } from "../shared/index.ts";
 import { normalizePrimaryMount, parseMonitorInput } from "../validation.ts";
 import { renderSection } from "./format.ts";
@@ -124,14 +123,48 @@ export function parseSyncSpec(raw: unknown): SyncSpec {
   return spec;
 }
 
-const diffMonitor = (
+const HUB_MONITOR_DIFF_KEYS = [
+  "name",
+  "url",
+  "public_url",
+  "method",
+  "expected_status_min",
+  "expected_status_max",
+  "expected_body",
+  "timeout_ms",
+  "interval_secs",
+  "enabled",
+  "is_public",
+] as const;
+
+function diffMonitor(
   current: MonitorSummary,
   desired: NormalizedSyncMonitor,
-): string[] =>
-  MONITOR_CONFIG_KEYS.filter((f) => current[f] !== desired[f]).map(
-    (f) =>
-      `${f}: ${JSON.stringify(current[f])} -> ${JSON.stringify(desired[f])}`,
+): string[] {
+  const flat =
+    current.probe.from === "hub"
+      ? {
+          name: current.name,
+          url: current.probe.url,
+          public_url: current.public_url,
+          method: current.probe.method,
+          expected_status_min: current.probe.expected_status_min,
+          expected_status_max: current.probe.expected_status_max,
+          expected_body: current.probe.expected_body,
+          timeout_ms: current.probe.timeout_ms,
+          interval_secs: current.interval_secs,
+          enabled: current.enabled,
+          is_public: current.is_public,
+        }
+      : null;
+  if (!flat) {
+    return ["probe: agent -> hub"];
+  }
+
+  return HUB_MONITOR_DIFF_KEYS.filter((f) => flat[f] !== desired[f]).map(
+    (f) => `${f}: ${JSON.stringify(flat[f])} -> ${JSON.stringify(desired[f])}`,
   );
+}
 
 function computeReorder(
   baselineOrder: readonly string[],

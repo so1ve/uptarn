@@ -26,6 +26,22 @@ pub enum SeriesUnit {
     Days,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MonitorProbeType {
+    #[default]
+    Http,
+    Tcp,
+    Exec,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MonitorProbeFrom {
+    Hub,
+    Agent,
+}
+
 #[derive(Debug, Serialize)]
 pub struct SystemSnapshot {
     pub uptime_secs: u64,
@@ -130,28 +146,62 @@ pub struct InfoSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MonitorSpec {
-    pub key: String,
-    pub name: String,
-    pub url: String,
+pub struct MonitorProbeReport {
+    pub ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub public_url: Option<String>,
+    pub latency_ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub method: Option<String>,
+    pub http_status: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub expected_status_min: Option<u16>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub expected_status_max: Option<u16>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub expected_body: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub timeout_ms: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub interval_secs: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub enabled: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub is_public: Option<bool>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "from", rename_all = "lowercase")]
+pub enum MonitorSpec {
+    Hub {
+        key: String,
+        name: String,
+        url: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        public_url: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        method: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        expected_status_min: Option<u16>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        expected_status_max: Option<u16>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        expected_body: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        interval_secs: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        enabled: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        is_public: Option<bool>,
+    },
+    Agent {
+        key: String,
+        name: String,
+        #[serde(rename = "type")]
+        probe_type: MonitorProbeType,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        target: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        public_url: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        interval_secs: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        grace_secs: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        enabled: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        is_public: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        result: Option<MonitorProbeReport>,
+    },
 }
 
 #[derive(Debug, Serialize)]

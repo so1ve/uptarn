@@ -28,7 +28,11 @@ import {
 } from "../shared/index.ts";
 import type { JobRow } from "./jobs.ts";
 import type { MonitorRow } from "./monitors.ts";
-import { parseMonitorRollups, parseMonitorSamples } from "./monitors.ts";
+import {
+  parseMonitorProbe,
+  parseMonitorRollups,
+  parseMonitorSamples,
+} from "./monitors.ts";
 import type { SettingRow } from "./settings.ts";
 import { SELECT_SETTINGS_SQL, parseRuntimeSettings } from "./settings.ts";
 
@@ -303,28 +307,28 @@ export async function getDashboardSnapshot(
     }),
   );
 
-  const monitors: MonitorSummary[] = monitorRows.map(
-    ({
-      created_at: _c,
-      enabled,
-      is_public,
-      last_status,
-      samples_json,
-      rollup_json,
-      ...rest
-    }) => {
-      const samples = parseMonitorSamples(samples_json);
+  const monitors: MonitorSummary[] = monitorRows.map((row) => {
+    const samples = parseMonitorSamples(row.samples_json);
 
-      return {
-        ...rest,
-        enabled: enabled === 1,
-        is_public: is_public === 1,
-        last_status: monitorStatus(last_status),
-        samples,
-        rollups: parseMonitorRollups(rollup_json, samples),
-      };
-    },
-  );
+    return {
+      id: row.id,
+      name: row.name,
+      probe: parseMonitorProbe(row.probe_json),
+      public_url: row.public_url,
+      interval_secs: row.interval_secs,
+      enabled: row.enabled === 1,
+      is_public: row.is_public === 1,
+      managed_by_node_id: row.managed_by_node_id,
+      muted_until: row.muted_until,
+      last_checked_at: row.last_checked_at,
+      last_status: monitorStatus(row.last_status),
+      last_http_status: row.last_http_status,
+      last_latency_ms: row.last_latency_ms,
+      last_error: row.last_error,
+      samples,
+      rollups: parseMonitorRollups(row.rollup_json, samples),
+    };
+  });
 
   const jobs: JobSummary[] = jobRows.map(({ created_at: _c, ...row }) => {
     const nextDue = row.last_run_at + row.interval_secs;
@@ -409,7 +413,7 @@ export async function getPublicStatusSnapshot(
     (await db.allBatch([
       { sql: "SELECT COUNT(*) AS count FROM admin_passkeys" },
       {
-        sql: `SELECT id, name, public_url, enabled, last_checked_at, last_status, last_http_status, last_latency_ms, samples_json, rollup_json
+        sql: `SELECT id, name, probe_json, public_url, enabled, last_checked_at, last_status, last_http_status, last_latency_ms, samples_json, rollup_json
             FROM monitors WHERE is_public = 1 ORDER BY sort_order ASC, name ASC`,
       },
       {
@@ -438,6 +442,7 @@ export async function getPublicStatusSnapshot(
     monitors: monitorRows.map((row, idx) => {
       const status = monitorStatus(row.last_status);
       const allSamples = parseMonitorSamples(row.samples_json);
+      const probe = parseMonitorProbe(row.probe_json);
 
       return {
         key: `m${idx}`,
@@ -451,7 +456,9 @@ export async function getPublicStatusSnapshot(
           status === "fail"
             ? row.last_http_status
               ? `HTTP ${row.last_http_status}`
-              : "Unreachable"
+              : probe.type === "exec"
+                ? "Failed"
+                : "Unreachable"
             : null,
         samples: allSamples.slice(-36),
         rollups: parseMonitorRollups(row.rollup_json, allSamples),

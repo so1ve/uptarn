@@ -108,13 +108,17 @@ describe("uptarn CLI commands", () => {
     expect(monitors.map((m) => m.id)).toEqual(["blog", "docs"]);
     expect(monitors[0]).toMatchObject({
       name: "Blog",
-      url: "https://blog.example.com/healthz",
+      probe: {
+        from: "hub",
+        type: "http",
+        url: "https://blog.example.com/healthz",
+        method: "HEAD",
+        expected_status_min: 200,
+        expected_status_max: 204,
+        timeout_ms: 5000,
+      },
       public_url: "https://blog.example.com/",
-      method: "HEAD",
-      expected_status_min: 200,
-      expected_status_max: 204,
       interval_secs: 120,
-      timeout_ms: 5000,
       enabled: true,
       is_public: false,
     });
@@ -139,11 +143,15 @@ describe("uptarn CLI commands", () => {
     expect(edited).toMatchObject({
       id: "blog",
       name: "Main Blog",
-      url: "https://blog.example.com/healthz",
+      probe: {
+        from: "hub",
+        type: "http",
+        url: "https://blog.example.com/healthz",
+        method: "HEAD",
+        timeout_ms: 5000,
+      },
       public_url: null,
-      method: "HEAD",
       interval_secs: 120,
-      timeout_ms: 5000,
       enabled: false,
       is_public: true,
     });

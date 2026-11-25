@@ -17,18 +17,19 @@ const isEdit = computed(() => props.monitor !== null);
 
 const form = useModalForm(open, () => {
   const m = props.monitor;
+  const hub = m?.probe.from === "hub" ? m.probe : null;
 
   return {
     id: m?.id ?? "",
     name: m?.name ?? "",
-    url: m?.url ?? "",
+    url: hub?.url ?? "",
     public_url: m?.public_url ?? "",
-    method: m?.method ?? "GET",
-    expected_status_min: m?.expected_status_min ?? 200,
-    expected_status_max: m?.expected_status_max ?? 299,
-    expected_body: m?.expected_body ?? "",
+    method: hub?.method ?? "GET",
+    expected_status_min: hub?.expected_status_min ?? 200,
+    expected_status_max: hub?.expected_status_max ?? 299,
+    expected_body: hub?.expected_body ?? "",
     interval_secs: m?.interval_secs ?? 60,
-    timeout_ms: m?.timeout_ms ?? 8000,
+    timeout_ms: hub?.timeout_ms ?? 8000,
     enabled: m?.enabled ?? true,
     is_public: m?.is_public ?? true,
   };

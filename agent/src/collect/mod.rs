@@ -1,5 +1,6 @@
+mod check_dir;
 mod exec;
-mod exec_dir;
+mod monitor;
 mod mounts;
 mod system;
 mod tcp;
@@ -11,8 +12,8 @@ use std::future::Future;
 use tokio::task::JoinSet;
 
 pub use self::system::CpuTracker;
-use crate::config::AgentConfig;
-use crate::protocol::NodeReportPayload;
+use crate::config::{AgentConfig, CheckConfig};
+use crate::protocol::{NodeReportPayload, StructuredExecOutput};
 
 async fn collect_parallel<T, O, F, Fut>(items: &[T], f: F) -> Vec<O>
 where
@@ -36,36 +37,49 @@ where
     out.into_iter().map(|(_, val)| val).collect()
 }
 
-pub async fn collect_report(cfg: &AgentConfig, cpu_tracker: &mut CpuTracker) -> NodeReportPayload {
-    let (discovered_exec, mut checks) = exec_dir::discover(&cfg.exec_dirs);
-    let mut all_exec = Vec::with_capacity(cfg.exec.len() + discovered_exec.len());
-    all_exec.extend(cfg.exec.iter().cloned());
-    all_exec.extend(discovered_exec);
+async fn collect_check(cfg: CheckConfig) -> StructuredExecOutput {
+    match cfg {
+        CheckConfig::Exec(exec_cfg) => exec::collect_item(&exec_cfg).await,
+        CheckConfig::Tls(tls_cfg) => StructuredExecOutput {
+            series: vec![tls::collect_tls_cert(&tls_cfg).await],
+            ..StructuredExecOutput::default()
+        },
+        CheckConfig::Tcp(tcp_cfg) => StructuredExecOutput {
+            series: vec![tcp::collect_tcp_probe(&tcp_cfg).await],
+            ..StructuredExecOutput::default()
+        },
+    }
+}
 
-    let (system, mut mounts, tcp_series, tls_series, exec_outcomes) = tokio::join!(
+pub async fn collect_report(cfg: &AgentConfig, cpu_tracker: &mut CpuTracker) -> NodeReportPayload {
+    let (discovered_checks, mut checks) = check_dir::discover(&cfg.check_dirs);
+    let mut all_checks = Vec::with_capacity(cfg.checks.len() + discovered_checks.len());
+    all_checks.extend(cfg.checks.iter().cloned());
+    all_checks.extend(discovered_checks);
+
+    let monitor_cfgs = cfg.monitors.as_deref().unwrap_or(&[]);
+    let node_interval_secs = cfg.interval_secs;
+    let node_grace_secs = cfg.grace_secs;
+
+    let (system, mut mounts, check_outcomes, collected_monitors) = tokio::join!(
         system::collect_system(&cfg.system, cpu_tracker),
         collect_parallel(
             &cfg.mounts,
             |m| async move { mounts::collect_mount(&m).await }
         ),
-        collect_parallel(&cfg.tcp_probes, |p| async move {
-            tcp::collect_tcp_probe(&p).await
+        collect_parallel(&all_checks, collect_check),
+        collect_parallel(monitor_cfgs, move |m| async move {
+            monitor::collect_monitor(&m, node_interval_secs, node_grace_secs).await
         }),
-        collect_parallel(&cfg.tls_certs, |c| async move {
-            tls::collect_tls_cert(&c).await
-        }),
-        collect_parallel(&all_exec, |e| async move { exec::collect_item(&e).await }),
     );
 
-    let mut series = Vec::with_capacity(tcp_series.len() + tls_series.len() + 1);
+    let mut series = Vec::new();
     if cfg.system.enabled
         && cfg.system.temperature
         && let Some(temp) = system::collect_temperature()
     {
         series.push(temp);
     }
-    series.extend(tcp_series);
-    series.extend(tls_series);
 
     let mut info = Vec::new();
     if cfg.system.enabled && cfg.system.os_info {
@@ -73,7 +87,7 @@ pub async fn collect_report(cfg: &AgentConfig, cpu_tracker: &mut CpuTracker) -> 
     }
     info.extend(cfg.info.iter().cloned());
 
-    for out in exec_outcomes {
+    for out in check_outcomes {
         mounts.extend(out.mounts);
         checks.extend(out.checks);
         series.extend(out.series);
@@ -92,6 +106,6 @@ pub async fn collect_report(cfg: &AgentConfig, cpu_tracker: &mut CpuTracker) -> 
         checks,
         series,
         info,
-        monitors: cfg.monitors.clone(),
+        monitors: cfg.monitors.is_some().then_some(collected_monitors),
     }
 }

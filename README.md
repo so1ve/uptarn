@@ -78,16 +78,6 @@ token_file = "/run/secrets/uptarn-homelab-token"
 interval_secs = 60
 grace_secs = 120
 
-[[exec]]
-key = "systemd"
-label = "systemd"
-group = "system"
-command = [
-  "sh",
-  "-c",
-  "u=$(systemctl list-units --state=failed --no-legend --plain | awk '{print $1}'); [ -z \"$u\" ] && echo '0 failed units' || { echo \"failed: $(echo \"$u\" | paste -sd, -)\"; exit 1; }",
-]
-
 [[mounts]]
 path = "/"
 label = "root"
@@ -97,20 +87,58 @@ path = "/srv/nas/data"
 label = "NAS Data"
 timeout_ms = 3000
 
-[[tcp_probes]]
+# Node-attached checks (type defaults to "exec"; also supports "tls" and "tcp").
+[[checks]]
+key = "systemd"
+label = "systemd"
+group = "system"
+command = [
+  "sh",
+  "-c",
+  "u=$(systemctl list-units --state=failed --no-legend --plain | awk '{print $1}'); [ -z \"$u\" ] && echo '0 failed units' || { echo \"failed: $(echo \"$u\" | paste -sd, -)\"; exit 1; }",
+]
+
+[[checks]]
+type = "tcp"
 key = "tcp.edge"
 label = "Edge Relay"
 group = "network"
 target = "edge.example.com:443"
 count = 4
 
-[[tls_certs]]
+[[checks]]
+type = "tls"
 key = "tls.main"
 label = "*.example.com TLS"
 connect = "127.0.0.1:443"
 server_name = "app.example.com"
 warn_days = 14
 fail_days = 5
+
+# Service uptime monitors (hub-probed public HTTP, or agent-probed internal HTTP/TCP/exec).
+[[monitors]]
+key = "blog"
+name = "Blog"
+url = "https://blog.example.com"
+
+[[monitors]]
+key = "immich"
+name = "Immich"
+from = "agent"
+url = "http://127.0.0.1:2283/api/server/ping"
+expected_body = "pong"
+
+[[monitors]]
+key = "postgres"
+name = "PostgreSQL"
+type = "tcp"
+target = "127.0.0.1:5432"
+
+[[monitors]]
+key = "caddy"
+name = "Caddy"
+type = "exec"
+command = ["systemctl", "is-active", "--quiet", "caddy"]
 ```
 
 Minimal DSM storage-only example:
@@ -135,7 +163,7 @@ path = "/volume2"
 label = "Volume 2"
 ```
 
-OpenWrt router / dynamic collectors example with `[[exec]]` and `exec_dirs`:
+OpenWrt router / dynamic collectors example with `[[checks]]` and `check_dirs`:
 
 ```toml
 hub_url = "https://status.example.com"
@@ -146,10 +174,10 @@ token = "uptn_node_..."
 # Automatically scan this directory on each tick without restarting the agent.
 # Supports both:
 #   1. Executable scripts (optional `# uptarn.key/label/group/warn_exit_code/format/timeout_ms = ...` headers)
-#   2. `.toml` drop-ins (single check or `[[exec]]` array, full `command = [...]` args, `./` relative paths)
-exec_dirs = ["/etc/uptarn/exec.d"]
+#   2. `.toml` drop-ins (single check or `[[checks]]` array, full `command = [...]` args, `./` relative paths)
+check_dirs = ["/etc/uptarn/checks.d"]
 
-[[exec]]
+[[checks]]
 key = "tailscale"
 label = "Tailscale"
 group = "network"
@@ -159,7 +187,7 @@ command = [
   "tailscale status --peers=false >/dev/null && echo connected",
 ]
 
-[[exec]]
+[[checks]]
 key = "wan6"
 label = "WAN IPv6"
 format = "json"

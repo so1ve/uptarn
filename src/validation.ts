@@ -4,6 +4,8 @@ import type {
   HealthStatus,
   JobReportPayload,
   MonitorInput,
+  MonitorKind,
+  MonitorResult,
   NodeMonitorSpec,
   NodeReportPayload,
   SeriesUnit,
@@ -27,6 +29,12 @@ const UNITS = [
   "days",
 ] as const satisfies readonly SeriesUnit[];
 const METHODS = ["GET", "HEAD", "POST"] as const;
+const MONITOR_KINDS = [
+  "http",
+  "tcp",
+  "exec",
+] as const satisfies readonly MonitorKind[];
+const MONITOR_SOURCES = ["hub", "agent"] as const;
 const TARGETS = [
   "node",
   "monitor",
@@ -207,9 +215,8 @@ export function parseNodeReportPayload(raw: unknown): NodeReportPayload {
         bad(`${p}.key duplicate "${key}"`);
       }
       seenKeys.add(key);
-      const { id: _id, ...spec } = parseMonitorInput({ ...m, id: key });
 
-      return { key, ...spec };
+      return parseNodeMonitorSpec(m, p, key);
     });
   }
 
@@ -287,6 +294,72 @@ function generateMonitorId(name: string): string {
   return base ? `${base}-${suffix}` : `mon-${suffix}`;
 }
 
+function parseMonitorResult(
+  raw: unknown,
+  prefix: string,
+): MonitorResult | null {
+  if (raw === undefined || raw === null) {
+    return null;
+  }
+  const obj = asObj(raw, prefix);
+  const ok = bool(obj.ok, `${prefix}.ok`);
+  if (ok === undefined) {
+    bad(`${prefix}.ok is required`);
+  }
+
+  return {
+    ok,
+    latency_ms: num(obj.latency_ms, `${prefix}.latency_ms`, 0, 300_000) ?? null,
+    http_status:
+      int(obj.http_status, `${prefix}.http_status`, 100, 599) ?? null,
+    error: str(obj.error, `${prefix}.error`, 256) ?? null,
+  };
+}
+
+function parseNodeMonitorSpec(
+  obj: Record<string, unknown>,
+  prefix: string,
+  key: string,
+): NodeMonitorSpec {
+  const from = reqOneOf(obj.from, `${prefix}.from`, MONITOR_SOURCES);
+  if (from === "hub") {
+    if (obj.type !== undefined && obj.type !== "http") {
+      bad(`${prefix}: hub-probed monitors only support type "http"`);
+    }
+    const { id: _id, ...spec } = parseMonitorInput({ ...obj, id: key });
+
+    return { key, from: "hub", ...spec };
+  }
+
+  const type = reqOneOf(obj.type, `${prefix}.type`, MONITOR_KINDS);
+  const target =
+    type === "http"
+      ? (httpUrl(obj.target, `${prefix}.target`) ??
+        bad(`${prefix}.target is required`))
+      : type === "tcp"
+        ? reqStr(obj.target, `${prefix}.target`, 256)
+        : (str(obj.target, `${prefix}.target`, 256) ?? null);
+
+  return {
+    key,
+    name: reqStr(obj.name, `${prefix}.name`, 80),
+    from: "agent",
+    type,
+    target,
+    public_url: httpUrl(obj.public_url, `${prefix}.public_url`),
+    interval_secs: int(
+      obj.interval_secs,
+      `${prefix}.interval_secs`,
+      10,
+      86_400,
+    ),
+    grace_secs: int(obj.grace_secs, `${prefix}.grace_secs`, 10, 604_800),
+    enabled: obj.enabled === undefined ? true : Boolean(obj.enabled),
+    is_public: bool(obj.is_public, `${prefix}.is_public`) ?? false,
+    result: parseMonitorResult(obj.result, `${prefix}.result`),
+  };
+}
+
 export function parseMonitorInput(raw: MonitorInput | unknown) {
   const obj = asObj(raw, "monitor input");
   const name = reqStr(obj.name, "name", 80);
@@ -323,7 +396,6 @@ export function parseMonitorInput(raw: MonitorInput | unknown) {
     is_public: bool(obj.is_public, "is_public") ?? true,
   };
 }
-
 export function parseCreateNodeInput(raw: unknown) {
   const obj = asObj(raw, "node input");
 

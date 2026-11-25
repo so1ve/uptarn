@@ -2,6 +2,8 @@ import type { SqlDatabase, SqlStatement } from "../db/index.ts";
 import { httpError, readBoundedText } from "../http.ts";
 import type {
   MonitorInput,
+  MonitorKind,
+  MonitorProbe,
   MonitorRollupBucket,
   MonitorRollups,
   MonitorSample,
@@ -12,13 +14,9 @@ import { parseMonitorInput } from "../validation.ts";
 export interface MonitorConfigFields {
   id: string;
   name: string;
-  url: string;
+  probe_from: MonitorProbe["from"];
+  probe_json: string;
   public_url: string | null;
-  method: string;
-  expected_status_min: number;
-  expected_status_max: number;
-  expected_body: string | null;
-  timeout_ms: number;
   interval_secs: number;
   enabled: number;
   is_public: number;
@@ -26,13 +24,9 @@ export interface MonitorConfigFields {
 
 export const MONITOR_CONFIG_KEYS = [
   "name",
-  "url",
+  "probe_from",
+  "probe_json",
   "public_url",
-  "method",
-  "expected_status_min",
-  "expected_status_max",
-  "expected_body",
-  "timeout_ms",
   "interval_secs",
   "enabled",
   "is_public",
@@ -50,6 +44,9 @@ export interface MonitorRow extends MonitorConfigFields {
   samples_json: string;
   rollup_json: string;
 }
+
+export const parseMonitorProbe = (raw: string): MonitorProbe =>
+  JSON.parse(raw) as MonitorProbe;
 
 type CompactMonitorSample = [ts: number, ok: 0 | 1, latency_ms: number | null];
 
@@ -194,6 +191,74 @@ export interface ProbeResult {
   error: string | null;
 }
 
+export function monitorOkSummary(kind: MonitorKind, res: ProbeResult): string {
+  if (kind === "http") {
+    return `HTTP ${res.httpStatus ?? 200} in ${res.latencyMs ?? 0} ms`;
+  }
+  if (kind === "tcp") {
+    return res.latencyMs === null
+      ? "TCP connected"
+      : `TCP connected in ${res.latencyMs} ms`;
+  }
+
+  return res.latencyMs === null ? "OK" : `OK in ${res.latencyMs} ms`;
+}
+
+export function buildMonitorResultStatement(
+  monitor: Pick<MonitorRow, "id" | "samples_json" | "rollup_json">,
+  res: ProbeResult,
+  now: number,
+  options: { updateCheckedAt?: boolean } = {},
+): SqlStatement {
+  const sampleBucketTs = Math.floor(now / 30) * 30;
+  const sample: MonitorSample = {
+    ts: sampleBucketTs,
+    ok: res.ok,
+    latency_ms: res.latencyMs,
+  };
+  const samplesJson = appendMonitorSample(monitor.samples_json, sample);
+  const rollupJson = appendMonitorRollup(
+    monitor.rollup_json,
+    monitor.samples_json,
+    { ...sample, ts: now },
+  );
+
+  if (options.updateCheckedAt === false) {
+    return {
+      sql: `UPDATE monitors SET
+              last_status = ?1, last_http_status = ?2,
+              last_latency_ms = ?3, last_error = ?4, samples_json = ?5, rollup_json = ?6
+            WHERE id = ?7`,
+      params: [
+        res.ok ? "ok" : "fail",
+        res.httpStatus,
+        res.latencyMs,
+        res.error,
+        samplesJson,
+        rollupJson,
+        monitor.id,
+      ],
+    };
+  }
+
+  return {
+    sql: `UPDATE monitors SET
+            last_checked_at = ?1, last_status = ?2, last_http_status = ?3,
+            last_latency_ms = ?4, last_error = ?5, samples_json = ?6, rollup_json = ?7
+          WHERE id = ?8`,
+    params: [
+      now,
+      res.ok ? "ok" : "fail",
+      res.httpStatus,
+      res.latencyMs,
+      res.error,
+      samplesJson,
+      rollupJson,
+      monitor.id,
+    ],
+  };
+}
+
 export function buildMonitorUpsertStatements(
   mon: MonitorConfigFields,
   now: number,
@@ -202,26 +267,18 @@ export function buildMonitorUpsertStatements(
   const statements: SqlStatement[] = [
     {
       sql: `INSERT INTO monitors
-            (id, name, url, public_url, method, expected_status_min, expected_status_max, expected_body, timeout_ms, interval_secs, enabled, is_public, managed_by_node_id, sort_order, created_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, COALESCE((SELECT MAX(sort_order) + 1 FROM monitors), 0), ?14)
+            (id, name, probe_from, probe_json, public_url, interval_secs, enabled, is_public, managed_by_node_id, sort_order, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, COALESCE((SELECT MAX(sort_order) + 1 FROM monitors), 0), ?10)
             ON CONFLICT(id) DO UPDATE SET
               last_checked_at = CASE
-                WHEN monitors.url != excluded.url
-                  OR monitors.method != excluded.method
-                  OR monitors.expected_status_min != excluded.expected_status_min
-                  OR monitors.expected_status_max != excluded.expected_status_max
-                  OR monitors.expected_body IS NOT excluded.expected_body
+                WHEN monitors.probe_json != excluded.probe_json
                 THEN NULL
                 ELSE monitors.last_checked_at
               END,
               name = excluded.name,
-              url = excluded.url,
+              probe_from = excluded.probe_from,
+              probe_json = excluded.probe_json,
               public_url = excluded.public_url,
-              method = excluded.method,
-              expected_status_min = excluded.expected_status_min,
-              expected_status_max = excluded.expected_status_max,
-              expected_body = excluded.expected_body,
-              timeout_ms = excluded.timeout_ms,
               interval_secs = excluded.interval_secs,
               enabled = excluded.enabled,
               is_public = excluded.is_public,
@@ -229,13 +286,9 @@ export function buildMonitorUpsertStatements(
       params: [
         mon.id,
         mon.name,
-        mon.url,
+        mon.probe_from,
+        mon.probe_json,
         mon.public_url,
-        mon.method,
-        mon.expected_status_min,
-        mon.expected_status_max,
-        mon.expected_body,
-        mon.timeout_ms,
         mon.interval_secs,
         mon.enabled,
         mon.is_public,
@@ -276,10 +329,25 @@ export async function upsertMonitor(
 ): Promise<string> {
   const parsed = parseMonitorInput(raw);
   await assertMonitorHubManaged(db, parsed.id);
+  const probe: MonitorProbe = {
+    from: "hub",
+    type: "http",
+    url: parsed.url,
+    method: parsed.method,
+    expected_status_min: parsed.expected_status_min,
+    expected_status_max: parsed.expected_status_max,
+    expected_body: parsed.expected_body,
+    timeout_ms: parsed.timeout_ms,
+  };
   await db.batch(
     buildMonitorUpsertStatements(
       {
-        ...parsed,
+        id: parsed.id,
+        name: parsed.name,
+        probe_from: "hub",
+        probe_json: JSON.stringify(probe),
+        public_url: parsed.public_url,
+        interval_secs: parsed.interval_secs,
         enabled: parsed.enabled ? 1 : 0,
         is_public: parsed.is_public ? 1 : 0,
       },
@@ -291,28 +359,20 @@ export async function upsertMonitor(
 }
 
 export async function probeMonitor(
-  monitor: Pick<
-    MonitorRow,
-    | "url"
-    | "method"
-    | "expected_status_min"
-    | "expected_status_max"
-    | "expected_body"
-    | "timeout_ms"
-  >,
+  probe: Extract<MonitorProbe, { from: "hub" }>,
 ): Promise<ProbeResult> {
   const started = performance.now();
   try {
-    const response = await fetch(monitor.url, {
-      method: monitor.method,
+    const response = await fetch(probe.url, {
+      method: probe.method,
       redirect: "follow",
       headers: { "User-Agent": "uptarn-probe/0.1" },
-      signal: AbortSignal.timeout(monitor.timeout_ms),
+      signal: AbortSignal.timeout(probe.timeout_ms),
     });
     const latencyMs = round1(performance.now() - started);
     if (
-      response.status < monitor.expected_status_min ||
-      response.status > monitor.expected_status_max
+      response.status < probe.expected_status_min ||
+      response.status > probe.expected_status_max
     ) {
       await response.body?.cancel();
 
@@ -323,14 +383,14 @@ export async function probeMonitor(
         error: `HTTP ${response.status}`,
       };
     }
-    if (monitor.expected_body) {
+    if (probe.expected_body) {
       const bodyText = await readBoundedText(response, 65_536);
-      if (!bodyText.includes(monitor.expected_body)) {
+      if (!bodyText.includes(probe.expected_body)) {
         return {
           ok: false,
           httpStatus: response.status,
           latencyMs,
-          error: `Body missing "${monitor.expected_body.slice(0, 48)}"`,
+          error: `Body missing "${probe.expected_body.slice(0, 48)}"`,
         };
       }
     } else {
@@ -345,9 +405,9 @@ export async function probeMonitor(
         (error.name === "TimeoutError" || error.name === "AbortError")) ||
       /aborted due to timeout/i.test(rawError);
     const timeoutLabel =
-      monitor.timeout_ms >= 1000 && monitor.timeout_ms % 1000 === 0
-        ? `${monitor.timeout_ms / 1000}s`
-        : `${monitor.timeout_ms}ms`;
+      probe.timeout_ms >= 1000 && probe.timeout_ms % 1000 === 0
+        ? `${probe.timeout_ms / 1000}s`
+        : `${probe.timeout_ms}ms`;
 
     return {
       ok: false,

@@ -5,17 +5,12 @@ use std::str::FromStr;
 use anyhow::{Context, Result, bail, ensure};
 use serde::Deserialize;
 
-use crate::protocol::{InfoSnapshot, MonitorSpec};
+use crate::protocol::{InfoSnapshot, MonitorProbeFrom, MonitorProbeType};
 
-const EXEC_TIMEOUT_MS: u64 = 5000;
+pub const EXEC_TIMEOUT_MS: u64 = 5000;
+pub const PROBE_TIMEOUT_MS: u64 = 2000;
 
-const fn default_u32<const V: u32>() -> u32 {
-    V
-}
 const fn default_u64<const V: u64>() -> u64 {
-    V
-}
-const fn default_i64<const V: i64>() -> i64 {
     V
 }
 const fn default_f64<const V: u32>() -> f64 {
@@ -26,6 +21,7 @@ const fn default_auto_format() -> ExecOutputFormat {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentConfig {
     #[serde(default)]
     pub hub_url: String,
@@ -45,16 +41,12 @@ pub struct AgentConfig {
     #[serde(default)]
     pub mounts: Vec<MountConfig>,
     #[serde(default)]
-    pub tcp_probes: Vec<TcpProbeConfig>,
+    pub checks: Vec<CheckConfig>,
     #[serde(default)]
-    pub tls_certs: Vec<TlsCertConfig>,
-    #[serde(default)]
-    pub exec: Vec<ExecCheckConfig>,
-    #[serde(default)]
-    pub exec_dirs: Vec<ExecDirConfig>,
+    pub check_dirs: Vec<CheckDirConfig>,
     #[serde(default)]
     pub info: Vec<InfoSnapshot>,
-    pub monitors: Option<Vec<MonitorSpec>>,
+    pub monitors: Option<Vec<MonitorConfig>>,
 }
 
 #[expect(
@@ -62,7 +54,7 @@ pub struct AgentConfig {
     reason = "Independent per-metric TOML switches in [system]"
 )]
 #[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct SystemCollectConfig {
     pub enabled: bool,
     pub cpu: bool,
@@ -90,6 +82,7 @@ impl Default for SystemCollectConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MountConfig {
     #[serde(default)]
     pub path: String,
@@ -102,45 +95,13 @@ pub struct MountConfig {
     pub timeout_ms: u64,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct TcpProbeConfig {
-    #[serde(default)]
-    pub key: String,
-    #[serde(default)]
-    pub label: String,
-    pub group: Option<String>,
-    #[serde(default)]
-    pub target: String,
-    #[serde(default = "default_u32::<4>")]
-    pub count: u32,
-    #[serde(default = "default_u64::<2000>")]
-    pub timeout_ms: u64,
-    #[serde(default = "default_f64::<250>")]
-    pub warn_ms: f64,
-    #[serde(default = "default_f64::<800>")]
-    pub fail_ms: f64,
-    #[serde(default = "default_f64::<20>")]
-    pub warn_loss_pct: f64,
-    #[serde(default = "default_f64::<50>")]
-    pub fail_loss_pct: f64,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct TlsCertConfig {
-    #[serde(default)]
-    pub key: String,
-    #[serde(default)]
-    pub label: String,
-    pub group: Option<String>,
-    pub path: Option<String>,
-    pub connect: Option<String>,
-    pub server_name: Option<String>,
-    #[serde(default = "default_i64::<14>")]
-    pub warn_days: i64,
-    #[serde(default = "default_i64::<5>")]
-    pub fail_days: i64,
-    #[serde(default = "default_u64::<2000>")]
-    pub timeout_ms: u64,
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CheckKind {
+    #[default]
+    Exec,
+    Tls,
+    Tcp,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
@@ -165,15 +126,226 @@ impl FromStr for ExecOutputFormat {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ExecCheckConfig {
+    pub key: String,
+    pub label: String,
+    pub group: Option<String>,
+    pub command: Vec<String>,
+    pub format: ExecOutputFormat,
+    pub warn_exit_code: Option<i32>,
+    pub timeout_ms: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct TcpProbeConfig {
+    pub key: String,
+    pub label: String,
+    pub group: Option<String>,
+    pub target: String,
+    pub count: u32,
+    pub timeout_ms: u64,
+    pub warn_ms: f64,
+    pub fail_ms: f64,
+    pub warn_loss_pct: f64,
+    pub fail_loss_pct: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct TlsCertConfig {
+    pub key: String,
+    pub label: String,
+    pub group: Option<String>,
+    pub path: Option<String>,
+    pub connect: Option<String>,
+    pub server_name: Option<String>,
+    pub warn_days: i64,
+    pub fail_days: i64,
+    pub timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(try_from = "RawCheckConfig")]
+pub enum CheckConfig {
+    Exec(ExecCheckConfig),
+    Tls(TlsCertConfig),
+    Tcp(TcpProbeConfig),
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RawCheckConfig {
+    #[serde(rename = "type", default)]
+    pub kind: CheckKind,
+    pub key: Option<String>,
+    pub label: Option<String>,
+    pub group: Option<String>,
+    pub timeout_ms: Option<u64>,
+    // exec fields
+    #[serde(default)]
+    pub command: Vec<String>,
+    pub format: Option<ExecOutputFormat>,
+    pub warn_exit_code: Option<i32>,
+    // tls fields
+    pub path: Option<String>,
+    pub connect: Option<String>,
+    pub server_name: Option<String>,
+    pub warn_days: Option<i64>,
+    pub fail_days: Option<i64>,
+    // tcp fields
+    pub target: Option<String>,
+    pub count: Option<u32>,
+    pub warn_ms: Option<f64>,
+    pub fail_ms: Option<f64>,
+    pub warn_loss_pct: Option<f64>,
+    pub fail_loss_pct: Option<f64>,
+}
+
+impl RawCheckConfig {
+    pub fn into_check(
+        self,
+        key: String,
+        label: String,
+        group: Option<String>,
+        defaults: CheckDirDefaults<'_>,
+    ) -> std::result::Result<CheckConfig, String> {
+        match self.kind {
+            CheckKind::Exec => {
+                if self.command.is_empty()
+                    || self.command.first().and_then(|s| non_empty(s)).is_none()
+                {
+                    return Err("exec check requires non-empty command".to_string());
+                }
+                if self.target.is_some()
+                    || self.path.is_some()
+                    || self.connect.is_some()
+                    || self.server_name.is_some()
+                    || self.count.is_some()
+                    || self.warn_days.is_some()
+                    || self.fail_days.is_some()
+                    || self.warn_ms.is_some()
+                    || self.fail_ms.is_some()
+                    || self.warn_loss_pct.is_some()
+                    || self.fail_loss_pct.is_some()
+                {
+                    return Err("exec check cannot set tls or tcp fields".to_string());
+                }
+
+                Ok(CheckConfig::Exec(ExecCheckConfig {
+                    key,
+                    label,
+                    group,
+                    command: self.command,
+                    format: self.format.unwrap_or(defaults.format),
+                    warn_exit_code: self.warn_exit_code.or(defaults.warn_exit_code),
+                    timeout_ms: self.timeout_ms.unwrap_or(defaults.timeout_ms),
+                }))
+            }
+            CheckKind::Tls => {
+                if self.path.as_deref().and_then(non_empty).is_none()
+                    && self.connect.as_deref().and_then(non_empty).is_none()
+                {
+                    return Err("tls check requires either path or connect".to_string());
+                }
+                if !self.command.is_empty()
+                    || self.format.is_some()
+                    || self.warn_exit_code.is_some()
+                    || self.target.is_some()
+                    || self.count.is_some()
+                    || self.warn_ms.is_some()
+                    || self.fail_ms.is_some()
+                    || self.warn_loss_pct.is_some()
+                    || self.fail_loss_pct.is_some()
+                {
+                    return Err("tls check cannot set exec or tcp fields".to_string());
+                }
+
+                Ok(CheckConfig::Tls(TlsCertConfig {
+                    key,
+                    label,
+                    group,
+                    path: self.path.and_then(|s| non_empty(&s).map(str::to_string)),
+                    connect: self.connect.and_then(|s| non_empty(&s).map(str::to_string)),
+                    server_name: self
+                        .server_name
+                        .and_then(|s| non_empty(&s).map(str::to_string)),
+                    warn_days: self.warn_days.unwrap_or(14),
+                    fail_days: self.fail_days.unwrap_or(5),
+                    timeout_ms: self.timeout_ms.unwrap_or(PROBE_TIMEOUT_MS),
+                }))
+            }
+            CheckKind::Tcp => {
+                let Some(target) = self.target.and_then(|s| non_empty(&s).map(str::to_string))
+                else {
+                    return Err("tcp check requires target".to_string());
+                };
+                if !self.command.is_empty()
+                    || self.format.is_some()
+                    || self.warn_exit_code.is_some()
+                    || self.path.is_some()
+                    || self.connect.is_some()
+                    || self.server_name.is_some()
+                    || self.warn_days.is_some()
+                    || self.fail_days.is_some()
+                {
+                    return Err("tcp check cannot set exec or tls fields".to_string());
+                }
+
+                Ok(CheckConfig::Tcp(TcpProbeConfig {
+                    key,
+                    label,
+                    group,
+                    target,
+                    count: self.count.unwrap_or(4),
+                    timeout_ms: self.timeout_ms.unwrap_or(PROBE_TIMEOUT_MS),
+                    warn_ms: self.warn_ms.unwrap_or(250.0),
+                    fail_ms: self.fail_ms.unwrap_or(800.0),
+                    warn_loss_pct: self.warn_loss_pct.unwrap_or(20.0),
+                    fail_loss_pct: self.fail_loss_pct.unwrap_or(50.0),
+                }))
+            }
+        }
+    }
+}
+
+impl TryFrom<RawCheckConfig> for CheckConfig {
+    type Error = String;
+
+    fn try_from(raw: RawCheckConfig) -> std::result::Result<Self, Self::Error> {
+        let Some(key) = raw.key.as_deref().and_then(non_empty).map(str::to_string) else {
+            return Err("checks[] requires key".to_string());
+        };
+        let label = raw
+            .label
+            .as_deref()
+            .and_then(non_empty)
+            .unwrap_or(&key)
+            .to_string();
+        let group = raw.group.as_deref().and_then(non_empty).map(str::to_string);
+
+        raw.into_check(
+            key,
+            label,
+            group,
+            CheckDirDefaults {
+                group: None,
+                format: ExecOutputFormat::Exit,
+                warn_exit_code: None,
+                timeout_ms: EXEC_TIMEOUT_MS,
+            },
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
-pub struct ExecDirDefaults<'a> {
+pub struct CheckDirDefaults<'a> {
     pub group: Option<&'a str>,
     pub format: ExecOutputFormat,
     pub warn_exit_code: Option<i32>,
     pub timeout_ms: u64,
 }
 
-impl Default for ExecDirDefaults<'_> {
+impl Default for CheckDirDefaults<'_> {
     fn default() -> Self {
         Self {
             group: None,
@@ -186,7 +358,7 @@ impl Default for ExecDirDefaults<'_> {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
-pub enum ExecDirConfig {
+pub enum CheckDirConfig {
     Path(String),
     Detailed {
         path: String,
@@ -199,10 +371,10 @@ pub enum ExecDirConfig {
     },
 }
 
-impl ExecDirConfig {
-    pub fn parts(&self) -> (&str, ExecDirDefaults<'_>) {
+impl CheckDirConfig {
+    pub fn parts(&self) -> (&str, CheckDirDefaults<'_>) {
         match self {
-            Self::Path(path) => (path.as_str(), ExecDirDefaults::default()),
+            Self::Path(path) => (path.as_str(), CheckDirDefaults::default()),
             Self::Detailed {
                 path,
                 group,
@@ -211,7 +383,7 @@ impl ExecDirConfig {
                 timeout_ms,
             } => (
                 path.as_str(),
-                ExecDirDefaults {
+                CheckDirDefaults {
                     group: group.as_deref(),
                     format: *format,
                     warn_exit_code: *warn_exit_code,
@@ -223,19 +395,50 @@ impl ExecDirConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct ExecCheckConfig {
+#[serde(deny_unknown_fields)]
+pub struct MonitorConfig {
     #[serde(default)]
     pub key: String,
     #[serde(default)]
-    pub label: String,
-    pub group: Option<String>,
+    pub name: String,
+    #[serde(rename = "type", default)]
+    pub probe_type: MonitorProbeType,
+    #[serde(rename = "from")]
+    pub probe_from: Option<MonitorProbeFrom>,
+    pub url: Option<String>,
+    pub target: Option<String>,
     #[serde(default)]
     pub command: Vec<String>,
-    #[serde(default)]
-    pub format: ExecOutputFormat,
-    pub warn_exit_code: Option<i32>,
-    #[serde(default = "default_u64::<EXEC_TIMEOUT_MS>")]
-    pub timeout_ms: u64,
+    pub public_url: Option<String>,
+    pub method: Option<String>,
+    pub expected_status_min: Option<u16>,
+    pub expected_status_max: Option<u16>,
+    pub expected_body: Option<String>,
+    pub timeout_ms: Option<u64>,
+    pub interval_secs: Option<u64>,
+    pub grace_secs: Option<u64>,
+    pub enabled: Option<bool>,
+    pub is_public: Option<bool>,
+}
+
+impl MonitorConfig {
+    pub const fn resolved_from(&self) -> MonitorProbeFrom {
+        match self.probe_from {
+            Some(from) => from,
+            None => match self.probe_type {
+                MonitorProbeType::Http => MonitorProbeFrom::Hub,
+                MonitorProbeType::Tcp | MonitorProbeType::Exec => MonitorProbeFrom::Agent,
+            },
+        }
+    }
+
+    pub const fn default_timeout_ms(&self) -> u64 {
+        match self.probe_type {
+            MonitorProbeType::Http => 8000,
+            MonitorProbeType::Tcp => 3000,
+            MonitorProbeType::Exec => 5000,
+        }
+    }
 }
 
 pub fn non_empty(value: &str) -> Option<&str> {
@@ -278,29 +481,70 @@ impl AgentConfig {
         for m in &cfg.mounts {
             ensure!(!m.path.trim().is_empty(), "mounts[].path cannot be empty");
         }
-        for p in &cfg.tcp_probes {
-            ensure!(
-                !p.key.trim().is_empty() && !p.target.trim().is_empty(),
-                "tcp_probes[] requires key and target"
-            );
-        }
-        for c in &cfg.tls_certs {
-            ensure!(
-                !c.key.trim().is_empty() && (c.path.is_some() || c.connect.is_some()),
-                "tls_certs[] requires key and either path or connect"
-            );
-        }
-        for e in &cfg.exec {
-            ensure!(
-                !e.key.trim().is_empty() && !e.command.is_empty(),
-                "exec[] requires key and command"
-            );
-        }
         for m in cfg.monitors.iter().flatten() {
             ensure!(
-                !m.key.trim().is_empty() && !m.name.trim().is_empty() && !m.url.trim().is_empty(),
-                "monitors[] requires key, name, and url"
+                !m.key.trim().is_empty() && !m.name.trim().is_empty(),
+                "monitors[] requires key and name"
             );
+            let from = m.resolved_from();
+            if from == MonitorProbeFrom::Hub {
+                ensure!(
+                    m.probe_type == MonitorProbeType::Http,
+                    "monitors[{}]: hub-probed monitors only support type = \"http\"",
+                    m.key
+                );
+            }
+            match m.probe_type {
+                MonitorProbeType::Http => {
+                    let url = m.url.as_deref().and_then(non_empty).with_context(|| {
+                        format!("monitors[{}]: http monitor requires url", m.key)
+                    })?;
+                    ensure!(
+                        url.starts_with("http://") || url.starts_with("https://"),
+                        "monitors[{}]: url must start with http:// or https://",
+                        m.key
+                    );
+                    ensure!(
+                        m.command.is_empty() && m.target.is_none(),
+                        "monitors[{}]: http monitor cannot set target or command",
+                        m.key
+                    );
+                    if let Some(method) = m.method.as_deref().and_then(non_empty) {
+                        ensure!(
+                            matches!(
+                                method.to_ascii_uppercase().as_str(),
+                                "GET" | "HEAD" | "POST"
+                            ),
+                            "monitors[{}]: method must be GET, HEAD, or POST",
+                            m.key
+                        );
+                    }
+                }
+                MonitorProbeType::Tcp => {
+                    ensure!(
+                        m.target.as_deref().and_then(non_empty).is_some(),
+                        "monitors[{}]: tcp monitor requires target",
+                        m.key
+                    );
+                    ensure!(
+                        m.url.is_none() && m.command.is_empty(),
+                        "monitors[{}]: tcp monitor cannot set url or command",
+                        m.key
+                    );
+                }
+                MonitorProbeType::Exec => {
+                    ensure!(
+                        m.command.first().and_then(|s| non_empty(s)).is_some(),
+                        "monitors[{}]: exec monitor requires non-empty command",
+                        m.key
+                    );
+                    ensure!(
+                        m.url.is_none(),
+                        "monitors[{}]: exec monitor cannot set url",
+                        m.key
+                    );
+                }
+            }
         }
 
         cfg.node_id = non_empty(&cfg.node_id)
