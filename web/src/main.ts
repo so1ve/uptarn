@@ -15,6 +15,7 @@ import MaintenancesView from "./views/MaintenancesView.vue";
 import MonitorsView from "./views/MonitorsView.vue";
 import NodeDetailView from "./views/NodeDetailView.vue";
 import NodesView from "./views/NodesView.vue";
+import NotFoundView from "./views/NotFoundView.vue";
 import SettingsView from "./views/SettingsView.vue";
 
 import "./main.css";
@@ -73,7 +74,12 @@ const router = createRouter({
         { path: "settings", name: "settings", component: SettingsView },
       ],
     },
-    { path: "/:pathMatch(.*)*", redirect: "/" },
+    {
+      path: "/:pathMatch(.*)*",
+      name: "not-found",
+      component: NotFoundView,
+      meta: { loading: "public" },
+    },
   ],
 });
 
