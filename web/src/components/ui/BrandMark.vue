@@ -10,6 +10,7 @@ defineProps<{
 }>();
 
 const { isDark } = useUptarnStore();
+const baseUrl = import.meta.env.BASE_URL;
 </script>
 
 <template>
@@ -22,7 +23,7 @@ const { isDark } = useUptarnStore();
       alt=""
       class="shrink-0"
       height="22"
-      :src="isDark ? '/logo-dark.svg' : '/logo-light.svg'"
+      :src="`${baseUrl}${isDark ? 'logo-dark.svg' : 'logo-light.svg'}`"
       width="22"
     />
     <span class="shrink-0 text-[15px] font-semibold tracking-tight">

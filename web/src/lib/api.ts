@@ -12,6 +12,11 @@ export async function apiFetch<T = Record<string, unknown>>(
   method = "GET",
   body?: unknown,
 ): Promise<T> {
+  if (import.meta.env.VITE_DEMO === "true") {
+    const { demoApiFetch } = await import("./demo.ts");
+
+    return demoApiFetch<T>(url, method, body);
+  }
   const headers: Record<string, string> = {};
   const init: RequestInit = { method, headers };
   if (body !== undefined) {

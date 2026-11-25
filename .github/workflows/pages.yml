@@ -1,0 +1,44 @@
+name: Demo Page
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Demo
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: so1ve/workflows/setup-js@v1
+        with:
+          node-version: "24"
+      - id: pages
+        uses: actions/configure-pages@v5
+      - run: pnpm run build:demo
+        env:
+          VITE_BASE: ${{ steps.pages.outputs.base_path }}/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    name: Deploy Demo
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

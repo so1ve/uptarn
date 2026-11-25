@@ -10,6 +10,8 @@ Push-based monitoring hub built for Cloudflare Workers, unifying flexible node r
 
 Instead of running separate host, uptime, and cron monitors on a dedicated high-SLA server, Uptarn runs as a single edge service (or self-hosted SQLite) where any device pushes only the metrics, checks, charts, or job runs you care about over HTTPS.
 
+Try the **[Live Demo](https://so1ve.github.io/uptarn/)** (interactive browser mock with synthetic data).
+
 ## Comparison
 
 Covering mixed personal devices (VPS, homelab, NAS, routers), web services, and scheduled backups usually requires deploying three separate tools on a reliable server you maintain yourself. Uptarn combines them into one edge deployment with an open push payload:

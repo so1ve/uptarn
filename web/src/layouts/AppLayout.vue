@@ -12,6 +12,7 @@ defineProps<{
 }>();
 
 const { isDark, toggleTheme } = useUptarnStore();
+const isDemo = import.meta.env.VITE_DEMO === "true";
 </script>
 
 <template>
@@ -87,6 +88,9 @@ const { isDark, toggleTheme } = useUptarnStore();
             Uptarn
           </a>
           <span>v{{ version }}</span>
+          <span v-if="isDemo" class="font-sans text-muted">
+            · Interactive demo (resets on reload)
+          </span>
         </div>
         <div
           v-if="links && links.length > 0"
