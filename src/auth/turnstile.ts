@@ -1,8 +1,7 @@
 import type { Context } from "hono";
 
-import type { LoadedConfig } from "../config.ts";
+import type { TurnstileConfig } from "../config.ts";
 import { httpError } from "../http.ts";
-import { resolveRpOrigin } from "./session.ts";
 
 const SITEVERIFY_URL =
   "https://challenges.cloudflare.com/turnstile/v0/siteverify";
@@ -26,14 +25,11 @@ function extractClientIp(c: Context): string | null {
 
 export async function verifyTurnstileToken(
   c: Context,
-  config: LoadedConfig,
+  turnstile: TurnstileConfig,
+  fallbackHostname: string,
   token: unknown,
   expectedAction: string,
 ): Promise<void> {
-  const turnstile = config.turnstile;
-  if (!turnstile) {
-    return;
-  }
   if (
     typeof token !== "string" ||
     token.length === 0 ||
@@ -72,7 +68,7 @@ export async function verifyTurnstileToken(
     hostname !== undefined &&
     (turnstile.hostnames.length > 0
       ? turnstile.hostnames.includes(hostname)
-      : hostname === resolveRpOrigin(c, config).rpID.toLowerCase());
+      : hostname === fallbackHostname.toLowerCase());
 
   if (
     result.success !== true ||

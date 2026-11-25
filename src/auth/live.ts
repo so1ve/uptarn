@@ -1,5 +1,6 @@
 import type { LoadedConfig } from "../config.ts";
 import type { SqlDatabase } from "../db/index.ts";
+import { extractBearerHeader } from "../http.ts";
 import { sha256Hex, timingSafeEqualText } from "./crypto.ts";
 import { checkAdminAuthRequest } from "./session.ts";
 
@@ -23,10 +24,7 @@ export async function authenticateLiveAgent(
   if (!NODE_ID_RE.test(nodeId)) {
     return null;
   }
-  const authHeader = request.headers.get("Authorization");
-  const token = authHeader?.startsWith("Bearer ")
-    ? authHeader.slice(7).trim()
-    : "";
+  const token = extractBearerHeader(request.headers.get("Authorization"));
   if (!token) {
     return null;
   }

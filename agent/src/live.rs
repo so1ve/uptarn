@@ -59,16 +59,15 @@ async fn run_live_session(
     loop {
         tokio::select! {
             _ = ticker.tick() => {
-                if let Some(frame) = collect_live_frame(&cfg.system, cpu_tracker).await {
-                    let payload = serde_json::to_string(&frame)?;
-                    tokio::time::timeout(
-                        Duration::from_secs(SEND_TIMEOUT_SECS),
-                        sink.send(Message::Text(payload.into())),
-                    )
-                    .await
-                    .context("live WS send timed out")?
-                    .context("live WS send failed")?;
-                }
+                let frame = collect_live_frame(&cfg.system, cpu_tracker).await;
+                let payload = serde_json::to_string(&frame)?;
+                tokio::time::timeout(
+                    Duration::from_secs(SEND_TIMEOUT_SECS),
+                    sink.send(Message::Text(payload.into())),
+                )
+                .await
+                .context("live WS send timed out")?
+                .context("live WS send failed")?;
             }
             incoming = stream.next() => {
                 match incoming {
@@ -90,10 +89,6 @@ async fn run_live_session(
 }
 
 pub async fn run_live_loop(cfg: AgentConfig, token: String) {
-    if !cfg.system.enabled || cfg.live_interval_secs == 0 {
-        std::future::pending::<()>().await;
-    }
-
     let mut cpu_tracker = CpuTracker::default();
     let mut backoff_secs = MIN_BACKOFF_SECS;
 

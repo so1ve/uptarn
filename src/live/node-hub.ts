@@ -41,7 +41,7 @@ function rejectUpgrade(socket: Duplex, status: number, text: string): void {
   socket.destroy();
 }
 
-function rawDataToString(data: RawData): string | null {
+function rawDataToString(data: RawData): string {
   if (typeof data === "string") {
     return data;
   }

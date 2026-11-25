@@ -130,9 +130,7 @@ onMounted(() => {
 });
 
 watch([() => props.siteKey, isDark], () => {
-  if (mounted) {
-    void renderWidget();
-  }
+  void renderWidget();
 });
 
 onBeforeUnmount(() => {

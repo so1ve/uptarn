@@ -37,13 +37,11 @@ function hasAuthCredentials(request: Request): boolean {
 async function handleLiveUpgrade(
   request: Request,
   env: CloudflareWorkerEnv,
+  liveHub: DurableObjectNamespace<LiveHub>,
   pathname: string,
 ): Promise<Response> {
-  if (!env.LIVE_HUB) {
-    return new Response("Live hub not configured", { status: 503 });
-  }
   const db = d1Adapter(env.DB);
-  const stub = env.LIVE_HUB.getByName("global");
+  const stub = liveHub.getByName("global");
 
   if (pathname === "/api/v1/ingest/live") {
     const auth = await authenticateLiveAgent(db, request);
@@ -102,7 +100,11 @@ async function handleFetch(
       url.pathname === "/api/v1/live") &&
     request.headers.get("Upgrade")?.toLowerCase() === "websocket"
   ) {
-    return handleLiveUpgrade(request, env, url.pathname);
+    if (!env.LIVE_HUB) {
+      return new Response("Live hub not configured", { status: 503 });
+    }
+
+    return handleLiveUpgrade(request, env, env.LIVE_HUB, url.pathname);
   }
 
   const canCache =

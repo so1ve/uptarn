@@ -385,34 +385,6 @@ function buildManagedMonitorStatements(
   return { statements, observations };
 }
 
-function computeNetworkRates(
-  node: NodeIngestRow | null,
-  rxBytes: number | null,
-  txBytes: number | null,
-  now: number,
-): { rxBps: number | null; txBps: number | null } {
-  if (rxBytes === null || txBytes === null || !node) {
-    return { rxBps: null, txBps: null };
-  }
-  if (
-    node.prev_rx_bytes !== null &&
-    node.prev_tx_bytes !== null &&
-    node.prev_net_at !== null &&
-    now > node.prev_net_at &&
-    rxBytes >= node.prev_rx_bytes &&
-    txBytes >= node.prev_tx_bytes
-  ) {
-    const dt = now - node.prev_net_at;
-
-    return {
-      rxBps: (rxBytes - node.prev_rx_bytes) / dt,
-      txBps: (txBytes - node.prev_tx_bytes) / dt,
-    };
-  }
-
-  return { rxBps: node.rx_bps, txBps: node.tx_bps };
-}
-
 const utcDaysInMonth = (year: number, monthIndex: number): number =>
   new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
 
@@ -439,23 +411,50 @@ export function trafficPeriodStart(nowSecs: number, resetDay: number): number {
   );
 }
 
-function computeMonthlyTraffic(
+function computeNetworkMetrics(
   node: NodeIngestRow | null,
   rxBytes: number | null,
   txBytes: number | null,
   now: number,
-): { monthRx: number; monthTx: number; periodStart: number } {
+): {
+  rxBps: number | null;
+  txBps: number | null;
+  monthRx: number;
+  monthTx: number;
+  periodStart: number;
+} {
   const periodStart = trafficPeriodStart(now, node?.traffic_reset_day ?? 1);
   const samePeriod = node !== null && node.traffic_period_start === periodStart;
   if (rxBytes === null || txBytes === null) {
     return {
+      rxBps: null,
+      txBps: null,
       monthRx: samePeriod ? node.month_rx_bytes : 0,
       monthTx: samePeriod ? node.month_tx_bytes : 0,
       periodStart,
     };
   }
+
+  let rxBps: number | null = node?.rx_bps ?? null;
+  let txBps: number | null = node?.tx_bps ?? null;
+  if (node) {
+    const { prev_rx_bytes, prev_tx_bytes, prev_net_at } = node;
+    if (
+      prev_rx_bytes !== null &&
+      prev_tx_bytes !== null &&
+      prev_net_at !== null &&
+      now > prev_net_at &&
+      rxBytes >= prev_rx_bytes &&
+      txBytes >= prev_tx_bytes
+    ) {
+      const dt = now - prev_net_at;
+      rxBps = (rxBytes - prev_rx_bytes) / dt;
+      txBps = (txBytes - prev_tx_bytes) / dt;
+    }
+  }
+
   if (!samePeriod) {
-    return { monthRx: 0, monthTx: 0, periodStart };
+    return { rxBps, txBps, monthRx: 0, monthTx: 0, periodStart };
   }
   const deltaRx =
     node.prev_rx_bytes === null
@@ -471,6 +470,8 @@ function computeMonthlyTraffic(
         : txBytes;
 
   return {
+    rxBps,
+    txBps,
     monthRx: node.month_rx_bytes + deltaRx,
     monthTx: node.month_tx_bytes + deltaTx,
     periodStart,
@@ -576,8 +577,7 @@ export async function ingestNodeReport(
   );
   const rxBytes = payload.system?.rx_bytes ?? null;
   const txBytes = payload.system?.tx_bytes ?? null;
-  const { rxBps, txBps } = computeNetworkRates(existing, rxBytes, txBytes, now);
-  const { monthRx, monthTx, periodStart } = computeMonthlyTraffic(
+  const { rxBps, txBps, monthRx, monthTx, periodStart } = computeNetworkMetrics(
     existing,
     rxBytes,
     txBytes,

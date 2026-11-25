@@ -60,14 +60,16 @@ export async function readJson<T = unknown>(
   }
 }
 
-export function extractBearer(c: Context): string | null {
-  const header = c.req.header("Authorization");
+export function extractBearerHeader(header: string | null): string | null {
   if (!header?.startsWith("Bearer ")) {
     return null;
   }
 
   return header.slice(7).trim() || null;
 }
+
+export const extractBearer = (c: Context): string | null =>
+  extractBearerHeader(c.req.header("Authorization") ?? null);
 
 export async function readBoundedText(
   response: Response,

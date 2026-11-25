@@ -148,12 +148,8 @@ async function sendJson(url: string, init: RequestInit): Promise<void> {
 
 export async function dispatchNotificationBatch(
   config: LoadedConfig,
-  alerts: readonly AlertPayload[],
+  alerts: readonly [AlertPayload, ...AlertPayload[]],
 ): Promise<Record<string, string>> {
-  if (alerts.length === 0) {
-    return { status: "no_alerts" };
-  }
-
   const { title, plain, telegramHtml, matrixHtml, action } =
     formatBatchBodies(alerts);
   const tasks: [string, Promise<void>][] = [];
@@ -380,12 +376,14 @@ export async function buildAlertStatements(
       .map((kind) => notifications.filter((n) => n.payload.kind === kind))
       .filter((group) => group.length > 0);
     const deliveries = await Promise.all(
-      batches.map((group) =>
-        dispatchNotificationBatch(
-          config,
-          group.map((item) => item.payload),
-        ),
-      ),
+      batches.map((group) => {
+        const payloads = group.map((item) => item.payload) as [
+          AlertPayload,
+          ...AlertPayload[],
+        ];
+
+        return dispatchNotificationBatch(config, payloads);
+      }),
     );
     for (const [idx, group] of batches.entries()) {
       const deliveryJson = JSON.stringify(deliveries[idx]);

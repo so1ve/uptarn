@@ -3,7 +3,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 
 import type { LoadedConfig } from "../config.ts";
 import type { SqlDatabase } from "../db/index.ts";
-import { httpError, readJson } from "../http.ts";
+import { extractBearerHeader, httpError, readJson } from "../http.ts";
 import { unixNow } from "../shared/index.ts";
 import { verifyCloudflareAccessJwt } from "./cf-access.ts";
 import {
@@ -110,10 +110,7 @@ export async function createAdminSession(
   });
 }
 
-function readCookieHeader(header: string | null, name: string): string | null {
-  if (!header) {
-    return null;
-  }
+function readCookieHeader(header: string, name: string): string | null {
   const prefix = `${name}=`;
   for (const part of header.split(";")) {
     const trimmed = part.trim();
@@ -136,10 +133,7 @@ export async function checkAdminAuthRequest(
   config: LoadedConfig,
 ): Promise<boolean> {
   const now = unixNow();
-  const authHeader = request.headers.get("Authorization");
-  const bearer = authHeader?.startsWith("Bearer ")
-    ? authHeader.slice(7).trim() || null
-    : null;
+  const bearer = extractBearerHeader(request.headers.get("Authorization"));
   if (bearer) {
     if (
       config.adminToken !== null &&
@@ -153,15 +147,19 @@ export async function checkAdminAuthRequest(
   }
 
   const cookieHeader = request.headers.get("Cookie");
-  const sessionToken = readCookieHeader(cookieHeader, SESSION_COOKIE);
-  if (sessionToken && (await hasActiveSession(db, sessionToken, now))) {
-    return true;
+  if (cookieHeader) {
+    const sessionToken = readCookieHeader(cookieHeader, SESSION_COOKIE);
+    if (sessionToken && (await hasActiveSession(db, sessionToken, now))) {
+      return true;
+    }
   }
 
   if (config.cfAccess) {
     const cfJwt =
       request.headers.get("Cf-Access-Jwt-Assertion") ??
-      readCookieHeader(cookieHeader, "CF_Authorization");
+      (cookieHeader
+        ? readCookieHeader(cookieHeader, "CF_Authorization")
+        : null);
     if (
       cfJwt &&
       (await verifyCloudflareAccessJwt(
@@ -208,7 +206,15 @@ export async function handlePasswordLogin(
   if (!hasPasswordLogin(config)) {
     throw httpError(403, "Password login is not configured on this server");
   }
-  await verifyTurnstileToken(c, config, body["cf-turnstile-response"], "login");
+  if (config.turnstile) {
+    await verifyTurnstileToken(
+      c,
+      config.turnstile,
+      resolveRpOrigin(c, config).rpID,
+      body["cf-turnstile-response"],
+      "login",
+    );
+  }
   if (!(await verifyPassword(password, config))) {
     throw httpError(401, "Incorrect password");
   }

@@ -89,8 +89,8 @@ async fn run_daemon(config_path: &Path) -> Result<()> {
         eprintln!("uptarn-agent: report push failed: {err:#}");
     }
 
-    let live_fut = live::run_live_loop(cfg.clone(), token);
-    tokio::pin!(live_fut);
+    let live_handle = (cfg.system.enabled && cfg.live_interval_secs > 0)
+        .then(|| tokio::spawn(live::run_live_loop(cfg.clone(), token)));
 
     loop {
         tokio::select! {
@@ -100,9 +100,12 @@ async fn run_daemon(config_path: &Path) -> Result<()> {
                     eprintln!("uptarn-agent: report push failed: {err:#}");
                 }
             }
-            () = &mut live_fut => {}
             _ = tokio::signal::ctrl_c() => break,
         }
+    }
+
+    if let Some(handle) = live_handle {
+        handle.abort();
     }
 
     Ok(())

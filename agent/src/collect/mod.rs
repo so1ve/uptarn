@@ -62,7 +62,13 @@ pub async fn collect_report(cfg: &AgentConfig, cpu_tracker: &mut CpuTracker) -> 
     let node_grace_secs = cfg.grace_secs;
 
     let (system, mut mounts, check_outcomes, collected_monitors) = tokio::join!(
-        system::collect_system(&cfg.system, cpu_tracker),
+        async {
+            if cfg.system.enabled {
+                Some(system::collect_system(&cfg.system, cpu_tracker).await)
+            } else {
+                None
+            }
+        },
         collect_parallel(
             &cfg.mounts,
             |m| async move { mounts::collect_mount(&m).await }

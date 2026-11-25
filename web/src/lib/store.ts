@@ -116,11 +116,7 @@ function recordAdminSample(sample: LiveNodeSample): void {
   liveHistory.value = { ...liveHistory.value, [sample.node_id]: next };
 }
 
-function patchAdminNode(sample: LiveNodeSample): void {
-  const snap = snapshot.value;
-  if (!snap) {
-    return;
-  }
+function patchAdminNode(snap: DashboardSnapshot, sample: LiveNodeSample): void {
   const idx = snap.nodes.findIndex((n) => n.id === sample.node_id);
   if (idx === -1) {
     return;
@@ -153,11 +149,10 @@ function patchAdminNode(sample: LiveNodeSample): void {
   };
 }
 
-function patchPublicNode(sample: PublicLiveNodeSample): void {
-  const status = publicStatus.value;
-  if (!status) {
-    return;
-  }
+function patchPublicNode(
+  status: PublicStatusSnapshot,
+  sample: PublicLiveNodeSample,
+): void {
   const idx = status.nodes.findIndex((n) => n.key === sample.key);
   if (idx === -1) {
     return;
@@ -178,9 +173,6 @@ function patchPublicNode(sample: PublicLiveNodeSample): void {
 }
 
 function handleLiveMessage(kind: "admin" | "public", raw: string): void {
-  if (raw === "pong") {
-    return;
-  }
   let msg: AdminLiveMessage | PublicLiveMessage;
   try {
     msg = JSON.parse(raw) as AdminLiveMessage | PublicLiveMessage;
@@ -194,14 +186,16 @@ function handleLiveMessage(kind: "admin" | "public", raw: string): void {
       for (const [nodeId, samples] of Object.entries(adminMsg.nodes)) {
         nextHist[nodeId] = samplesToSeries(samples);
         const latest = samples.at(-1);
-        if (latest) {
-          patchAdminNode(latest);
+        if (latest && snapshot.value) {
+          patchAdminNode(snapshot.value, latest);
         }
       }
       liveHistory.value = nextHist;
     } else if (adminMsg.type === "tick") {
       recordAdminSample(adminMsg.sample);
-      patchAdminNode(adminMsg.sample);
+      if (snapshot.value) {
+        patchAdminNode(snapshot.value, adminMsg.sample);
+      }
     }
 
     return;
@@ -211,12 +205,12 @@ function handleLiveMessage(kind: "admin" | "public", raw: string): void {
   if (pubMsg.type === "init") {
     for (const samples of Object.values(pubMsg.nodes)) {
       const latest = samples.at(-1);
-      if (latest) {
-        patchPublicNode(latest);
+      if (latest && publicStatus.value) {
+        patchPublicNode(publicStatus.value, latest);
       }
     }
-  } else if (pubMsg.type === "tick") {
-    patchPublicNode(pubMsg.sample);
+  } else if (pubMsg.type === "tick" && publicStatus.value) {
+    patchPublicNode(publicStatus.value, pubMsg.sample);
   }
 }
 
@@ -320,6 +314,7 @@ export function useLiveRefresh(
   focusDebounceMs = 3000,
 ) {
   const refresher = kind === "admin" ? adminRefresher : publicRefresher;
+  const liveEnabled = !IS_DEMO && typeof WebSocket !== "undefined";
   let socket: WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let pingTimer: ReturnType<typeof setInterval> | null = null;
@@ -349,28 +344,7 @@ export function useLiveRefresh(
     }
   }
 
-  function scheduleReconnect() {
-    if (disposed || document.hidden || reconnectTimer !== null) {
-      return;
-    }
-    const delay = backoffMs;
-    backoffMs = Math.min(LIVE_MAX_BACKOFF_MS, backoffMs * 2);
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = null;
-      connectLive();
-    }, delay);
-  }
-
   function connectLive() {
-    if (
-      IS_DEMO ||
-      disposed ||
-      document.hidden ||
-      socket !== null ||
-      typeof WebSocket === "undefined"
-    ) {
-      return;
-    }
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     const ws = new WebSocket(`${proto}//${location.host}/api/v1/live`);
     socket = ws;
@@ -388,7 +362,11 @@ export function useLiveRefresh(
       }, LIVE_PING_MS);
     });
     ws.addEventListener("message", (event) => {
-      if (socket === ws && typeof event.data === "string") {
+      if (
+        socket === ws &&
+        typeof event.data === "string" &&
+        event.data !== "pong"
+      ) {
         handleLiveMessage(kind, event.data);
       }
     });
@@ -397,7 +375,16 @@ export function useLiveRefresh(
         return;
       }
       disconnectLive();
-      scheduleReconnect();
+      if (!disposed && !document.hidden && reconnectTimer === null) {
+        const delay = backoffMs;
+        backoffMs = Math.min(LIVE_MAX_BACKOFF_MS, backoffMs * 2);
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          if (!disposed && !document.hidden && socket === null) {
+            connectLive();
+          }
+        }, delay);
+      }
     });
     ws.addEventListener("error", () => {
       if (socket === ws) {
@@ -406,7 +393,9 @@ export function useLiveRefresh(
     });
   }
 
-  connectLive();
+  if (liveEnabled && !document.hidden) {
+    connectLive();
+  }
 
   useIntervalFn(() => {
     if (document.hidden) {
@@ -428,7 +417,9 @@ export function useLiveRefresh(
 
       return;
     }
-    connectLive();
+    if (liveEnabled && socket === null) {
+      connectLive();
+    }
     if (Date.now() - refresher.lastFetchedAt() >= focusDebounceMs) {
       void refresher.refresh();
     }

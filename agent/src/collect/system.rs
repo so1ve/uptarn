@@ -250,11 +250,7 @@ pub fn collect_temperature() -> Option<SeriesSnapshot> {
 pub async fn collect_system(
     cfg: &SystemCollectConfig,
     cpu_tracker: &mut CpuTracker,
-) -> Option<SystemSnapshot> {
-    if !cfg.enabled {
-        return None;
-    }
-
+) -> SystemSnapshot {
     let cpu_pct = if cfg.cpu {
         cpu_tracker.sample_pct().await
     } else {
@@ -273,7 +269,7 @@ pub async fn collect_system(
         .flatten()
         .unzip();
 
-    Some(SystemSnapshot {
+    SystemSnapshot {
         uptime_secs: read_first_f64("/proc/uptime").unwrap_or(0.0) as u64,
         cpu_pct,
         load_1m: cfg.load.then(|| read_first_f64("/proc/loadavg")).flatten(),
@@ -283,16 +279,16 @@ pub async fn collect_system(
         swap_total_bytes: mem.swap_total_bytes,
         rx_bytes,
         tx_bytes,
-    })
+    }
 }
 
 pub async fn collect_live_frame(
     cfg: &SystemCollectConfig,
     cpu_tracker: &mut CpuTracker,
-) -> Option<LiveIngestFrame> {
-    let sys = collect_system(cfg, cpu_tracker).await?;
+) -> LiveIngestFrame {
+    let sys = collect_system(cfg, cpu_tracker).await;
 
-    Some(LiveIngestFrame {
+    LiveIngestFrame {
         uptime_secs: sys.uptime_secs,
         cpu_pct: sys.cpu_pct,
         load_1m: sys.load_1m,
@@ -300,7 +296,7 @@ pub async fn collect_live_frame(
         mem_total_bytes: sys.mem_total_bytes,
         rx_bytes: sys.rx_bytes,
         tx_bytes: sys.tx_bytes,
-    })
+    }
 }
 
 pub fn collect_os_info() -> Vec<InfoSnapshot> {
@@ -348,10 +344,7 @@ fn threshold_check(
     warn: Option<f64>,
     fail: Option<f64>,
     format_val: fn(f64) -> String,
-) -> Option<CheckSnapshot> {
-    if warn.is_none() && fail.is_none() {
-        return None;
-    }
+) -> CheckSnapshot {
     let (status, breached) = if let Some(limit) = fail
         && value >= limit
     {
@@ -368,14 +361,14 @@ fn threshold_check(
         None => format_val(value),
     };
 
-    Some(CheckSnapshot {
+    CheckSnapshot {
         key: key.to_string(),
         label: label.to_string(),
         group: Some("system".to_string()),
         status,
         summary: Some(summary),
         detail: None,
-    })
+    }
 }
 
 pub fn evaluate_thresholds(cfg: &SystemCollectConfig, sys: &SystemSnapshot) -> Vec<CheckSnapshot> {
@@ -388,41 +381,45 @@ pub fn evaluate_thresholds(cfg: &SystemCollectConfig, sys: &SystemSnapshot) -> V
         _ => None,
     };
 
-    [
-        sys.cpu_pct.and_then(|v| {
-            threshold_check(
-                "system_cpu",
-                "CPU",
-                v,
-                cfg.cpu_warn_pct,
-                cfg.cpu_fail_pct,
-                fmt_pct,
-            )
-        }),
-        mem_pct.and_then(|v| {
-            threshold_check(
-                "system_mem",
-                "Memory",
-                v,
-                cfg.mem_warn_pct,
-                cfg.mem_fail_pct,
-                fmt_pct,
-            )
-        }),
-        sys.load_1m.and_then(|v| {
-            threshold_check(
-                "system_load",
-                "Load",
-                v,
-                cfg.load_warn,
-                cfg.load_fail,
-                fmt_load,
-            )
-        }),
-    ]
-    .into_iter()
-    .flatten()
-    .collect()
+    let mut checks = Vec::new();
+    if (cfg.cpu_warn_pct.is_some() || cfg.cpu_fail_pct.is_some())
+        && let Some(v) = sys.cpu_pct
+    {
+        checks.push(threshold_check(
+            "system_cpu",
+            "CPU",
+            v,
+            cfg.cpu_warn_pct,
+            cfg.cpu_fail_pct,
+            fmt_pct,
+        ));
+    }
+    if (cfg.mem_warn_pct.is_some() || cfg.mem_fail_pct.is_some())
+        && let Some(v) = mem_pct
+    {
+        checks.push(threshold_check(
+            "system_mem",
+            "Memory",
+            v,
+            cfg.mem_warn_pct,
+            cfg.mem_fail_pct,
+            fmt_pct,
+        ));
+    }
+    if (cfg.load_warn.is_some() || cfg.load_fail.is_some())
+        && let Some(v) = sys.load_1m
+    {
+        checks.push(threshold_check(
+            "system_load",
+            "Load",
+            v,
+            cfg.load_warn,
+            cfg.load_fail,
+            fmt_load,
+        ));
+    }
+
+    checks
 }
 
 #[cfg(test)]
