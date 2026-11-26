@@ -3,9 +3,9 @@ use std::time::{Duration, Instant};
 
 use reqwest::Method;
 use tokio::net::TcpStream;
-use tokio::process::Command;
 use tokio::time::timeout;
 
+use super::exec::run_command_output;
 use crate::config::{MonitorConfig, non_empty};
 use crate::hub::build_http_client;
 use crate::protocol::{MonitorProbeFrom, MonitorProbeReport, MonitorProbeType, MonitorSpec};
@@ -217,9 +217,7 @@ async fn probe_exec(cfg: &MonitorConfig) -> MonitorProbeReport {
     };
     let timeout_ms = cfg.timeout_ms.unwrap_or_else(|| cfg.default_timeout_ms());
 
-    let mut cmd = Command::new(program);
-    cmd.args(args).kill_on_drop(true);
-    let output = match timeout(Duration::from_millis(timeout_ms), cmd.output()).await {
+    let output = match run_command_output(program, args, timeout_ms).await {
         Ok(Ok(out)) => out,
         Ok(Err(err)) => {
             return MonitorProbeReport {

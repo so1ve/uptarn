@@ -365,7 +365,7 @@ warn_exit_code = 2
         let dd = by_key("10-ddclient");
         assert_eq!(dd.label, "ddclient");
         assert_eq!(dd.group.as_deref(), Some("services"));
-        assert_eq!(dd.status, HealthStatus::Ok);
+        assert_eq!(dd.status, HealthStatus::Ok, "{dd:?}");
         assert_eq!(
             dd.summary.as_deref(),
             Some("checked ddclient.service ddclient.timer")
@@ -374,16 +374,16 @@ warn_exit_code = 2
         let warn_svc = by_key("warn_svc");
         assert_eq!(warn_svc.label, "Warn Service");
         assert_eq!(warn_svc.group.as_deref(), Some("custom"));
-        assert_eq!(warn_svc.status, HealthStatus::Warn);
+        assert_eq!(warn_svc.status, HealthStatus::Warn, "{warn_svc:?}");
 
         let inner = by_key("inner");
         assert_eq!(inner.group.as_deref(), Some("custom"));
-        assert_eq!(inner.status, HealthStatus::Ok);
+        assert_eq!(inner.status, HealthStatus::Ok, "{inner:?}");
 
         let reboot = by_key("reboot");
         assert_eq!(reboot.label, "Kernel");
         assert_eq!(reboot.group.as_deref(), Some("system"));
-        assert_eq!(reboot.status, HealthStatus::Warn);
+        assert_eq!(reboot.status, HealthStatus::Warn, "{reboot:?}");
         assert_eq!(reboot.summary.as_deref(), Some("reboot required"));
 
         let broken = by_key("40-broken");

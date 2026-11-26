@@ -1,8 +1,36 @@
-use std::process::ExitStatus;
+use std::io;
+use std::process::{ExitStatus, Output};
 use std::time::Duration;
 
 use tokio::process::Command;
-use tokio::time::timeout;
+use tokio::time::{sleep, timeout};
+
+const ETXTBSY_MAX_RETRIES: u32 = 5;
+
+pub(super) async fn run_command_output(
+    program: &str,
+    args: &[String],
+    timeout_ms: u64,
+) -> Result<io::Result<Output>, tokio::time::error::Elapsed> {
+    timeout(Duration::from_millis(timeout_ms), async {
+        let mut attempt = 0u32;
+        loop {
+            let mut cmd = Command::new(program);
+            cmd.args(args).kill_on_drop(true);
+            match cmd.output().await {
+                Err(err)
+                    if err.kind() == io::ErrorKind::ExecutableFileBusy
+                        && attempt < ETXTBSY_MAX_RETRIES =>
+                {
+                    attempt += 1;
+                    sleep(Duration::from_millis(10 * u64::from(attempt))).await;
+                }
+                result => return result,
+            }
+        }
+    })
+    .await
+}
 
 use crate::config::{ExecCollectorConfig, ExecOutputFormat};
 use crate::protocol::{CheckSnapshot, HealthStatus, StructuredExecOutput};
@@ -123,9 +151,7 @@ pub async fn collect_item(cfg: &ExecCollectorConfig) -> StructuredExecOutput {
         return failed_exec(cfg, "empty command in [[checks]]", None);
     };
 
-    let mut cmd = Command::new(program);
-    cmd.args(args).kill_on_drop(true);
-    let output = match timeout(Duration::from_millis(cfg.timeout_ms), cmd.output()).await {
+    let output = match run_command_output(program, args, cfg.timeout_ms).await {
         Ok(Ok(out)) => out,
         Ok(Err(err)) => return failed_exec(cfg, format!("spawn failed: {err}"), None),
         Err(_) => {
