@@ -45,6 +45,12 @@ const publicLiveHistory = ref<Record<string, Record<string, SeriesPoint[]>>>(
 
 const colorMode = useColorMode();
 const isDark = computed(() => colorMode.value === "dark");
+const siteTitle = computed(
+  () =>
+    snapshot.value?.settings.site_title ??
+    publicStatus.value?.site_title ??
+    null,
+);
 function toggleTheme() {
   colorMode.value = colorMode.value === "dark" ? "light" : "dark";
 }
@@ -625,6 +631,7 @@ export const useUptarnStore = () => ({
   liveHistory,
   publicLiveHistory,
   isDark,
+  siteTitle,
   toggleTheme,
   loadState,
   refreshSnapshot,

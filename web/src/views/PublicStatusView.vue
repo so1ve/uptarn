@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { useTitle } from "@vueuse/core";
 import { computed, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 
@@ -24,6 +23,7 @@ import {
   usageTextClass,
   useLiveRefresh,
   useMonitorWindow,
+  usePageTitle,
   useUptarnStore,
 } from "../lib/index.ts";
 
@@ -46,13 +46,7 @@ function toggleExpand(key: string) {
   }
 }
 
-useTitle(
-  () =>
-    props.status.site_title
-      ? `${props.status.site_title} - Status`
-      : "Status - Uptarn",
-  { restoreOnUnmount: false },
-);
+usePageTitle("Status");
 useLiveRefresh("public");
 
 const hasContent = computed(

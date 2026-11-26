@@ -10,7 +10,7 @@ usePageTitle("Not found");
 
 const route = useRoute();
 const router = useRouter();
-const { snapshot, publicStatus } = useUptarnStore();
+const { snapshot, publicStatus, siteTitle } = useUptarnStore();
 
 const isAdmin = computed(() => snapshot.value !== null);
 const homeTo = computed(() => (isAdmin.value ? "/admin/nodes" : "/"));
@@ -19,9 +19,6 @@ const version = computed(
 );
 const links = computed(
   () => snapshot.value?.settings.site_links ?? publicStatus.value?.site_links,
-);
-const siteTitle = computed(() =>
-  isAdmin.value ? undefined : publicStatus.value?.site_title,
 );
 const host = computed(() =>
   isAdmin.value || !publicStatus.value

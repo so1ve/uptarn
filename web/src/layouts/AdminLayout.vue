@@ -97,6 +97,7 @@ async function onSignOut() {
   <AppLayout
     home-to="/admin/nodes"
     :links="snap.settings.site_links"
+    :title="snap.settings.site_title"
     :version="snap.version"
   >
     <template #nav>
