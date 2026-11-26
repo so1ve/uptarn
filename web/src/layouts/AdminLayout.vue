@@ -119,10 +119,10 @@ async function onSignOut() {
           <span>{{ item.label }}</span>
           <span
             v-if="item.count > 0"
-            class="rounded-full px-1.5 py-0.5 font-mono text-[10.5px] leading-none tabular-nums"
+            class="inline-flex items-center justify-center font-mono text-[11px] leading-none tabular-nums"
             :class="
               item.urgent
-                ? 'bg-red-500/15 text-red-600 dark:text-red-400'
+                ? 'h-4.5 min-w-4.5 rounded-full bg-red-500/15 px-1 text-red-600 dark:text-red-400'
                 : 'text-dimmed'
             "
           >

@@ -103,8 +103,14 @@ function onAddSubmit() {
   composerTag.value = "update";
 }
 
-// Inline edit state for an existing entry
+// Inline edit & delete confirm state for an existing entry
 const editingId = ref<string | null>(null);
+const deletingId = ref<string | null>(null);
+
+function confirmDelete(id: string) {
+  deletingId.value = null;
+  emit("delete", id);
+}
 const editDraft = reactive<{
   message: string;
   tag: TagValue;
@@ -264,22 +270,57 @@ function saveEdit() {
             </span>
             <div class="flex items-center gap-1.5">
               <template v-if="entry.editId">
-                <button
-                  aria-label="Edit update"
-                  class="inline-flex size-5 cursor-pointer items-center justify-center rounded text-dimmed opacity-0 transition-opacity group-hover/item:opacity-100 hover:bg-elevated hover:text-default focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-primary"
-                  type="button"
-                  @click="startEdit(entry)"
+                <UTooltip text="Edit">
+                  <button
+                    aria-label="Edit update"
+                    class="inline-flex size-5 cursor-pointer items-center justify-center rounded text-dimmed transition-colors hover:bg-elevated hover:text-default focus-visible:outline-2 focus-visible:outline-primary"
+                    type="button"
+                    @click="startEdit(entry)"
+                  >
+                    <UIcon class="size-3" name="i-lucide-pencil" />
+                  </button>
+                </UTooltip>
+                <UPopover
+                  :open="deletingId === entry.editId"
+                  @update:open="
+                    (v) => (deletingId = v ? (entry.editId ?? null) : null)
+                  "
                 >
-                  <UIcon class="size-3" name="i-lucide-pencil" />
-                </button>
-                <button
-                  aria-label="Delete update"
-                  class="inline-flex size-5 cursor-pointer items-center justify-center rounded text-dimmed opacity-0 transition-opacity group-hover/item:opacity-100 hover:bg-elevated hover:text-red-500 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-primary"
-                  type="button"
-                  @click="emit('delete', entry.editId)"
-                >
-                  <UIcon class="size-3" name="i-lucide-trash-2" />
-                </button>
+                  <UTooltip text="Delete">
+                    <button
+                      aria-label="Delete update"
+                      class="inline-flex size-5 cursor-pointer items-center justify-center rounded text-dimmed transition-colors hover:bg-elevated hover:text-red-500 focus-visible:outline-2 focus-visible:outline-primary disabled:pointer-events-none disabled:opacity-50"
+                      :disabled="busyKey === `del:${entry.editId}`"
+                      type="button"
+                    >
+                      <UIcon class="size-3" name="i-lucide-trash-2" />
+                    </button>
+                  </UTooltip>
+                  <template #content>
+                    <div class="w-48 space-y-2.5 p-3 text-xs">
+                      <p class="leading-relaxed text-default">
+                        Delete this update?
+                      </p>
+                      <div class="flex justify-end gap-1.5">
+                        <UButton
+                          color="neutral"
+                          size="xs"
+                          variant="ghost"
+                          @click="deletingId = null"
+                        >
+                          Cancel
+                        </UButton>
+                        <UButton
+                          color="error"
+                          size="xs"
+                          @click="confirmDelete(entry.editId)"
+                        >
+                          Delete
+                        </UButton>
+                      </div>
+                    </div>
+                  </template>
+                </UPopover>
               </template>
               <UTooltip :text="formatTimestamp(entry.timestamp, true)">
                 <span class="font-mono text-[11px] text-dimmed tabular-nums">
