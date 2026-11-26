@@ -204,9 +204,9 @@ const totalCharts = computed(
               <span class="size-2 rounded-xs bg-teal-500" />
               {{ node.system.load_1m.toFixed(2) }}
             </span>
+            <span class="text-dimmed">avg {{ loadChart.avg.toFixed(2) }}</span>
             <span class="text-dimmed">
-              avg {{ loadChart.avg.toFixed(2) }} · peak
-              {{ loadChart.peak.toFixed(2) }}
+              peak {{ loadChart.peak.toFixed(2) }}
             </span>
           </div>
         </template>

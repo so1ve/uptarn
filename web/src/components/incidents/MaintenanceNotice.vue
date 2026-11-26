@@ -45,13 +45,17 @@ defineProps<{
           </UBadge>
         </div>
 
-        <span class="font-mono text-xs text-muted tabular-nums">
+        <span
+          class="inline-flex items-center gap-2.5 font-mono text-xs text-muted tabular-nums"
+        >
           <template v-if="m.state === 'active'">
             Ends in {{ formatRemaining(m.ends_at, now) }}
           </template>
           <template v-else>
-            {{ formatTimestamp(m.starts_at, true) }} ·
-            {{ formatDuration(m.ends_at - m.starts_at) }}
+            <span>{{ formatTimestamp(m.starts_at, true) }}</span>
+            <span class="text-dimmed">
+              {{ formatDuration(m.ends_at - m.starts_at) }}
+            </span>
           </template>
         </span>
       </div>

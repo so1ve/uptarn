@@ -61,7 +61,7 @@ const monthlyTrafficTitle = computed(() =>
   props.node.month_rx_bytes !== undefined &&
   props.node.month_tx_bytes !== null &&
   props.node.month_tx_bytes !== undefined
-    ? `Monthly: ↓ ${formatBytes(props.node.month_rx_bytes)} · ↑ ${formatBytes(props.node.month_tx_bytes)} (resets day ${props.node.traffic_reset_day ?? 1} UTC)`
+    ? `Monthly: ↓ ${formatBytes(props.node.month_rx_bytes)}, ↑ ${formatBytes(props.node.month_tx_bytes)} (resets day ${props.node.traffic_reset_day ?? 1} UTC)`
     : undefined,
 );
 

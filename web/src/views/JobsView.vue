@@ -51,7 +51,7 @@ function onIssuedPing(payload: {
   pingModalOpen.value = true;
 }
 
-function jobSchedule(job: JobSummary): string {
+function jobScheduleParts(job: JobSummary): string[] {
   const parts: string[] = [];
   if (job.schedule) {
     parts.push(job.schedule);
@@ -70,7 +70,7 @@ function jobSchedule(job: JobSummary): string {
     parts.push(`next in ${formatRemaining(job.next_due_at, snap.value.now)}`);
   }
 
-  return parts.join(" · ");
+  return parts;
 }
 
 function statusTiming(job: JobSummary): { text: string; cls: string } {
@@ -272,19 +272,26 @@ const onRemoveJob = (key: string) =>
           >
             {{ jobSummaryText(job) }}
           </span>
-          <span
-            class="hidden shrink-0 font-mono text-[11px] text-dimmed tabular-nums sm:inline"
+          <div
+            v-if="jobScheduleParts(job).length > 0"
+            class="hidden shrink-0 items-center gap-3 font-mono text-[11px] text-dimmed tabular-nums sm:inline-flex"
           >
-            {{ jobSchedule(job) }}
-          </span>
+            <span v-for="part in jobScheduleParts(job)" :key="part">
+              {{ part }}
+            </span>
+          </div>
         </div>
 
         <div
           class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 pl-4 sm:hidden"
         >
-          <span class="font-mono text-[11px] text-dimmed tabular-nums">
-            {{ jobSchedule(job) }}
-          </span>
+          <div
+            class="inline-flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[11px] text-dimmed tabular-nums"
+          >
+            <span v-for="part in jobScheduleParts(job)" :key="part">
+              {{ part }}
+            </span>
+          </div>
           <div class="flex shrink-0 items-center gap-1">
             <JobActions :job />
           </div>

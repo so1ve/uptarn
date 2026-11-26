@@ -597,10 +597,15 @@ async function onDelete() {
         </div>
         <div
           v-if="hasMonthlyTraffic"
-          class="font-mono text-[11px] text-dimmed tabular-nums"
+          class="flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px] text-dimmed tabular-nums"
         >
-          Month ↓ {{ formatBytes(node.month_rx_bytes!) }} · ↑
-          {{ formatBytes(node.month_tx_bytes!) }}
+          <span>Month</span>
+          <span class="whitespace-nowrap">
+            ↓ {{ formatBytes(node.month_rx_bytes!) }}
+          </span>
+          <span class="whitespace-nowrap">
+            ↑ {{ formatBytes(node.month_tx_bytes!) }}
+          </span>
         </div>
       </div>
     </section>
