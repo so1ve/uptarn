@@ -1,9 +1,10 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { RouterLink } from "vue-router";
 
 import { useUptarnStore } from "../../lib/index.ts";
 
-defineProps<{
+const props = defineProps<{
   title?: string | null;
   host?: string;
   to?: string;
@@ -11,6 +12,7 @@ defineProps<{
 
 const { isDark } = useUptarnStore();
 const baseUrl = import.meta.env.BASE_URL;
+const displayTitle = computed(() => props.title || "Uptarn");
 </script>
 
 <template>
@@ -26,12 +28,18 @@ const baseUrl = import.meta.env.BASE_URL;
       :src="`${baseUrl}${isDark ? 'logo-dark.svg' : 'logo-light.svg'}`"
       width="22"
     />
-    <span class="shrink-0 text-[15px] font-semibold tracking-tight">
-      {{ title || "Uptarn" }}
+    <span
+      class="min-w-0 truncate text-[15px] font-semibold tracking-tight"
+      :title="displayTitle"
+    >
+      {{ displayTitle }}
     </span>
     <template v-if="host">
-      <span class="hidden text-dimmed sm:inline">/</span>
-      <span class="hidden truncate font-mono text-xs text-muted sm:inline">
+      <span class="hidden shrink-0 text-dimmed md:inline">/</span>
+      <span
+        class="hidden min-w-0 shrink-[2] truncate font-mono text-xs text-muted md:inline"
+        :title="host"
+      >
         {{ host }}
       </span>
     </template>

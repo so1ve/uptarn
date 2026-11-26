@@ -21,22 +21,22 @@ const isDemo = import.meta.env.VITE_DEMO === "true";
       class="sticky top-0 z-10 border-b border-default bg-default/85 backdrop-blur-md"
     >
       <div
-        class="mx-auto flex max-w-[1160px] flex-wrap items-center justify-between gap-x-4 px-4 sm:px-5 lg:h-14 lg:flex-nowrap lg:gap-x-6"
+        class="mx-auto grid max-w-[1160px] grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-4 sm:gap-x-4 sm:px-5 lg:flex lg:h-14 lg:flex-nowrap lg:justify-between lg:gap-x-4 xl:gap-x-6"
       >
-        <div class="flex h-13 min-w-0 items-center lg:h-auto">
+        <div class="flex h-13 min-w-0 items-center lg:h-auto lg:shrink">
           <BrandMark :host :title :to="homeTo" />
         </div>
 
         <div
           v-if="$slots.nav"
-          class="order-3 -mx-4 flex w-[calc(100%+2rem)] items-center overflow-x-auto border-t border-default/70 py-1.5 pr-4 pl-1.5 [scrollbar-width:none] sm:-mx-5 sm:w-[calc(100%+2.5rem)] sm:pr-5 sm:pl-2.5 lg:order-2 lg:mx-0 lg:mr-auto lg:w-auto lg:overflow-visible lg:border-t-0 lg:p-0 [&::-webkit-scrollbar]:hidden"
+          class="order-3 col-span-2 -mx-4 flex min-w-0 items-center overflow-x-auto border-t border-default/70 py-1.5 pr-4 pl-1.5 [scrollbar-width:none] sm:-mx-5 sm:pr-5 sm:pl-2.5 lg:order-2 lg:mx-0 lg:mr-auto lg:shrink-0 lg:overflow-visible lg:border-t-0 lg:p-0 [&::-webkit-scrollbar]:hidden"
         >
           <slot name="nav" />
         </div>
         <nav
           v-else-if="links && links.length > 0"
           aria-label="External links"
-          class="order-3 -mx-4 flex w-[calc(100%+2rem)] items-center gap-1 overflow-x-auto border-t border-default/70 py-1.5 pr-4 pl-1.5 [scrollbar-width:none] sm:-mx-5 sm:w-[calc(100%+2.5rem)] sm:pr-5 sm:pl-2.5 lg:order-2 lg:mx-0 lg:mr-auto lg:w-auto lg:overflow-visible lg:border-t-0 lg:p-0 [&::-webkit-scrollbar]:hidden"
+          class="order-3 col-span-2 -mx-4 flex min-w-0 items-center gap-1 overflow-x-auto border-t border-default/70 py-1.5 pr-4 pl-1.5 [scrollbar-width:none] sm:-mx-5 sm:pr-5 sm:pl-2.5 lg:order-2 lg:mx-0 lg:mr-auto lg:min-w-0 lg:border-t-0 lg:p-0 [&::-webkit-scrollbar]:hidden"
         >
           <a
             v-for="link in links"
@@ -55,7 +55,7 @@ const isDemo = import.meta.env.VITE_DEMO === "true";
         </nav>
 
         <div
-          class="order-2 flex h-13 shrink-0 items-center gap-1 lg:order-3 lg:h-auto"
+          class="order-2 flex h-13 shrink-0 items-center gap-0.5 sm:gap-1 lg:order-3 lg:h-auto"
         >
           <slot name="actions-prefix" />
           <UTooltip

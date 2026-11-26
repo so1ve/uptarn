@@ -20,13 +20,16 @@ const STYLES = {
 <template>
   <component
     :is="to ? 'RouterLink' : 'div'"
-    class="flex flex-wrap items-center justify-between gap-3 rounded-xl px-4 py-3 text-sm"
+    class="flex items-center justify-between gap-3 rounded-xl px-4 py-3 text-sm"
     :class="[STYLES[tone].bg, to ? 'transition-opacity hover:opacity-90' : '']"
     :to="to || undefined"
   >
-    <div class="flex min-w-0 items-center gap-2.5">
+    <div class="flex min-w-0 flex-1 items-center gap-2.5">
       <StatusDot size-class="size-2.5" :status="tone" />
-      <span class="font-semibold whitespace-nowrap" :class="STYLES[tone].text">
+      <span
+        class="shrink-0 font-semibold whitespace-nowrap"
+        :class="STYLES[tone].text"
+      >
         {{ title }}
       </span>
       <slot />

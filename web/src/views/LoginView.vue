@@ -32,6 +32,7 @@ async function onAuthenticated() {
         />
         <UButton
           aria-label="Toggle theme"
+          class="shrink-0"
           color="neutral"
           :icon="isDark ? 'i-lucide-sun' : 'i-lucide-moon'"
           size="xs"

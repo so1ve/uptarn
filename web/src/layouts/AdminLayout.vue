@@ -169,7 +169,7 @@ async function onSignOut() {
       </UTooltip>
       <span
         aria-hidden="true"
-        class="mx-1.5 h-4 w-px bg-zinc-300 dark:bg-zinc-700"
+        class="mx-1 h-4 w-px bg-zinc-300 sm:mx-1.5 dark:bg-zinc-700"
       />
       <UTooltip text="Settings">
         <RouterLink
@@ -209,12 +209,11 @@ async function onSignOut() {
     >
       <span class="truncate text-xs text-muted">{{ incidentHeadline }}</span>
       <template #trailing>
-        <span
-          class="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-muted"
-        >
-          View incidents
-          <UIcon class="size-3.5" name="i-lucide-arrow-right" />
-        </span>
+        <UIcon
+          aria-hidden="true"
+          class="size-4 shrink-0 text-muted"
+          name="i-lucide-arrow-right"
+        />
       </template>
     </StatusBanner>
 
