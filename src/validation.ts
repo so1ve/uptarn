@@ -12,6 +12,7 @@ import type {
   NodeJobSnapshot,
   NodeMonitorSpec,
   NodeReportPayload,
+  NotificationChannelName,
   SeriesUnit,
   SiteLink,
   SystemSnapshot,
@@ -52,6 +53,12 @@ const TARGETS = [
   "monitor",
   "job",
 ] as const satisfies readonly TargetType[];
+const NOTIFICATION_CHANNELS = [
+  "telegram",
+  "matrix",
+  "webhook",
+] as const satisfies readonly NotificationChannelName[];
+const HEADER_NAME_RE = /^[!#$%&'*+\-.^\w`|~]{1,64}$/;
 
 function bad(msg: string): never {
   throw httpError(400, msg);
@@ -688,6 +695,158 @@ export function parseMaintenanceInput(raw: MaintenanceInput | unknown) {
   };
 }
 
+function optionalSecretPatch(
+  val: unknown,
+  field: string,
+  max: number,
+): string | null | undefined {
+  if (val === undefined) {
+    return undefined;
+  }
+  if (val === null) {
+    return null;
+  }
+  if (typeof val !== "string") {
+    bad(`${field} must be a string or null`);
+  }
+  const trimmed = val.trim();
+  if (!trimmed) {
+    bad(`${field} must be a non-empty string or null`);
+  }
+  if (trimmed.length > max) {
+    bad(`${field} must be at most ${max} characters`);
+  }
+
+  return trimmed;
+}
+
+function parseWebhookHeaders(
+  raw: unknown,
+  field: string,
+): Record<string, string> | null | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (raw === null) {
+    return null;
+  }
+  const obj = asObj(raw, field);
+  const entries = Object.entries(obj);
+  if (entries.length > 16) {
+    bad(`${field} must have at most 16 entries`);
+  }
+  const headers: Record<string, string> = {};
+  const seenLower = new Set<string>();
+  for (const [rawKey, rawVal] of entries) {
+    const key = rawKey.trim();
+    if (!HEADER_NAME_RE.test(key)) {
+      bad(`${field}: invalid header name "${rawKey}"`);
+    }
+    const lower = key.toLowerCase();
+    if (seenLower.has(lower)) {
+      bad(`${field}: duplicate header "${key}"`);
+    }
+    seenLower.add(lower);
+    if (typeof rawVal !== "string") {
+      bad(`${field}.${key} must be a string`);
+    }
+    if (/[\r\n]/.test(rawVal) || rawVal.length > 512) {
+      bad(`${field}.${key} must be a single line of at most 512 characters`);
+    }
+    headers[key] = rawVal;
+  }
+
+  return headers;
+}
+
+export interface NotificationSettingsPatch {
+  telegram?: {
+    enabled?: boolean;
+    chat_id?: string | null;
+    bot_token?: string | null;
+  };
+  matrix?: {
+    enabled?: boolean;
+    homeserver?: string | null;
+    room_id?: string | null;
+    access_token?: string | null;
+  };
+  webhook?: {
+    enabled?: boolean;
+    url?: string | null;
+    secret?: string | null;
+    headers?: Record<string, string> | null;
+  };
+}
+
+function parseNotificationsPatch(
+  raw: unknown,
+): NotificationSettingsPatch | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+  const obj = asObj(raw, "notifications");
+  const patch: NotificationSettingsPatch = {};
+
+  if (Object.hasOwn(obj, "telegram") && obj.telegram !== undefined) {
+    const tg = asObj(obj.telegram, "notifications.telegram");
+    patch.telegram = {
+      enabled: bool(tg.enabled, "notifications.telegram.enabled"),
+      chat_id: Object.hasOwn(tg, "chat_id")
+        ? (str(tg.chat_id, "notifications.telegram.chat_id", 128) ?? null)
+        : undefined,
+      bot_token: Object.hasOwn(tg, "bot_token")
+        ? optionalSecretPatch(
+            tg.bot_token,
+            "notifications.telegram.bot_token",
+            256,
+          )
+        : undefined,
+    };
+  }
+
+  if (Object.hasOwn(obj, "matrix") && obj.matrix !== undefined) {
+    const mx = asObj(obj.matrix, "notifications.matrix");
+    patch.matrix = {
+      enabled: bool(mx.enabled, "notifications.matrix.enabled"),
+      homeserver: Object.hasOwn(mx, "homeserver")
+        ? (httpUrl(mx.homeserver, "notifications.matrix.homeserver")?.replace(
+            /\/+$/,
+            "",
+          ) ?? null)
+        : undefined,
+      room_id: Object.hasOwn(mx, "room_id")
+        ? (str(mx.room_id, "notifications.matrix.room_id", 256) ?? null)
+        : undefined,
+      access_token: Object.hasOwn(mx, "access_token")
+        ? optionalSecretPatch(
+            mx.access_token,
+            "notifications.matrix.access_token",
+            1024,
+          )
+        : undefined,
+    };
+  }
+
+  if (Object.hasOwn(obj, "webhook") && obj.webhook !== undefined) {
+    const wh = asObj(obj.webhook, "notifications.webhook");
+    patch.webhook = {
+      enabled: bool(wh.enabled, "notifications.webhook.enabled"),
+      url: Object.hasOwn(wh, "url")
+        ? httpUrl(wh.url, "notifications.webhook.url")
+        : undefined,
+      secret: Object.hasOwn(wh, "secret")
+        ? optionalSecretPatch(wh.secret, "notifications.webhook.secret", 512)
+        : undefined,
+      headers: Object.hasOwn(wh, "headers")
+        ? parseWebhookHeaders(wh.headers, "notifications.webhook.headers")
+        : undefined,
+    };
+  }
+
+  return patch;
+}
+
 export function parseSettingsPatch(raw: unknown) {
   const obj = asObj(raw, "settings patch");
 
@@ -705,6 +864,27 @@ export function parseSettingsPatch(raw: unknown) {
     site_links: Object.hasOwn(obj, "site_links")
       ? normalizeSiteLinks(obj.site_links)
       : undefined,
+    failure_threshold: Object.hasOwn(obj, "failure_threshold")
+      ? obj.failure_threshold === null
+        ? null
+        : reqInt(obj.failure_threshold, "failure_threshold", 1, 10)
+      : undefined,
+    retention_days: Object.hasOwn(obj, "retention_days")
+      ? obj.retention_days === null
+        ? null
+        : reqInt(obj.retention_days, "retention_days", 1, 365)
+      : undefined,
+    notifications: parseNotificationsPatch(obj.notifications),
+  };
+}
+
+export function parseTestNotificationInput(raw: unknown): {
+  channel?: NotificationChannelName;
+} {
+  const obj = asObj(raw, "test notification input");
+
+  return {
+    channel: oneOf(obj.channel, "channel", NOTIFICATION_CHANNELS),
   };
 }
 
@@ -718,3 +898,4 @@ export function parseIncidentAckInput(raw: unknown): {
 
   return { incident_key: incidentKey, acknowledged: acknowledged ?? true };
 }
+

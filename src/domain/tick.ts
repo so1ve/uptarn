@@ -202,7 +202,7 @@ export async function runTick(
       summary: res.ok
         ? monitorOkSummary(probe.type, res)
         : (res.error ?? "Request failed"),
-      threshold: config.failureThreshold,
+      threshold: settings.failureThreshold,
       targetMutedUntil: Math.max(
         m.muted_until,
         maintenanceMuteUntil(activeMaintenances, "monitor", m.id),
@@ -246,7 +246,8 @@ export async function runTick(
 
   writeStatements.push(
     ...(await buildAlertStatements(
-      config,
+      config.publicBaseUrl,
+      settings.notifications,
       observations,
       existingAlertStates,
       settings.globalMutedUntil,
@@ -257,7 +258,8 @@ export async function runTick(
   let pruned = false;
   if (now - settings.lastPruneAt >= 3600) {
     const seriesCutoff =
-      now - Math.min(config.retentionDays, MAX_SERIES_RETENTION_DAYS) * 86_400;
+      now -
+      Math.min(settings.retentionDays, MAX_SERIES_RETENTION_DAYS) * 86_400;
     for (const node of nodes) {
       writeStatements.push({
         sql: "DELETE FROM node_samples WHERE node_id = ?1 AND ts < ?2",
@@ -267,11 +269,11 @@ export async function runTick(
     writeStatements.push(
       {
         sql: "DELETE FROM alert_events WHERE created_at < ?1",
-        params: [now - config.retentionDays * 86_400],
+        params: [now - settings.retentionDays * 86_400],
       },
       {
         sql: "DELETE FROM maintenances WHERE ends_at < ?1",
-        params: [now - config.retentionDays * 86_400],
+        params: [now - settings.retentionDays * 86_400],
       },
       {
         sql: "DELETE FROM admin_sessions WHERE expires_at <= ?1",

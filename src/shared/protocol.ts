@@ -265,6 +265,7 @@ export interface IncidentSummary {
   last_summary: string;
 }
 
+
 export interface AlertEventSummary {
   id: number;
   incident_key: string;
@@ -298,17 +299,52 @@ export interface SiteLink {
   url: string;
 }
 
+export type SecretSource = "db" | "env" | null;
+export type NotificationChannelName = "telegram" | "matrix" | "webhook";
+
+export interface TelegramChannelSummary {
+  enabled: boolean;
+  configured: boolean;
+  chat_id: string | null;
+  bot_token_source: SecretSource;
+}
+
+export interface MatrixChannelSummary {
+  enabled: boolean;
+  configured: boolean;
+  homeserver: string | null;
+  room_id: string | null;
+  access_token_source: SecretSource;
+}
+
+export interface WebhookChannelSummary {
+  enabled: boolean;
+  configured: boolean;
+  url: string | null;
+  headers: Record<string, string>;
+  secret_source: SecretSource;
+}
+
+export interface NotificationChannelsSummary {
+  telegram: TelegramChannelSummary;
+  matrix: MatrixChannelSummary;
+  webhook: WebhookChannelSummary;
+}
+
 export interface AdminSettingsSummary {
   auto_register: boolean;
   enrollment_token: string | null;
   global_muted_until: number;
   site_title: string | null;
   site_links: SiteLink[];
+  failure_threshold: number;
+  retention_days: number;
   channels: {
     telegram: boolean;
     matrix: boolean;
-    webhook?: boolean;
+    webhook: boolean;
   };
+  notifications: NotificationChannelsSummary;
   auth: AuthMethodsSummary;
 }
 

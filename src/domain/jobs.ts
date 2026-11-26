@@ -301,7 +301,8 @@ export async function handleJobPing(
   const settings = parseRuntimeSettings(settingRows, config);
 
   const alertStmts = await buildAlertStatements(
-    config,
+    config.publicBaseUrl,
+    settings.notifications,
     [
       {
         incidentKey,

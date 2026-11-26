@@ -833,7 +833,7 @@ export async function ingestNodeReport(
       nodeId,
       intervalSecs,
       graceSecs,
-      config.failureThreshold,
+      settings.failureThreshold,
       payload.monitors,
       managedMonitorRows,
       activeMaintenances,
@@ -866,7 +866,7 @@ export async function ingestNodeReport(
     subLabel: string,
     failing: boolean,
     summary: string,
-    threshold = config.failureThreshold,
+    threshold = settings.failureThreshold,
   ): AlertObservation => ({
     incidentKey: `node:${nodeId}:${suffix}`,
     targetType: "node",
@@ -911,7 +911,8 @@ export async function ingestNodeReport(
 
   statements.push(
     ...(await buildAlertStatements(
-      config,
+      config.publicBaseUrl,
+      settings.notifications,
       observations,
       existingAlertStates,
       settings.globalMutedUntil,
@@ -922,7 +923,8 @@ export async function ingestNodeReport(
   if (monitorObservations.length > 0) {
     statements.push(
       ...(await buildAlertStatements(
-        config,
+        config.publicBaseUrl,
+        settings.notifications,
         monitorObservations,
         existingMonitorAlertStates,
         settings.globalMutedUntil,
@@ -934,7 +936,8 @@ export async function ingestNodeReport(
   if (jobObservations.length > 0) {
     statements.push(
       ...(await buildAlertStatements(
-        config,
+        config.publicBaseUrl,
+        settings.notifications,
         jobObservations,
         existingJobAlertStates,
         settings.globalMutedUntil,

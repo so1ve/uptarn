@@ -1,8 +1,7 @@
 import { hmacSha256Hex } from "../auth/index.ts";
-import type { LoadedConfig } from "../config.ts";
 import type { SqlDatabase, SqlStatement } from "../db/index.ts";
 import { readBoundedText } from "../http.ts";
-import type { TargetType } from "../shared/index.ts";
+import type { NotificationChannelName, TargetType } from "../shared/index.ts";
 import {
   errorMessage,
   escapeHtml,
@@ -11,6 +10,7 @@ import {
   splitAlertLabel,
   unixNow,
 } from "../shared/index.ts";
+import type { ResolvedNotificationConfig } from "./settings.ts";
 
 export interface AlertPayload {
   kind: "firing" | "resolved";
@@ -162,16 +162,16 @@ async function sendJson(url: string, init: RequestInit): Promise<void> {
 }
 
 export async function dispatchNotificationBatch(
-  config: LoadedConfig,
+  channels: ResolvedNotificationConfig,
   alerts: readonly [AlertPayload, ...AlertPayload[]],
 ): Promise<Record<string, string>> {
   const { title, plain, telegramHtml, matrixHtml, action } =
     formatBatchBodies(alerts);
   const tasks: [string, Promise<void>][] = [];
 
-  if (config.telegram) {
+  if (channels.telegram) {
     const body: Record<string, unknown> = {
-      chat_id: config.telegram.chatId,
+      chat_id: channels.telegram.chatId,
       text: telegramHtml,
       parse_mode: "HTML",
       disable_web_page_preview: true,
@@ -184,7 +184,7 @@ export async function dispatchNotificationBatch(
     tasks.push([
       "telegram",
       sendJson(
-        `https://api.telegram.org/bot${config.telegram.botToken}/sendMessage`,
+        `https://api.telegram.org/bot${channels.telegram.botToken}/sendMessage`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -193,17 +193,17 @@ export async function dispatchNotificationBatch(
       ),
     ]);
   }
-  if (config.matrix) {
-    const room = encodeURIComponent(config.matrix.roomId);
+  if (channels.matrix) {
+    const room = encodeURIComponent(channels.matrix.roomId);
     const txn = encodeURIComponent(crypto.randomUUID());
     tasks.push([
       "matrix",
       sendJson(
-        `${config.matrix.homeserver}/_matrix/client/v3/rooms/${room}/send/m.room.message/${txn}`,
+        `${channels.matrix.homeserver}/_matrix/client/v3/rooms/${room}/send/m.room.message/${txn}`,
         {
           method: "PUT",
           headers: {
-            "Authorization": `Bearer ${config.matrix.accessToken}`,
+            "Authorization": `Bearer ${channels.matrix.accessToken}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
@@ -217,8 +217,8 @@ export async function dispatchNotificationBatch(
     ]);
   }
 
-  if (config.webhook) {
-    const { url, secret, headers: extraHeaders } = config.webhook;
+  if (channels.webhook) {
+    const { url, secret, headers: extraHeaders } = channels.webhook;
     const event = `alert.${alerts[0].kind}`;
     const body = JSON.stringify({
       event,
@@ -272,19 +272,30 @@ export async function dispatchNotificationBatch(
   return Object.fromEntries(entries) as Record<string, string>;
 }
 
-export const sendTestNotification = (
-  config: LoadedConfig,
-): Promise<Record<string, string>> =>
-  dispatchNotificationBatch(config, [
+export function sendTestNotification(
+  publicBaseUrl: string,
+  channels: ResolvedNotificationConfig,
+  channel?: NotificationChannelName,
+): Promise<Record<string, string>> {
+  const targetChannels: ResolvedNotificationConfig = channel
+    ? {
+        telegram: channel === "telegram" ? channels.telegram : null,
+        matrix: channel === "matrix" ? channels.matrix : null,
+        webhook: channel === "webhook" ? channels.webhook : null,
+      }
+    : channels;
+
+  return dispatchNotificationBatch(targetChannels, [
     {
       kind: "resolved",
       targetType: "monitor",
       targetId: "test",
       label: "Uptarn test notification",
       summary: "Notification channel verification succeeded.",
-      dashboardUrl: config.publicBaseUrl,
+      dashboardUrl: publicBaseUrl,
     },
   ]);
+}
 
 const toAlertPayload = (
   obs: AlertObservation,
@@ -302,7 +313,8 @@ const toAlertPayload = (
 });
 
 export async function buildAlertStatements(
-  config: LoadedConfig,
+  publicBaseUrl: string,
+  channels: ResolvedNotificationConfig,
   observations: readonly AlertObservation[],
   existingStates: readonly AlertStateRow[],
   globalMutedUntil: number,
@@ -346,7 +358,7 @@ export async function buildAlertStatements(
           notifiedOpen = 1;
           notifications.push({
             obs,
-            payload: toAlertPayload(obs, "firing", config.publicBaseUrl),
+            payload: toAlertPayload(obs, "firing", publicBaseUrl),
           });
         } else if (prev?.state !== "open") {
           mutedEvents.push({ obs, kind: "firing" });
@@ -382,7 +394,7 @@ export async function buildAlertStatements(
             : Math.max(0, now - prev.opened_at);
         notifications.push({
           obs,
-          payload: toAlertPayload(obs, "resolved", config.publicBaseUrl, dur),
+          payload: toAlertPayload(obs, "resolved", publicBaseUrl, dur),
         });
       } else if (prev.state === "open") {
         mutedEvents.push({ obs, kind: "resolved" });
@@ -423,7 +435,7 @@ export async function buildAlertStatements(
           ...AlertPayload[],
         ];
 
-        return dispatchNotificationBatch(config, payloads);
+        return dispatchNotificationBatch(channels, payloads);
       }),
     );
     for (const [idx, group] of batches.entries()) {

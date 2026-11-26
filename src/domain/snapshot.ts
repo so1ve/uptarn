@@ -28,6 +28,12 @@ import {
   unixNow,
   worstHealthStatus,
 } from "../shared/index.ts";
+import type { IncidentNoteRow, IncidentReportRow } from "./incident-reports.ts";
+import {
+  buildPublicIncidentReports,
+  toIncidentNoteSummary,
+  toIncidentReportSummary,
+} from "./incident-reports.ts";
 import type { JobRow } from "./jobs.ts";
 import { jobNextDueAt, jobOverallStatus } from "./jobs.ts";
 import type { MaintenanceRow } from "./maintenances.ts";
@@ -43,7 +49,11 @@ import {
 } from "./monitors.ts";
 import { parseNodeSpark, trafficPeriodStart } from "./nodes.ts";
 import type { SettingRow } from "./settings.ts";
-import { SELECT_SETTINGS_SQL, parseRuntimeSettings } from "./settings.ts";
+import {
+  SELECT_SETTINGS_SQL,
+  buildChannelsFlags,
+  parseRuntimeSettings,
+} from "./settings.ts";
 
 interface NodeCoreRow {
   id: string;
@@ -518,11 +528,10 @@ export async function getDashboardSnapshot(
       global_muted_until: settings.globalMutedUntil,
       site_title: settings.siteTitle,
       site_links: settings.siteLinks,
-      channels: {
-        telegram: config.telegram !== null,
-        matrix: config.matrix !== null,
-        webhook: config.webhook !== null,
-      },
+      failure_threshold: settings.failureThreshold,
+      retention_days: settings.retentionDays,
+      channels: buildChannelsFlags(settings.notifications),
+      notifications: settings.notificationSummary,
       auth: buildAuthSummary(config, passkeys.length),
     },
     incidents,

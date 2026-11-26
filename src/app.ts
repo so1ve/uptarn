@@ -16,7 +16,10 @@ import {
 } from "./auth/index.ts";
 import type { LoadedConfig } from "./config.ts";
 import type { SqlDatabase } from "./db/index.ts";
+import type { SettingRow } from "./domain/index.ts";
 import {
+  SELECT_SETTINGS_SQL,
+  buildChannelsFlags,
   createNode,
   createPushJob,
   deleteMaintenance,
@@ -26,6 +29,7 @@ import {
   getPublicStatusSnapshot,
   handleJobPing,
   ingestNodeReport,
+  parseRuntimeSettings,
   reorderTargets,
   rotateJobPingToken,
   rotateNodeToken,
@@ -46,7 +50,7 @@ import {
   readJson,
   readOptionalText,
 } from "./http.ts";
-import type { TargetType } from "./shared/index.ts";
+import type { NotificationChannelName, TargetType } from "./shared/index.ts";
 import { errorMessage, unixNow } from "./shared/index.ts";
 import {
   parseCreateNodeInput,
@@ -58,6 +62,7 @@ import {
   parseNodeReportPayload,
   parseOrderInput,
   parseSettingsPatch,
+  parseTestNotificationInput,
 } from "./validation.ts";
 
 const MAX_INGEST_REPORT_BYTES = 256 * 1024;
@@ -367,6 +372,9 @@ export function createApp(
       ),
       site_title: body.site_title,
       site_links: body.site_links,
+      failure_threshold: body.failure_threshold,
+      retention_days: body.retention_days,
+      notifications: body.notifications,
     });
 
     return c.json({
@@ -376,6 +384,10 @@ export function createApp(
       global_muted_until: settings.globalMutedUntil,
       site_title: settings.siteTitle,
       site_links: settings.siteLinks,
+      failure_threshold: settings.failureThreshold,
+      retention_days: settings.retentionDays,
+      channels: buildChannelsFlags(settings.notifications),
+      notifications: settings.notificationSummary,
     });
   });
 
@@ -386,9 +398,32 @@ export function createApp(
     }),
   );
 
-  app.post("/api/v1/admin/notifications/test", async (c) =>
-    c.json({ ok: true, delivery: await sendTestNotification(config) }),
-  );
+  app.post("/api/v1/admin/notifications/test", async (c) => {
+    const raw = await readOptionalText(c, 4096);
+    let channel: NotificationChannelName | undefined;
+    if (raw) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        throw httpError(400, "Invalid JSON body");
+      }
+      channel = parseTestNotificationInput(parsed).channel;
+    }
+    const settings = parseRuntimeSettings(
+      await db.all<SettingRow>(SELECT_SETTINGS_SQL),
+      config,
+    );
+
+    return c.json({
+      ok: true,
+      delivery: await sendTestNotification(
+        config.publicBaseUrl,
+        settings.notifications,
+        channel,
+      ),
+    });
+  });
 
   app.post("/api/v1/admin/passkeys/register/options", (c) =>
     handlePasskeyRegisterOptions(c, db, config),

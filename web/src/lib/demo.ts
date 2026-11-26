@@ -1192,7 +1192,31 @@ function createInitialState(): DemoState {
           { label: "GitHub", url: "https://github.com/so1ve/uptarn" },
           { label: "Docs", url: "https://github.com/so1ve/uptarn#readme" },
         ],
+        failure_threshold: 2,
+        retention_days: 14,
         channels: { telegram: true, matrix: true, webhook: true },
+        notifications: {
+          telegram: {
+            enabled: true,
+            configured: true,
+            chat_id: "-1001234567890",
+            bot_token_source: "env",
+          },
+          matrix: {
+            enabled: true,
+            configured: true,
+            homeserver: "https://matrix.example.com",
+            room_id: "!ops:example.com",
+            access_token_source: "env",
+          },
+          webhook: {
+            enabled: true,
+            configured: true,
+            url: "https://hooks.example.com/uptarn",
+            headers: {},
+            secret_source: "env",
+          },
+        },
         auth: {
           password_enabled: true,
           cf_access_enabled: false,
@@ -1896,6 +1920,118 @@ export async function demoApiFetch<T = Record<string, unknown>>(
     if (Array.isArray(payload.site_links)) {
       snap.settings.site_links = payload.site_links as SiteLink[];
     }
+    if (typeof payload.failure_threshold === "number") {
+      snap.settings.failure_threshold = Math.min(
+        10,
+        Math.max(1, Math.floor(payload.failure_threshold)),
+      );
+    }
+    if (typeof payload.retention_days === "number") {
+      snap.settings.retention_days = Math.min(
+        365,
+        Math.max(1, Math.floor(payload.retention_days)),
+      );
+    }
+    if (
+      payload.notifications &&
+      typeof payload.notifications === "object" &&
+      !Array.isArray(payload.notifications)
+    ) {
+      const n = payload.notifications as Record<
+        string,
+        Record<string, unknown> | undefined
+      >;
+      if (n.telegram) {
+        const tg = snap.settings.notifications.telegram;
+        if (typeof n.telegram.enabled === "boolean") {
+          tg.enabled = n.telegram.enabled;
+        }
+        if (Object.hasOwn(n.telegram, "chat_id")) {
+          tg.chat_id =
+            typeof n.telegram.chat_id === "string" && n.telegram.chat_id.trim()
+              ? n.telegram.chat_id.trim()
+              : null;
+        }
+        if (Object.hasOwn(n.telegram, "bot_token")) {
+          tg.bot_token_source = n.telegram.bot_token ? "db" : null;
+        }
+        tg.configured = Boolean(tg.chat_id && tg.bot_token_source);
+        if (tg.enabled && !tg.configured) {
+          throw new ApiError(
+            400,
+            "Telegram requires both a bot token and chat ID while enabled",
+          );
+        }
+      }
+      if (n.matrix) {
+        const mx = snap.settings.notifications.matrix;
+        if (typeof n.matrix.enabled === "boolean") {
+          mx.enabled = n.matrix.enabled;
+        }
+        if (Object.hasOwn(n.matrix, "homeserver")) {
+          mx.homeserver =
+            typeof n.matrix.homeserver === "string" &&
+            n.matrix.homeserver.trim()
+              ? n.matrix.homeserver.trim().replace(/\/+$/, "")
+              : null;
+        }
+        if (Object.hasOwn(n.matrix, "room_id")) {
+          mx.room_id =
+            typeof n.matrix.room_id === "string" && n.matrix.room_id.trim()
+              ? n.matrix.room_id.trim()
+              : null;
+        }
+        if (Object.hasOwn(n.matrix, "access_token")) {
+          mx.access_token_source = n.matrix.access_token ? "db" : null;
+        }
+        mx.configured = Boolean(
+          mx.homeserver && mx.room_id && mx.access_token_source,
+        );
+        if (mx.enabled && !mx.configured) {
+          throw new ApiError(
+            400,
+            "Matrix requires homeserver, room ID, and access token while enabled",
+          );
+        }
+      }
+      if (n.webhook) {
+        const wh = snap.settings.notifications.webhook;
+        if (typeof n.webhook.enabled === "boolean") {
+          wh.enabled = n.webhook.enabled;
+        }
+        if (Object.hasOwn(n.webhook, "url")) {
+          wh.url =
+            typeof n.webhook.url === "string" && n.webhook.url.trim()
+              ? n.webhook.url.trim()
+              : null;
+        }
+        if (Object.hasOwn(n.webhook, "secret")) {
+          wh.secret_source = n.webhook.secret ? "db" : null;
+        }
+        if (
+          Object.hasOwn(n.webhook, "headers") &&
+          n.webhook.headers &&
+          typeof n.webhook.headers === "object"
+        ) {
+          wh.headers = { ...(n.webhook.headers as Record<string, string>) };
+        }
+        wh.configured = Boolean(wh.url);
+        if (wh.enabled && !wh.configured) {
+          throw new ApiError(400, "Webhook requires a valid URL while enabled");
+        }
+      }
+      snap.settings.channels = {
+        telegram:
+          snap.settings.notifications.telegram.enabled &&
+          snap.settings.notifications.telegram.configured,
+        matrix:
+          snap.settings.notifications.matrix.enabled &&
+          snap.settings.notifications.matrix.configured,
+        webhook:
+          snap.settings.notifications.webhook.enabled &&
+          snap.settings.notifications.webhook.configured,
+      };
+    }
 
     return { ok: true, ...snap.settings } as T;
   }
@@ -1917,9 +2053,21 @@ export async function demoApiFetch<T = Record<string, unknown>>(
   }
 
   if (pathname === "/api/v1/admin/notifications/test" && method === "POST") {
+    const target =
+      typeof payload.channel === "string" ? payload.channel : undefined;
+    const delivery: Record<string, string> = {};
+    for (const ch of ["telegram", "matrix", "webhook"] as const) {
+      if ((!target || target === ch) && snap.settings.channels[ch]) {
+        delivery[ch] = "ok";
+      }
+    }
+
     return {
       ok: true,
-      delivery: { telegram: "ok", matrix: "ok", webhook: "ok" },
+      delivery:
+        Object.keys(delivery).length > 0
+          ? delivery
+          : { status: "no_channels_configured" },
     } as T;
   }
 
