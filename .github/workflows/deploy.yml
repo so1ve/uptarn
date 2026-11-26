@@ -1,0 +1,64 @@
+name: Deploy Worker
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch or release tag to deploy (defaults to current branch)
+        required: false
+        type: string
+      dry_run:
+        description: Build and run wrangler deploy --dry-run without applying remote migrations
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-worker
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Cloudflare Workers
+    if: github.event_name == 'workflow_dispatch' || vars.UPTARN_DEPLOY == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Enable Corepack and install dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+
+      - name: Deploy Worker and apply D1 migrations
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          UPTARN_D1_DATABASE_ID: ${{ vars.UPTARN_D1_DATABASE_ID }}
+          UPTARN_D1_DATABASE_NAME: ${{ vars.UPTARN_D1_DATABASE_NAME }}
+          UPTARN_WORKER_NAME: ${{ vars.UPTARN_WORKER_NAME }}
+          UPTARN_CUSTOM_DOMAIN: ${{ vars.UPTARN_CUSTOM_DOMAIN }}
+          UPTARN_PUBLIC_BASE_URL: ${{ vars.UPTARN_PUBLIC_BASE_URL }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            pnpm run deploy -- --dry-run
+            exit 0
+          fi
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::Set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets before deploying."
+            exit 1
+          fi
+          pnpm run deploy

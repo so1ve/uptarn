@@ -27,24 +27,51 @@ Covering mixed personal devices (VPS, homelab, NAS, routers), web services, and 
 
 ## Deploy Hub (Cloudflare Workers + D1)
 
-### One-click deploy
+Keep `wrangler.jsonc` unmodified so upstream binding and routing updates merge cleanly. Instance-specific values (`database_id`, custom domains, `PUBLIC_BASE_URL`) live either in GitHub repository variables, Cloudflare Dashboard variables (preserved via `keep_vars: true`), or a gitignored `wrangler.local.jsonc`.
+
+### Fork + GitHub Actions (Recommended)
+
+1. Fork this repository on GitHub and create a D1 database (`uptarn`) in your Cloudflare account.
+2. Add **Repository Secrets** in your fork: `CLOUDFLARE_API_TOKEN` (Workers Scripts, D1, and Account Settings edit permissions) and `CLOUDFLARE_ACCOUNT_ID`.
+3. Add **Repository Variables** in your fork:
+   - `UPTARN_DEPLOY` = `true`
+   - `UPTARN_D1_DATABASE_ID` = `<your-d1-database-id>`
+   - Optional: `UPTARN_CUSTOM_DOMAIN` (e.g. `status.example.com`), `UPTARN_PUBLIC_BASE_URL`, `UPTARN_WORKER_NAME`, `UPTARN_D1_DATABASE_NAME`
+4. Run the **Deploy Worker** workflow once (or push to `main`).
+5. Configure `ADMIN_PASSWORD` and `ADMIN_TOKEN` (and optional `CF_ACCESS_*` / `TURNSTILE_*` — see [.dev.vars.example](.dev.vars.example)) in Cloudflare Dashboard or via `wrangler secret put`. Alert thresholds, retention days, and Telegram / Matrix / Webhook channels can be configured directly in the Web UI under **Settings**.
+
+### One-click deploy (Cloudflare Workers Builds)
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/so1ve/uptarn)
 
-Cloudflare provisions the D1 database (`DB`), builds the dashboard, applies `migrations/`, and deploys the Worker. After deploying, update `PUBLIC_BASE_URL` and configure `ADMIN_PASSWORD`, `ADMIN_TOKEN`, and any optional alert/auth secrets (see [.dev.vars.example](.dev.vars.example)) in the Cloudflare dashboard or via Wrangler.
+Cloudflare provisions the D1 database (`DB`), builds the dashboard, and deploys the Worker. After the first deploy:
 
-### Manual deploy
+- Set `PUBLIC_BASE_URL` (plain-text variable) and `ADMIN_PASSWORD` / `ADMIN_TOKEN` (secrets) in the Cloudflare dashboard.
+- Set the Workers Builds deploy command to `pnpm run deploy` so future builds automatically apply `migrations/` to D1 before deploying.
+
+### Local CLI deploy (`wrangler.local.jsonc`)
 
 ```sh
 pnpm exec wrangler d1 create uptarn
-# Update database_id and PUBLIC_BASE_URL in wrangler.jsonc
+```
 
+Create a gitignored `wrangler.local.jsonc` containing only your instance overrides:
+
+```jsonc
+{
+  "d1_databases": [{ "binding": "DB", "database_id": "<your-d1-database-id>" }],
+  "routes": [{ "pattern": "status.example.com", "custom_domain": true }],
+  "vars": {
+    "PUBLIC_BASE_URL": "https://status.example.com",
+  },
+}
+```
+
+Then configure secrets and deploy (`pnpm run deploy` merges `wrangler.jsonc` + `wrangler.local.jsonc`, builds `web/dist`, applies remote D1 migrations, and deploys):
+
+```sh
 pnpm exec wrangler secret put ADMIN_PASSWORD
 pnpm exec wrangler secret put ADMIN_TOKEN
-# Optional IM channels:
-pnpm exec wrangler secret put TELEGRAM_BOT_TOKEN
-pnpm exec wrangler secret put MATRIX_ACCESS_TOKEN
-
 pnpm run deploy
 ```
 
@@ -220,6 +247,15 @@ docker run -d --name uptarn-agent --restart unless-stopped --net=host \
 - `packages.<system>.uptarn-agent`: Linux agent
 - `packages.<system>.uptarn-agent-static`: Static `musl` binary for Synology DSM and OpenWrt
 - `nixosModules.default`: NixOS modules `services.uptarn` and `services.uptarn-agent`
+
+## Upgrading
+
+- **Cloudflare Workers (Fork + GitHub Actions)**: Click **Sync fork → Update branch** on GitHub. The **Deploy Worker** workflow builds the UI, applies new D1 migrations, and deploys automatically (or run **Deploy Worker** manually with a specific `v*.*.*` tag).
+- **Cloudflare Workers (One-click clone)**: Run the **Sync Upstream** workflow in your cloned repository's **Actions** tab (choose `latest-release` or `main`). Pushing to `main` triggers Workers Builds.
+- **Cloudflare Workers (Local CLI)**: Run `git pull && pnpm install && pnpm run deploy`. Because instance overrides stay in `wrangler.local.jsonc`, upstream changes to `wrangler.jsonc` apply automatically without conflicts.
+- **Docker**: Pull `ghcr.io/so1ve/uptarn:latest` (and `ghcr.io/so1ve/uptarn-agent:latest`) and recreate the container. SQLite migrations run automatically on Hub startup.
+- **NixOS**: Run `nix flake update uptarn` and rebuild your hosts.
+- **Static Agent binary**: Download the latest `uptarn-agent-{x86_64,aarch64}-unknown-linux-musl` asset and `.sha256` checksum from GitHub Releases, replace the binary, and restart the service.
 
 ## Releasing
 

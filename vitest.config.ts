@@ -6,6 +6,7 @@ export default defineConfig({
     include: [
       "test/portable.test.ts",
       "test/runtime-settings.test.ts",
+      "test/deploy-worker.test.ts",
       "test/cli.test.ts",
     ],
   },

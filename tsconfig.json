@@ -15,6 +15,7 @@
   },
   "include": [
     "bump.config.ts",
+    "scripts/**/*.ts",
     "src/**/*.ts",
     "test/**/*.ts",
     "vite.config.ts",

@@ -2,6 +2,8 @@
 .direnv/
 .wrangler/
 .dev.vars
+wrangler.local.json
+wrangler.local.jsonc
 wrangler.prod.jsonc
 target/
 result

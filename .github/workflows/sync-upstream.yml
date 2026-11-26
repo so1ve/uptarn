@@ -1,0 +1,61 @@
+name: Sync Upstream
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Upstream ref to sync
+        required: true
+        default: latest-release
+        type: choice
+        options:
+          - latest-release
+          - main
+      upstream:
+        description: Upstream repository URL
+        required: true
+        default: https://github.com/so1ve/uptarn.git
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync with Upstream
+    if: github.repository != 'so1ve/uptarn'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Fetch and merge upstream
+        env:
+          TARGET: ${{ inputs.target }}
+          UPSTREAM: ${{ inputs.upstream }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git remote add upstream "$UPSTREAM"
+          git fetch upstream main --tags
+
+          if [ "$TARGET" = "latest-release" ]; then
+            LATEST_TAG="$(git tag --list 'v*.*.*' --sort=-v:refname | head -n 1)"
+            if [ -n "$LATEST_TAG" ]; then
+              SYNC_REF="$LATEST_TAG"
+            else
+              SYNC_REF="upstream/main"
+            fi
+          else
+            SYNC_REF="upstream/main"
+          fi
+
+          echo "Syncing $SYNC_REF into main"
+          git merge --ff-only "$SYNC_REF" || git merge --no-edit "$SYNC_REF"
+          git push origin HEAD:main
