@@ -6,7 +6,6 @@ import { CanvasRenderer } from "echarts/renderers";
 
 import type {
   MonitorSummary,
-  NodeSummary,
   PublicMonitorSummary,
   SeriesPoint,
   SeriesSnapshot,
@@ -119,6 +118,7 @@ const areaLine = (
   connectNulls = false,
   smooth = 0.25,
 ) => ({
+  id: name,
   name,
   type: "line",
   smooth,
@@ -141,16 +141,12 @@ const cartesianOption = (opts: {
   timestamps: readonly number[];
   showDate: boolean;
   showSeconds?: boolean;
-  live?: boolean;
   yAxis: unknown;
   series: unknown[];
   tooltipFmt: (v: unknown, idx?: number) => string;
   duration?: number;
 }): EChartsCoreOption => ({
-  animationDuration: opts.live ? 160 : (opts.duration ?? 220),
-  ...(opts.live
-    ? { animationDurationUpdate: 260, animationEasingUpdate: "linear" }
-    : {}),
+  animationDuration: opts.duration ?? 180,
   grid: { left: opts.gridLeft, right: 14, top: 14, bottom: 24 },
   tooltip: baseTooltip(opts.p, opts.tooltipFmt),
   xAxis: {
@@ -191,6 +187,7 @@ export const buildSparkOption = (
   yAxis: { type: "value", show: false, min: 0, max: 100 },
   series: [
     {
+      id: "spark",
       type: "line",
       data: points.map((p) => p.value),
       showSymbol: false,
@@ -225,7 +222,6 @@ function buildDualAreaOption(
     timestamps,
     showDate,
     showSeconds: live,
-    live,
     yAxis: valueAxis(p.gridColor, yAxisExtra, yAxisFmt),
     tooltipFmt: (v) => (typeof v === "number" ? tooltipFmt(v) : "-"),
     series: active.map(([name, color, pts]) => {
@@ -244,9 +240,8 @@ function buildDualAreaOption(
 }
 
 export function buildComputeChartOption(
-  node: NodeSummary,
+  history: Record<string, SeriesPoint[]>,
   isDark: boolean,
-  history: Record<string, SeriesPoint[]> = node.history,
   showDate = false,
   live = false,
 ): EChartsCoreOption | null {
@@ -268,9 +263,8 @@ export function buildComputeChartOption(
 }
 
 export function buildNetworkChartOption(
-  node: NodeSummary,
+  history: Record<string, SeriesPoint[]>,
   isDark: boolean,
-  history: Record<string, SeriesPoint[]> = node.history,
   showDate = false,
   live = false,
 ): EChartsCoreOption | null {
@@ -298,9 +292,8 @@ export interface LoadChartItem {
 }
 
 export function buildLoadChart(
-  node: NodeSummary,
+  history: Record<string, SeriesPoint[]>,
   isDark: boolean,
-  history: Record<string, SeriesPoint[]> = node.history,
   showDate = false,
   live = false,
 ): LoadChartItem | null {
@@ -322,7 +315,6 @@ export function buildLoadChart(
       timestamps: pts.map((pt) => pt.ts),
       showDate,
       showSeconds: live,
-      live,
       yAxis: valueAxis(p.gridColor, { min: 0, splitNumber: 3 }, (v) =>
         v.toFixed(v < 10 ? 2 : 1),
       ),
@@ -348,15 +340,15 @@ export interface ProbeChartItem {
 }
 
 export function buildProbeCharts(
-  node: NodeSummary,
+  seriesList: readonly SeriesSnapshot[],
+  history: Record<string, SeriesPoint[]>,
   isDark: boolean,
-  history: Record<string, SeriesPoint[]> = node.history,
   showDate = false,
 ): ProbeChartItem[] {
   const p = chartPalette(isDark);
   const items: ProbeChartItem[] = [];
 
-  for (const s of node.series) {
+  for (const s of seriesList) {
     const pts = history[s.key] ?? [];
     if (pts.length < 2) {
       continue;
@@ -378,6 +370,7 @@ export function buildProbeCharts(
     const series: unknown[] = [areaLine(s.label, color, vals, p.areaOpacity)];
     if (pts.some((pt) => (pt.aux ?? 0) > 0)) {
       series.push({
+        id: "Packet loss",
         name: "Packet loss",
         type: "bar",
         yAxisIndex: 1,

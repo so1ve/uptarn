@@ -78,6 +78,7 @@ const chartOption = computed(() =>
     empty-text="No samples yet."
     height="180px"
     :option="chartOption"
+    :reset-key="window"
   >
     <template #title>
       <span class="font-mono text-xs text-muted tabular-nums">

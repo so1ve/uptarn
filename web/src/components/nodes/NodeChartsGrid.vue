@@ -52,29 +52,30 @@ const windowOptions = computed(() => {
 });
 const showDate = computed(() => windowSecs.value > 86_400);
 const memPct = computed(() => memPercent(props.node.system));
+const systemResetKey = computed(() => `${props.node.id}:${windowSecs.value}`);
+const probeResetKey = computed(
+  () => `${props.node.id}:${isLiveWindow.value ? 21_600 : windowSecs.value}`,
+);
 const computeChartOption = computed(() =>
   buildComputeChartOption(
-    props.node,
-    isDark.value,
     props.history,
+    isDark.value,
     showDate.value,
     isLiveWindow.value,
   ),
 );
 const networkChartOption = computed(() =>
   buildNetworkChartOption(
-    props.node,
-    isDark.value,
     props.history,
+    isDark.value,
     showDate.value,
     isLiveWindow.value,
   ),
 );
 const loadChart = computed(() =>
   buildLoadChart(
-    props.node,
-    isDark.value,
     props.history,
+    isDark.value,
     showDate.value,
     isLiveWindow.value,
   ),
@@ -129,8 +130,8 @@ const totalCharts = computed(
     >
       <ChartCard
         v-if="computeChartOption"
-        :live="isLiveWindow"
         :option="computeChartOption"
+        :reset-key="systemResetKey"
       >
         <template #title>
           <h3 class="text-sm font-semibold">CPU &amp; Memory</h3>
@@ -159,8 +160,8 @@ const totalCharts = computed(
 
       <ChartCard
         v-if="networkChartOption"
-        :live="isLiveWindow"
         :option="networkChartOption"
+        :reset-key="systemResetKey"
       >
         <template #title>
           <h3 class="text-sm font-semibold">Network</h3>
@@ -186,8 +187,8 @@ const totalCharts = computed(
         v-if="loadChart"
         :class="wideLoadCard ? 'lg:col-span-2' : ''"
         :height="wideLoadCard ? '175px' : '220px'"
-        :live="isLiveWindow"
         :option="loadChart.option"
+        :reset-key="systemResetKey"
       >
         <template #title>
           <h3 class="text-sm font-semibold">Load</h3>
@@ -215,6 +216,7 @@ const totalCharts = computed(
         v-for="item in probeCharts"
         :key="item.series.key"
         :option="item.option"
+        :reset-key="probeResetKey"
       >
         <template #title>
           <h3 class="inline-flex items-center gap-2 text-sm font-semibold">

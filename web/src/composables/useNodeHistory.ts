@@ -18,6 +18,7 @@ export function useNodeHistory(
   node: Ref<NodeSummary | null>,
 ) {
   const { syncGeneration, liveHistory } = useUptarnStore();
+  const nodeLive = computed(() => liveHistory.value[nodeId.value] ?? null);
   const hasLive = computed(() => hasLiveNodeSamples(nodeId.value));
 
   const userPicked = ref(false);
@@ -42,11 +43,16 @@ export function useNodeHistory(
 
   function setWindowSecs(next: number) {
     userPicked.value = true;
+    if (next !== windowSecs.value) {
+      customHistory.value = null;
+    }
     windowSecs.value = next;
   }
 
+  // Watch `node.history` (not `last_seen_at`) so 3s live ticks never trigger
+  // redundant D1 `/history` fetches when viewing 1h/24h/7d windows.
   watch(
-    [nodeId, windowSecs, () => node.value?.last_seen_at, syncGeneration],
+    [nodeId, windowSecs, () => node.value?.history, syncGeneration],
     async ([id, secs]) => {
       const seq = ++historySeq;
       if (!id || secs === DEFAULT_WINDOW_SECS || secs === LIVE_WINDOW_SECS) {
@@ -55,7 +61,7 @@ export function useNodeHistory(
 
         return;
       }
-      loadingWindow.value = true;
+      loadingWindow.value = customHistory.value === null;
       try {
         const res = await apiFetch<NodeHistoryResponse>(
           `/api/v1/admin/nodes/${encodeURIComponent(id)}/history?window=${secs}`,
@@ -73,18 +79,18 @@ export function useNodeHistory(
     },
   );
 
-  const history = computed<Record<string, SeriesPoint[]>>(() => {
-    if (windowSecs.value === LIVE_WINDOW_SECS) {
-      return {
-        ...(node.value?.history ?? {}),
-        ...(liveHistory.value[nodeId.value] ?? {}),
-      };
-    }
-
-    return windowSecs.value === DEFAULT_WINDOW_SECS
+  const probeHistory = computed<Record<string, SeriesPoint[]>>(() =>
+    windowSecs.value === DEFAULT_WINDOW_SECS ||
+    windowSecs.value === LIVE_WINDOW_SECS
       ? (node.value?.history ?? {})
-      : (customHistory.value ?? node.value?.history ?? {});
-  });
+      : (customHistory.value ?? node.value?.history ?? {}),
+  );
+
+  const history = computed<Record<string, SeriesPoint[]>>(() =>
+    windowSecs.value === LIVE_WINDOW_SECS
+      ? (nodeLive.value ?? node.value?.history ?? {})
+      : probeHistory.value,
+  );
 
   return {
     windowSecs: computed({
@@ -94,5 +100,6 @@ export function useNodeHistory(
     hasLive,
     loadingWindow,
     history,
+    probeHistory,
   };
 }

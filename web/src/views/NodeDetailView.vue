@@ -65,17 +65,18 @@ const {
   windowSecs,
   loadingWindow,
   history: activeHistory,
+  probeHistory,
 } = useNodeHistory(nodeId, node);
 
+const nodeSeries = computed(() => node.value?.series ?? []);
+
 const probeCharts = computed(() =>
-  node.value
-    ? buildProbeCharts(
-        node.value,
-        isDark.value,
-        activeHistory.value,
-        windowSecs.value > 86_400,
-      )
-    : [],
+  buildProbeCharts(
+    nodeSeries.value,
+    probeHistory.value,
+    isDark.value,
+    windowSecs.value > 86_400,
+  ),
 );
 
 const scalarSeries = computed(() => {

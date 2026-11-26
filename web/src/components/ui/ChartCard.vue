@@ -9,9 +9,14 @@ withDefaults(
     height?: string;
     emptyText?: string;
     compact?: boolean;
-    live?: boolean;
+    resetKey?: string | number;
   }>(),
-  { height: "220px", emptyText: undefined, compact: false, live: false },
+  {
+    height: "220px",
+    emptyText: undefined,
+    compact: false,
+    resetKey: undefined,
+  },
 );
 </script>
 
@@ -27,7 +32,7 @@ withDefaults(
       <slot name="title" />
       <slot name="meta" />
     </div>
-    <EChart v-if="option" :height :live :option />
+    <EChart v-if="option" :height :option :reset-key />
     <p v-else-if="emptyText" class="py-4 text-center text-xs text-dimmed">
       {{ emptyText }}
     </p>

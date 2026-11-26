@@ -13,7 +13,7 @@ import {
 const props = defineProps<{
   option: EChartsCoreOption;
   height?: string;
-  live?: boolean;
+  resetKey?: string | number;
 }>();
 
 const rootEl = useTemplateRef<HTMLDivElement>("root");
@@ -29,12 +29,20 @@ onMounted(() => {
 });
 
 watch(
-  () => props.option,
-  (next) => {
-    chart.value?.setOption(
-      next,
-      props.live ? { replaceMerge: ["series"] } : { notMerge: true },
-    );
+  [() => props.option, () => props.resetKey],
+  ([nextOption, nextKey], [, prevKey]) => {
+    const instance = chart.value;
+    if (!instance) {
+      return;
+    }
+    if (nextKey === prevKey) {
+      instance.setOption(
+        { ...nextOption, animation: false },
+        { replaceMerge: ["series"] },
+      );
+    } else {
+      instance.setOption(nextOption, { notMerge: true });
+    }
   },
 );
 
