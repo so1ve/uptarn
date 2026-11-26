@@ -523,4 +523,91 @@ describe("uptarn CLI commands", () => {
 
     expect(JSON.parse(defaultMon.stdoutText())).toEqual([]);
   });
+
+  it("uses Clerc beta.4 scoped groups, completions, structured errors, and ctx.signal", async () => {
+    // Scoped flag groups via Scope.groups()
+    const monHelp = await runCli(["monitor", "edit", "--help"]);
+    const jobHelp = await runCli(["job", "edit", "--help"]);
+
+    expect(monHelp.stdoutText()).toContain("MONITOR FIELDS");
+    expect(monHelp.stdoutText()).not.toContain("JOB FIELDS");
+    expect(jobHelp.stdoutText()).toContain("JOB FIELDS");
+    expect(jobHelp.stdoutText()).not.toContain("MONITOR FIELDS");
+
+    // Hybrid static shell completions & completions install --dry-run
+    for (const shell of ["bash", "zsh", "fish"] as const) {
+      const comp = await runCli(["completions", shell]);
+
+      expect(comp.stdoutText()).toContain("uptarn");
+      expect(comp.stdoutText()).toContain("json");
+      expect(comp.stdoutText()).toContain("monitor:");
+    }
+
+    const dryInstall = await runCli([
+      "completions",
+      "install",
+      "zsh",
+      "--dry-run",
+    ]);
+
+    expect(dryInstall.stdoutText()).toContain("zsh");
+
+    // Structured ClercError diagnostics (custom code, detail, hints)
+    const missingNodeTerminal = createMemoryTerminal({
+      env: { UPTARN_SERVER: SERVER_URL, UPTARN_ADMIN_TOKEN: ADMIN_TOKEN },
+    });
+    const missingNode = await createCli().run(["node", "show", "ghost"], {
+      terminal: missingNodeTerminal,
+    });
+
+    expect(missingNode).toMatchObject({ ok: false, exitCode: 1 });
+    expect(missingNodeTerminal.stderrText()).toContain(
+      'Node "ghost" not found',
+    );
+    expect(missingNodeTerminal.stderrText()).toContain("uptarn node ls");
+
+    const unauthTerminal = createMemoryTerminal({
+      env: { UPTARN_SERVER: SERVER_URL, UPTARN_ADMIN_TOKEN: "wrong-token" },
+    });
+    const unauth = await createCli().run(["status"], {
+      terminal: unauthTerminal,
+    });
+
+    expect(unauth).toMatchObject({ ok: false, exitCode: 1 });
+    expect(unauthTerminal.stderrText()).toContain("(401)");
+    expect(unauthTerminal.stderrText()).toContain("UPTARN_ADMIN_TOKEN");
+
+    // Declarative Types.Integer validation on incident rm-history <id>
+    const badHistTerminal = createMemoryTerminal({
+      env: { UPTARN_SERVER: SERVER_URL, UPTARN_ADMIN_TOKEN: ADMIN_TOKEN },
+    });
+    const badHist = await createCli().run(["incident", "rm-history", "0"], {
+      terminal: badHistTerminal,
+    });
+
+    expect(badHist).toMatchObject({ ok: false, exitCode: 2 });
+
+    // ctx.signal propagation into fetch
+    let seenSignal: AbortSignal | null | undefined;
+    const prevFetch = globalThis.fetch;
+    vi.stubGlobal(
+      "fetch",
+      (input: string | URL | Request, init?: RequestInit) => {
+        seenSignal = init?.signal;
+
+        return prevFetch(input, init);
+      },
+    );
+    const controller = new AbortController();
+    const sigTerminal = createMemoryTerminal({
+      env: { UPTARN_SERVER: SERVER_URL, UPTARN_ADMIN_TOKEN: ADMIN_TOKEN },
+    });
+    const sigResult = await createCli().run(["status", "--json"], {
+      terminal: sigTerminal,
+      signal: controller.signal,
+    });
+
+    expect(sigResult.ok).toBeTruthy();
+    expect(seenSignal).toBe(controller.signal);
+  });
 });

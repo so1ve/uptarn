@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import process from "node:process";
 
 import { completionsPlugin } from "@clerc/plugin-completions";
 import type {
@@ -8,7 +7,14 @@ import type {
   Scope,
   Theme,
 } from "clerc";
-import { MissingRequiredFlagError, RuleError, Types, clerc } from "clerc";
+import {
+  ClercError,
+  Complete,
+  MissingRequiredFlagError,
+  RuleError,
+  Types,
+  clerc,
+} from "clerc";
 
 import manifest from "../../package.json" with { type: "json" };
 import type { TickReport } from "../domain/tick.ts";
@@ -95,7 +101,10 @@ function resolveAuth(
   return { server, token };
 }
 
-const createAdminRequester = (auth: ResolvedAuth): AdminRequestFn =>
+const createAdminRequester = (
+  auth: ResolvedAuth,
+  signal?: AbortSignal,
+): AdminRequestFn =>
   async function adminRequest<T>(
     method: string,
     apiPath: string,
@@ -113,6 +122,7 @@ const createAdminRequester = (auth: ResolvedAuth): AdminRequestFn =>
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
     });
     if (!response.ok) {
       const text = await response.text().catch(() => "");
@@ -126,8 +136,18 @@ const createAdminRequester = (auth: ResolvedAuth): AdminRequestFn =>
         // Keep raw body text when response is not JSON.
       }
 
-      throw new Error(
-        `admin request ${method} ${url} failed (${response.status}): ${detail || response.statusText}`,
+      const hints: string[] = [];
+      if (response.status === 401 || response.status === 403) {
+        hints.push("check '--token', '--token-file', or UPTARN_ADMIN_TOKEN");
+      }
+
+      throw new ClercError(
+        detail || response.statusText || `HTTP ${response.status}`,
+        {
+          code: "ERR_HUB_REQUEST",
+          detail: `${method} ${url} (${response.status})`,
+          hints,
+        },
       );
     }
 
@@ -169,6 +189,7 @@ const tokenAuthFlags = {
     placeholder: "<path>",
     env: "UPTARN_ADMIN_TOKEN_FILE",
     group: "auth",
+    complete: Complete.file(),
     description: "Path to a file containing the admin Bearer token",
   },
 } as const satisfies FlagsDefinition;
@@ -177,9 +198,33 @@ const jsonFlag = {
   json: { type: Boolean, description: "Output raw JSON" },
 } as const satisfies FlagsDefinition;
 
+const targetFlagComplete = Complete.list(
+  [
+    { value: "monitor:", description: "Monitor target (monitor:<id>)" },
+    { value: "node:", description: "Node target (node:<id>)" },
+  ],
+  { noSpace: true },
+);
+
+const parseTargetFlags = (
+  rawTargets: readonly string[] | undefined,
+): MaintenanceTarget[] =>
+  (rawTargets ?? []).map((raw) => {
+    const sep = raw.indexOf(":");
+    const kind = sep > 0 ? raw.slice(0, sep) : "";
+    const id = sep > 0 ? raw.slice(sep + 1).trim() : "";
+    if ((kind !== "monitor" && kind !== "node") || !id) {
+      throw new RuleError(
+        `invalid --target '${raw}'; expected monitor:<id> or node:<id>`,
+      ).addHint("example: --target monitor:blog --target node:homelab");
+    }
+
+    return { type: kind, id };
+  });
+
 function probeFlags(mode: "add" | "edit") {
   const isAdd = mode === "add";
-  const group = isAdd ? undefined : "fields";
+  const group = isAdd ? undefined : "monitorFields";
 
   return {
     group: {
@@ -340,8 +385,14 @@ function addResourceCmds<T>(sub: AdminScope, opts: ResourceOpts<T>) {
       const data = await ctx.state.fetchSnapshot();
       const item = show.find(data, id);
       if (!item) {
-        throw new Error(
+        throw new ClercError(
           `${opts.label[0].toUpperCase()}${opts.label.slice(1)} "${id}" not found`,
+          {
+            code: "ERR_NOT_FOUND",
+            hints: [
+              `run 'uptarn ${opts.label} ls' to list available ${opts.label}s`,
+            ],
+          },
         );
       }
       emitJsonOr(ctx, item, () => {
@@ -412,7 +463,7 @@ export function createCli() {
         admin: "Administration",
         server: "Server",
       },
-      flags: { auth: "Authentication", fields: "Monitor Fields" },
+      flags: { auth: "Authentication" },
     })
     .use(completionsPlugin());
 
@@ -422,7 +473,7 @@ export function createCli() {
     args: {
       file: {
         description: "Path to declarative Uptarn JSON config",
-        complete: () => ({ files: ["json"] }),
+        complete: Complete.file("json"),
       },
     },
     flags: {
@@ -451,7 +502,7 @@ export function createCli() {
         JSON.parse(fs.readFileSync(ctx.args.file, "utf8")) as unknown,
       );
       const auth = resolveAuth(ctx.flags, spec.hub_url);
-      const request = createAdminRequester(auth);
+      const request = createAdminRequester(auth, ctx.signal);
       const snapshot = await request<DashboardSnapshot>(
         "GET",
         "/api/v1/admin/snapshot",
@@ -519,7 +570,7 @@ export function createCli() {
     })
     .rules((r) => [r.oneOf(r.flag("token"), r.flag("tokenFile"))])
     .middleware((ctx, next) => {
-      const request = createAdminRequester(resolveAuth(ctx.flags));
+      const request = createAdminRequester(resolveAuth(ctx.flags), ctx.signal);
 
       return next({
         request,
@@ -653,7 +704,12 @@ export function createCli() {
       "Set the disk summary source for a node ('sum' or a mount path)",
     args: {
       id: { description: "Node identifier" },
-      mount: { description: "'sum' for all mounts, or a mount path like '/'" },
+      mount: {
+        description: "'sum' for all mounts, or a mount path like '/'",
+        complete: Complete.list([
+          { value: "sum", description: "Sum of all mounts" },
+        ]),
+      },
     },
     async run(ctx) {
       const primaryMount =
@@ -688,10 +744,12 @@ export function createCli() {
   });
 
   // ── monitor ──
-  const monitor = admin.subcommand("monitor", {
-    aliases: ["mon"],
-    description: "Manage HTTP monitors",
-  });
+  const monitor = admin
+    .subcommand("monitor", {
+      aliases: ["mon"],
+      description: "Manage HTTP monitors",
+    })
+    .groups({ flags: { monitorFields: "Monitor Fields" } });
   addResourceCmds(monitor, {
     label: "monitor",
     apiBase: "/api/v1/admin/monitors",
@@ -768,33 +826,36 @@ export function createCli() {
     flags: {
       name: {
         type: nonEmptyString,
-        group: "fields",
+        group: "monitorFields",
         description: "New display name",
       },
       url: {
         type: nonEmptyString,
-        group: "fields",
+        group: "monitorFields",
         description: "New probe URL",
       },
       ...probeFlags("edit"),
       enabled: {
         type: onOffType,
-        group: "fields",
+        group: "monitorFields",
         description: "Enable or pause probing (on/off)",
       },
       public: {
         type: onOffType,
-        group: "fields",
+        group: "monitorFields",
         description: "Public status page visibility (on/off)",
       },
       ...jsonFlag,
     },
-    rules: [(r) => [r.atLeastOne(r.group("fields"))], statusRangeRule],
+    rules: [(r) => [r.atLeastOne(r.group("monitorFields"))], statusRangeRule],
     async run(ctx) {
       const snapshot = await ctx.state.fetchSnapshot();
       const existing = snapshot.monitors.find((m) => m.id === ctx.args.id);
       if (!existing) {
-        throw new Error(`Monitor "${ctx.args.id}" not found`);
+        throw new ClercError(`Monitor "${ctx.args.id}" not found`, {
+          code: "ERR_NOT_FOUND",
+          hints: ["run 'uptarn monitor ls' to list available monitors"],
+        });
       }
       if (existing.managed_by_node_id || existing.probe.from !== "hub") {
         const hasHubOnlyFlag =
@@ -808,8 +869,16 @@ export function createCli() {
           ctx.flags.timeout !== undefined ||
           ctx.flags.enabled !== undefined;
         if (hasHubOnlyFlag) {
-          throw new Error(
-            `Monitor "${existing.id}" is managed by node "${existing.managed_by_node_id ?? "agent"}"; only --group, --public, and --public-url can be updated on the hub`,
+          throw new ClercError(
+            `Monitor "${existing.id}" is managed by node "${existing.managed_by_node_id ?? "agent"}"`,
+            {
+              code: "ERR_AGENT_MANAGED",
+              detail:
+                "only '--group', '--public', and '--public-url' can be updated on the hub",
+              hints: [
+                "update probe settings in the agent config or pass only hub-editable flags",
+              ],
+            },
           );
         }
         const patch: {
@@ -884,9 +953,11 @@ export function createCli() {
   });
 
   // ── job ──
-  const job = admin.subcommand("job", {
-    description: "Manage scheduled jobs",
-  });
+  const job = admin
+    .subcommand("job", {
+      description: "Manage scheduled jobs",
+    })
+    .groups({ flags: { jobFields: "Job Fields" } });
   addResourceCmds(job, {
     label: "job",
     apiBase: "/api/v1/admin/jobs",
@@ -955,27 +1026,27 @@ export function createCli() {
     flags: {
       label: {
         type: nonEmptyString,
-        group: "fields",
+        group: "jobFields",
         description: "New display label",
       },
       schedule: {
         type: String,
-        group: "fields",
+        group: "jobFields",
         description: "Schedule description (pass empty string to clear)",
       },
       interval: {
         type: nonNegativeInt,
-        group: "fields",
+        group: "jobFields",
         description: "Watchdog interval in seconds (0 disables overdue alerts)",
       },
       grace: {
         type: jobGraceSecs,
-        group: "fields",
+        group: "jobFields",
         description: "Grace period before overdue in seconds",
       },
       ...jsonFlag,
     },
-    rules: [(r) => [r.atLeastOne(r.group("fields"))]],
+    rules: [(r) => [r.atLeastOne(r.group("jobFields"))]],
     async run(ctx) {
       const patch = {
         ...(ctx.flags.label === undefined ? {} : { label: ctx.flags.label }),
@@ -1180,26 +1251,14 @@ export function createCli() {
         type: nonEmptyString,
         multiple: true,
         placeholder: "<type:id>",
+        complete: targetFlagComplete,
         description:
           "Affected target as monitor:<id> or node:<id> (repeatable)",
       },
       ...jsonFlag,
     },
     async run(ctx) {
-      const targets: MaintenanceTarget[] = (ctx.flags.target ?? []).map(
-        (raw) => {
-          const sep = raw.indexOf(":");
-          const type = raw.slice(0, sep);
-          const id = raw.slice(sep + 1);
-          if ((type !== "monitor" && type !== "node") || !id) {
-            throw new Error(
-              `Invalid --target "${raw}": expected monitor:<id> or node:<id>`,
-            );
-          }
-
-          return { type, id };
-        },
-      );
+      const targets = parseTargetFlags(ctx.flags.target);
       const res = await ctx.state.request<{ id: string }>(
         "POST",
         "/api/v1/admin/incident-reports",
@@ -1279,13 +1338,15 @@ export function createCli() {
 
   incCmd.command("rm-history <id>", {
     description: "Delete an automatic incident record from history",
-    args: { id: { description: "History event id" } },
+    args: {
+      id: {
+        type: Types.Integer({ min: 1 }),
+        description: "History event id",
+      },
+    },
     flags: { ...jsonFlag },
     async run(ctx) {
-      const targetId = Number.parseInt(ctx.args.id, 10);
-      if (!Number.isInteger(targetId) || targetId < 1) {
-        throw new Error(`Invalid history event id "${ctx.args.id}"`);
-      }
+      const targetId = ctx.args.id;
       const snap = await ctx.state.fetchSnapshot();
       const activeKeys = new Set(snap.incidents.map((i) => i.incident_key));
       const matched = pairIncidentEvents(snap.events, activeKeys).find(
@@ -1528,26 +1589,14 @@ export function createCli() {
         type: nonEmptyString,
         multiple: true,
         placeholder: "<type:id>",
+        complete: targetFlagComplete,
         description:
           "Affected target as monitor:<id> or node:<id> (repeatable; omit for all)",
       },
       ...jsonFlag,
     },
     async run(ctx) {
-      const targets: MaintenanceTarget[] = (ctx.flags.target ?? []).map(
-        (raw) => {
-          const sep = raw.indexOf(":");
-          const kind = sep > 0 ? raw.slice(0, sep) : "";
-          const id = sep > 0 ? raw.slice(sep + 1).trim() : "";
-          if ((kind !== "monitor" && kind !== "node") || !id) {
-            throw new RuleError(
-              `invalid --target '${raw}'; expected monitor:<id> or node:<id>`,
-            );
-          }
-
-          return { type: kind, id };
-        },
-      );
+      const targets = parseTargetFlags(ctx.flags.target);
       const payload: MaintenanceInput = {
         id: ctx.flags.id,
         title: ctx.args.title,
@@ -1630,6 +1679,7 @@ export function createCli() {
       placeholder: "<path>",
       env: "UPTARN_DB_PATH",
       default: "./uptarn.db",
+      complete: Complete.file("db", "sqlite", "sqlite3"),
       description: "Local SQLite database path",
     },
   });
@@ -1664,14 +1714,28 @@ export function createCli() {
         env: { ...ctx.terminal.env },
       });
 
-      function shutdown(signal: string) {
-        ctx.log.raw(
-          JSON.stringify({ message: "shutting down uptarn hub", signal }),
-        );
-        void running.close().finally(() => process.exit(0));
+      const signal = ctx.signal;
+      if (!signal) {
+        return;
       }
-      process.once("SIGINT", () => shutdown("SIGINT"));
-      process.once("SIGTERM", () => shutdown("SIGTERM"));
+      await new Promise<void>((resolve) => {
+        if (signal.aborted) {
+          resolve();
+
+          return;
+        }
+        signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+      ctx.log.raw(
+        JSON.stringify({
+          message: "shutting down uptarn hub",
+          reason:
+            signal.reason instanceof Error
+              ? signal.reason.message
+              : String(signal.reason ?? "aborted"),
+        }),
+      );
+      await running.close();
     },
   });
   server.command("migrate", {
