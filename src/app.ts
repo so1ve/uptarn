@@ -24,11 +24,13 @@ import {
   createIncidentNote,
   createNode,
   createPushJob,
+  deleteIncidentHistory,
   deleteIncidentNote,
   deleteIncidentReport,
   deleteIncidentReportEntry,
   deleteMaintenance,
   deleteTarget,
+  dismissIncident,
   getDashboardSnapshot,
   getNodeHistory,
   getPublicStatusSnapshot,
@@ -62,7 +64,9 @@ import type { NotificationChannelName, TargetType } from "./shared/index.ts";
 import { errorMessage, unixNow } from "./shared/index.ts";
 import {
   parseCreateNodeInput,
+  parseDeleteIncidentHistoryInput,
   parseIncidentAckInput,
+  parseIncidentDismissInput,
   parseJobPatch,
   parseMonitorPatch,
   parseMuteInput,
@@ -354,6 +358,29 @@ export function createApp(
     }
 
     return c.json({ ok: true, acknowledged_at: res.acknowledged_at });
+  });
+
+  app.post("/api/v1/admin/incidents/dismiss", async (c) => {
+    const body = parseIncidentDismissInput(await readJson(c));
+    if (!(await dismissIncident(db, body.incident_key))) {
+      throw httpError(404, "Incident not found");
+    }
+
+    return c.json({ ok: true });
+  });
+
+  app.post("/api/v1/admin/incidents/history/delete", async (c) => {
+    const body = parseDeleteIncidentHistoryInput(await readJson(c));
+    const deleted = await deleteIncidentHistory(
+      db,
+      body.event_ids,
+      body.note_ids,
+    );
+    if (deleted === 0) {
+      throw httpError(404, "Incident history not found");
+    }
+
+    return c.json({ ok: true, deleted });
   });
 
   app.post("/api/v1/admin/incident-notes", async (c) => {

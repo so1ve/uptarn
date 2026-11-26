@@ -3205,4 +3205,134 @@ describe("uptarn portable server", () => {
 
     expect(delRes.status).toBe(200);
   });
+
+  it("dismisses active auto incidents and deletes paired history records with their notes", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000 * 1000);
+    const config = loadConfig({
+      PUBLIC_BASE_URL: "https://status.example.com",
+      ADMIN_TOKEN: "admin-tok",
+      FAILURE_THRESHOLD: "1",
+    });
+    const app = createApp(db, config);
+    const adminHeaders = {
+      "Authorization": "Bearer admin-tok",
+      "Content-Type": "application/json",
+    };
+
+    const jobRes = await app.request("/api/v1/admin/jobs", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({ key: "backup", label: "Backup" }),
+    });
+    const { ping_url: pingUrl } = await jobRes.json<{ ping_url: string }>();
+    const pingPath = new URL(pingUrl).pathname;
+
+    // Run 1: fail then recover -> creates a paired resolved history record.
+    await app.request(`${pingPath}/fail`, {
+      method: "POST",
+      body: "disk full",
+    });
+    vi.setSystemTime(10_120 * 1000);
+    await app.request(pingPath, { method: "POST", body: "ok" });
+
+    // Attach a note to Run 1.
+    const note1Res = await app.request("/api/v1/admin/incident-notes", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({
+        incident_key: "job:backup",
+        message: "Freed space on backup volume.",
+        created_at: 10_060,
+      }),
+    });
+    const { note: note1 } = await note1Res.json<{ note: { id: string } }>();
+
+    // Run 2: fail again -> active incident with unpaired firing event + note.
+    vi.setSystemTime(10_300 * 1000);
+    await app.request(`${pingPath}/fail`, { method: "POST", body: "timeout" });
+    await app.request("/api/v1/admin/incident-notes", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({
+        incident_key: "job:backup",
+        message: "Stuck test failure.",
+        created_at: 10_310,
+      }),
+    });
+
+    const snapBefore = await (
+      await app.request("/api/v1/admin/snapshot", { headers: adminHeaders })
+    ).json<DashboardSnapshot>();
+
+    expect(snapBefore.incidents).toHaveLength(1);
+    expect(snapBefore.events).toHaveLength(3);
+    expect(snapBefore.incident_notes).toHaveLength(2);
+
+    // Dismiss active Run 2 -> removes active alert_state, Run 2 firing event, and Run 2 note,
+    // while preserving Run 1 resolved history and Run 1 note.
+    const dismissRes = await app.request("/api/v1/admin/incidents/dismiss", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({ incident_key: "job:backup" }),
+    });
+
+    expect(dismissRes.status).toBe(200);
+
+    const dismissAgain = await app.request("/api/v1/admin/incidents/dismiss", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({ incident_key: "job:backup" }),
+    });
+
+    expect(dismissAgain.status).toBe(404);
+
+    const snapAfterDismiss = await (
+      await app.request("/api/v1/admin/snapshot", { headers: adminHeaders })
+    ).json<DashboardSnapshot>();
+
+    expect(snapAfterDismiss.incidents).toHaveLength(0);
+    expect(snapAfterDismiss.events).toHaveLength(2);
+    expect(snapAfterDismiss.incident_notes?.map((n) => n.id)).toEqual([
+      note1.id,
+    ]);
+
+    const paired = pairIncidentEvents(snapAfterDismiss.events);
+
+    expect(paired).toHaveLength(1);
+    expect(paired[0].event_ids).toHaveLength(2);
+
+    // Delete Run 1 from history -> deletes both paired events and note1.
+    const delHistRes = await app.request(
+      "/api/v1/admin/incidents/history/delete",
+      {
+        method: "POST",
+        headers: adminHeaders,
+        body: JSON.stringify({
+          event_ids: paired[0].event_ids,
+          note_ids: [note1.id],
+        }),
+      },
+    );
+
+    expect(delHistRes.status).toBe(200);
+
+    const snapAfterDelete = await (
+      await app.request("/api/v1/admin/snapshot", { headers: adminHeaders })
+    ).json<DashboardSnapshot>();
+
+    expect(snapAfterDelete.events).toHaveLength(0);
+    expect(snapAfterDelete.incident_notes).toHaveLength(0);
+
+    const delAgain = await app.request(
+      "/api/v1/admin/incidents/history/delete",
+      {
+        method: "POST",
+        headers: adminHeaders,
+        body: JSON.stringify({ event_ids: paired[0].event_ids }),
+      },
+    );
+
+    expect(delAgain.status).toBe(404);
+  });
 });

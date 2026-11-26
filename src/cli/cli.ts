@@ -1263,6 +1263,46 @@ export function createCli() {
     },
   });
 
+  incCmd.command("dismiss <key>", {
+    description: "Dismiss an active automatic incident",
+    args: { key: { description: "Incident key" } },
+    flags: { ...jsonFlag },
+    async run(ctx) {
+      await ctx.state.request("POST", "/api/v1/admin/incidents/dismiss", {
+        incident_key: ctx.args.key,
+      });
+      emitJsonOr(ctx, { ok: true, incident_key: ctx.args.key }, () => {
+        ctx.log.success(`Dismissed incident ${ctx.args.key}`);
+      });
+    },
+  });
+
+  incCmd.command("rm-history <id>", {
+    description: "Delete an automatic incident record from history",
+    args: { id: { description: "History event id" } },
+    flags: { ...jsonFlag },
+    async run(ctx) {
+      const targetId = Number.parseInt(ctx.args.id, 10);
+      if (!Number.isInteger(targetId) || targetId < 1) {
+        throw new Error(`Invalid history event id "${ctx.args.id}"`);
+      }
+      const snap = await ctx.state.fetchSnapshot();
+      const activeKeys = new Set(snap.incidents.map((i) => i.incident_key));
+      const matched = pairIncidentEvents(snap.events, activeKeys).find(
+        (rec) => rec.id === targetId || rec.event_ids.includes(targetId),
+      );
+      const eventIds = matched ? matched.event_ids : [targetId];
+      const res = await ctx.state.request<{ deleted: number }>(
+        "POST",
+        "/api/v1/admin/incidents/history/delete",
+        { event_ids: eventIds },
+      );
+      emitJsonOr(ctx, { ok: true, deleted: res.deleted }, () => {
+        ctx.log.success(`Deleted incident history #${targetId}`);
+      });
+    },
+  });
+
   // ── mute / unmute ──
   const muteArgs = {
     targetType: { type: targetTypeArg, description: "node, monitor, or job" },

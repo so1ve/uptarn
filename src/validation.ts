@@ -906,6 +906,51 @@ export function parseIncidentAckInput(raw: unknown): {
   return { incident_key: incidentKey, acknowledged: acknowledged ?? true };
 }
 
+export function parseIncidentDismissInput(raw: unknown): {
+  incident_key: string;
+} {
+  const obj = asObj(raw, "incident dismiss input");
+
+  return { incident_key: reqStr(obj.incident_key, "incident_key", 200) };
+}
+
+export function parseDeleteIncidentHistoryInput(raw: unknown): {
+  event_ids: number[];
+  note_ids: string[];
+} {
+  const obj = asObj(raw, "delete incident history input");
+  if (!Array.isArray(obj.event_ids) || obj.event_ids.length === 0) {
+    bad("event_ids must be a non-empty array");
+  }
+  if (obj.event_ids.length > 100) {
+    bad("event_ids exceeds maximum length 100");
+  }
+  const eventIds = [
+    ...new Set(
+      obj.event_ids.map((v, idx) =>
+        reqInt(v, `event_ids[${idx}]`, 1, Number.MAX_SAFE_INTEGER),
+      ),
+    ),
+  ];
+
+  let noteIds: string[] = [];
+  if (obj.note_ids !== undefined && obj.note_ids !== null) {
+    if (!Array.isArray(obj.note_ids)) {
+      bad("note_ids must be an array");
+    }
+    if (obj.note_ids.length > 100) {
+      bad("note_ids exceeds maximum length 100");
+    }
+    noteIds = [
+      ...new Set(
+        obj.note_ids.map((v, idx) => reqStr(v, `note_ids[${idx}]`, 64)),
+      ),
+    ];
+  }
+
+  return { event_ids: eventIds, note_ids: noteIds };
+}
+
 const INCIDENT_REPORT_STATUSES = [
   "investigating",
   "identified",

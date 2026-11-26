@@ -2,6 +2,7 @@ import type { AlertEventSummary, TargetType } from "./protocol.ts";
 
 export interface IncidentHistoryRecord {
   id: number;
+  event_ids: number[];
   incident_key: string;
   target_type: TargetType;
   target_id: string;
@@ -25,7 +26,10 @@ export function pairIncidentEvents(
   events: readonly AlertEventSummary[],
   activeKeys: ReadonlySet<string> = new Set(),
 ): IncidentHistoryRecord[] {
-  const pending = new Map<string, AlertEventSummary>();
+  const pending = new Map<
+    string,
+    { ev: AlertEventSummary; eventIds: number[] }
+  >();
   const records: IncidentHistoryRecord[] = [];
 
   for (const ev of [...events].reverse()) {
@@ -34,11 +38,14 @@ export function pairIncidentEvents(
       if (existing) {
         // Keep earliest start time, update delivery/summary if a later notification fired after unmute.
         pending.set(ev.incident_key, {
-          ...ev,
-          created_at: existing.created_at,
+          ev: {
+            ...ev,
+            created_at: existing.ev.created_at,
+          },
+          eventIds: [...existing.eventIds, ev.id],
         });
       } else {
-        pending.set(ev.incident_key, ev);
+        pending.set(ev.incident_key, { ev, eventIds: [ev.id] });
       }
 
       continue;
@@ -46,30 +53,33 @@ export function pairIncidentEvents(
 
     const started = pending.get(ev.incident_key);
     pending.delete(ev.incident_key);
-    const startedAt = started?.created_at ?? ev.created_at;
+    const startedEv = started?.ev;
+    const startedAt = startedEv?.created_at ?? ev.created_at;
     records.push({
       id: ev.id,
+      event_ids: [...(started?.eventIds ?? []), ev.id],
       incident_key: ev.incident_key,
       target_type: ev.target_type,
       target_id: ev.target_id,
-      label: started?.label ?? ev.label,
+      label: startedEv?.label ?? ev.label,
       state: "resolved",
       started_at: startedAt,
       resolved_at: ev.created_at,
-      duration_secs: started ? Math.max(0, ev.created_at - startedAt) : null,
-      summary: started?.summary ?? ev.summary,
-      resolved_summary: started ? ev.summary : null,
-      firing_delivery: started?.delivery ?? ev.delivery,
-      resolved_delivery: started ? ev.delivery : null,
+      duration_secs: startedEv ? Math.max(0, ev.created_at - startedAt) : null,
+      summary: startedEv?.summary ?? ev.summary,
+      resolved_summary: startedEv ? ev.summary : null,
+      firing_delivery: startedEv?.delivery ?? ev.delivery,
+      resolved_delivery: startedEv ? ev.delivery : null,
     });
   }
 
-  for (const ev of pending.values()) {
+  for (const { ev, eventIds } of pending.values()) {
     if (activeKeys.has(ev.incident_key)) {
       continue;
     }
     records.push({
       id: ev.id,
+      event_ids: eventIds,
       incident_key: ev.incident_key,
       target_type: ev.target_type,
       target_id: ev.target_id,

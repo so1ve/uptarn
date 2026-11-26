@@ -1971,6 +1971,57 @@ export async function demoApiFetch<T = Record<string, unknown>>(
     return { ok: true, acknowledged_at: target.acknowledged_at } as T;
   }
 
+  if (pathname === "/api/v1/admin/incidents/dismiss" && method === "POST") {
+    const key = String(payload.incident_key ?? "");
+    const idx = snap.incidents.findIndex((i) => i.incident_key === key);
+    if (idx === -1) {
+      throw new ApiError(404, "Incident not found");
+    }
+    const target = snap.incidents[idx];
+    const since = target.opened_at ?? target.last_changed_at;
+    snap.incidents.splice(idx, 1);
+    snap.events = snap.events.filter(
+      (ev) =>
+        ev.incident_key !== key ||
+        ev.kind !== "firing" ||
+        ev.created_at < since,
+    );
+    snap.incident_notes = (snap.incident_notes ?? []).filter(
+      (n) => n.incident_key !== key || n.created_at < since,
+    );
+
+    return { ok: true } as T;
+  }
+
+  if (
+    pathname === "/api/v1/admin/incidents/history/delete" &&
+    method === "POST"
+  ) {
+    const eventIds = new Set(
+      Array.isArray(payload.event_ids)
+        ? payload.event_ids.map((v) => Number(v))
+        : [],
+    );
+    const noteIds = new Set(
+      Array.isArray(payload.note_ids)
+        ? payload.note_ids.map((v) => String(v))
+        : [],
+    );
+    const before = snap.events.length;
+    snap.events = snap.events.filter((ev) => !eventIds.has(ev.id));
+    const deleted = before - snap.events.length;
+    if (deleted === 0) {
+      throw new ApiError(404, "Incident history not found");
+    }
+    if (noteIds.size > 0) {
+      snap.incident_notes = (snap.incident_notes ?? []).filter(
+        (n) => !noteIds.has(n.id),
+      );
+    }
+
+    return { ok: true, deleted } as T;
+  }
+
   if (pathname === "/api/v1/admin/incident-notes" && method === "POST") {
     const incidentKey = String(payload.incident_key ?? "").trim();
     const message = String(payload.message ?? "").trim();

@@ -64,6 +64,63 @@ export async function setIncidentAcknowledged(
   return { found: res.changes > 0, acknowledged_at: ackAt };
 }
 
+export async function dismissIncident(
+  db: SqlDatabase,
+  incidentKey: string,
+): Promise<boolean> {
+  const existing = await db.first<{
+    opened_at: number | null;
+    last_changed_at: number;
+  }>(
+    "SELECT opened_at, last_changed_at FROM alert_states WHERE incident_key = ?1",
+    [incidentKey],
+  );
+  if (!existing) {
+    return false;
+  }
+  const since = existing.opened_at ?? existing.last_changed_at;
+  await db.batch([
+    {
+      sql: "DELETE FROM alert_states WHERE incident_key = ?1",
+      params: [incidentKey],
+    },
+    {
+      sql: "DELETE FROM alert_events WHERE incident_key = ?1 AND kind = 'firing' AND created_at >= ?2",
+      params: [incidentKey, since],
+    },
+    {
+      sql: "DELETE FROM incident_notes WHERE incident_key = ?1 AND created_at >= ?2",
+      params: [incidentKey, since],
+    },
+  ]);
+
+  return true;
+}
+
+export async function deleteIncidentHistory(
+  db: SqlDatabase,
+  eventIds: readonly number[],
+  noteIds: readonly string[] = [],
+): Promise<number> {
+  if (eventIds.length === 0) {
+    return 0;
+  }
+  const eventPlaceholders = eventIds.map((_, idx) => `?${idx + 1}`).join(", ");
+  const res = await db.run(
+    `DELETE FROM alert_events WHERE id IN (${eventPlaceholders})`,
+    [...eventIds],
+  );
+  if (res.changes > 0 && noteIds.length > 0) {
+    const notePlaceholders = noteIds.map((_, idx) => `?${idx + 1}`).join(", ");
+    await db.run(
+      `DELETE FROM incident_notes WHERE id IN (${notePlaceholders})`,
+      [...noteIds],
+    );
+  }
+
+  return res.changes;
+}
+
 // Prevent Telegram from turning domain names inside alert titles into blue links.
 const defangDomain = (text: string): string =>
   text.replace(/([a-z0-9])\.(?=[a-z0-9])/gi, "$1.\u200B");

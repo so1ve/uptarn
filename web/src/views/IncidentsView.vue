@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 
 import IncidentTimeline from "../components/incidents/IncidentTimeline.vue";
 import IncidentReportModal from "../components/modals/IncidentReportModal.vue";
+import ConfirmPopover from "../components/ui/ConfirmPopover.vue";
 import EmptyState from "../components/ui/EmptyState.vue";
 import MuteButton from "../components/ui/MuteButton.vue";
 import MutedBadge from "../components/ui/MutedBadge.vue";
@@ -165,6 +166,7 @@ type UnifiedHistoryItem =
       targetName: string;
       to: string;
       delivery: ReturnType<typeof deliveryStatus>;
+      noteIds: string[];
       timeline: TimelineEntry[];
     };
 
@@ -280,6 +282,7 @@ const allHistoryItems = computed<UnifiedHistoryItem[]>(() => {
       targetName: targetEntityName(rec.target_type, rec.target_id),
       to: incidentTargetPath(rec.target_type, rec.target_id),
       delivery: deliveryStatus(rec.firing_delivery, rec.resolved_delivery),
+      noteIds: notes.map((n) => n.id),
       timeline: historyRecordTimeline(rec, notes),
     });
   }
@@ -485,6 +488,35 @@ function onToggleBanner(inc: IncidentSummary) {
     true,
   );
 }
+
+const onDismissActive = (inc: IncidentSummary) =>
+  run(
+    `dismiss:${inc.incident_key}`,
+    "Could not dismiss incident",
+    async () => {
+      await apiFetch("/api/v1/admin/incidents/dismiss", "POST", {
+        incident_key: inc.incident_key,
+      });
+
+      return "Incident dismissed";
+    },
+    true,
+  );
+
+const onDeleteHistory = (rec: IncidentHistoryRecord, noteIds: string[]) =>
+  run(
+    `delhist:${rec.id}`,
+    "Could not delete incident",
+    async () => {
+      await apiFetch("/api/v1/admin/incidents/history/delete", "POST", {
+        event_ids: rec.event_ids,
+        note_ids: noteIds,
+      });
+
+      return "Incident deleted from history";
+    },
+    true,
+  );
 
 function timelineBusyKey(prefix: string): string | null {
   if (!busy.value?.startsWith(`${prefix}:`)) {
@@ -742,6 +774,16 @@ function timelineBusyKey(prefix: string): string | null {
                     :target-id="item.inc.target_id"
                     :target-type="item.inc.target_type"
                   />
+                  <ConfirmPopover
+                    color="error"
+                    confirm-label="Dismiss"
+                    label="Dismiss"
+                    :loading="busy === `dismiss:${item.inc.incident_key}`"
+                    @confirm="onDismissActive(item.inc)"
+                  >
+                    Dismiss this active incident? If the target is still
+                    failing, it will reappear on the next check.
+                  </ConfirmPopover>
                 </div>
               </div>
             </div>
@@ -1031,7 +1073,7 @@ function timelineBusyKey(prefix: string): string | null {
                     @edit="(p) => onEditAutoNote(item.rec.incident_key, p)"
                   />
 
-                  <div class="flex items-center justify-between pt-1">
+                  <div class="flex items-center justify-between gap-2 pt-1">
                     <RouterLink
                       class="inline-flex items-center gap-1 text-xs font-medium text-muted transition-colors hover:text-primary"
                       :to="item.to"
@@ -1039,6 +1081,16 @@ function timelineBusyKey(prefix: string): string | null {
                       <span>Open {{ item.targetName }}</span>
                       <UIcon class="size-3.5" name="i-lucide-arrow-up-right" />
                     </RouterLink>
+
+                    <ConfirmPopover
+                      color="error"
+                      confirm-label="Delete"
+                      label="Delete"
+                      :loading="busy === `delhist:${item.rec.id}`"
+                      @confirm="onDeleteHistory(item.rec, item.noteIds)"
+                    >
+                      Delete this incident from history?
+                    </ConfirmPopover>
                   </div>
                 </div>
               </div>
