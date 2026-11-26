@@ -7,6 +7,7 @@ export default defineConfig({
       "test/portable.test.ts",
       "test/runtime-settings.test.ts",
       "test/deploy-worker.test.ts",
+      "test/write-optimization.test.ts",
       "test/cli.test.ts",
     ],
   },

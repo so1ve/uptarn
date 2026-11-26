@@ -1,5 +1,5 @@
 import { hmacSha256Hex } from "../auth/index.ts";
-import type { SqlDatabase, SqlStatement } from "../db/index.ts";
+import type { SqlDatabase, SqlParam, SqlStatement } from "../db/index.ts";
 import { readBoundedText } from "../http.ts";
 import type { NotificationChannelName, TargetType } from "../shared/index.ts";
 import {
@@ -365,27 +365,59 @@ export async function buildAlertStatements(
         }
       }
 
-      statements.push({
-        sql: `INSERT INTO alert_states
-              (incident_key, target_type, target_id, label, state, consecutive_failures, opened_at, notified_open, last_changed_at, last_summary)
-              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-              ON CONFLICT(incident_key) DO UPDATE SET
-                label = excluded.label, state = excluded.state, consecutive_failures = excluded.consecutive_failures,
-                opened_at = excluded.opened_at, notified_open = excluded.notified_open,
-                last_changed_at = excluded.last_changed_at, last_summary = excluded.last_summary`,
-        params: [
-          obs.incidentKey,
-          obs.targetType,
-          obs.targetId,
+      if (!prev) {
+        statements.push({
+          sql: `INSERT INTO alert_states
+                (incident_key, target_type, target_id, label, state, consecutive_failures, opened_at, notified_open, last_changed_at, last_summary)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
+          params: [
+            obs.incidentKey,
+            obs.targetType,
+            obs.targetId,
+            obs.label,
+            nextState,
+            failures,
+            openedAt,
+            notifiedOpen,
+            now,
+            obs.summary,
+          ],
+        });
+      } else if (
+        prev.state !== "open" ||
+        nextState !== "open" ||
+        prev.notified_open !== notifiedOpen ||
+        prev.label !== obs.label ||
+        prev.last_summary !== obs.summary
+      ) {
+        const sets: string[] = [
+          "label = ?1",
+          "opened_at = ?2",
+          "notified_open = ?3",
+          "last_changed_at = ?4",
+          "last_summary = ?5",
+        ];
+        const params: SqlParam[] = [
           obs.label,
-          nextState,
-          failures,
           openedAt,
           notifiedOpen,
-          prev?.state === nextState ? prev.last_changed_at : now,
+          prev.state === nextState ? prev.last_changed_at : now,
           obs.summary,
-        ],
-      });
+        ];
+        if (prev.state !== nextState) {
+          params.push(nextState);
+          sets.push(`state = ?${params.length}`);
+        }
+        if (prev.state !== "open") {
+          params.push(failures);
+          sets.push(`consecutive_failures = ?${params.length}`);
+        }
+        params.push(obs.incidentKey);
+        statements.push({
+          sql: `UPDATE alert_states SET ${sets.join(", ")} WHERE incident_key = ?${params.length}`,
+          params,
+        });
+      }
     } else if (prev) {
       if (prev.notified_open === 1 && !isMuted) {
         const dur =

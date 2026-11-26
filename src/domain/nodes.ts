@@ -4,7 +4,7 @@ import {
   timingSafeEqualText,
 } from "../auth/index.ts";
 import type { LoadedConfig } from "../config.ts";
-import type { SqlDatabase, SqlStatement } from "../db/index.ts";
+import type { SqlDatabase, SqlParam, SqlStatement } from "../db/index.ts";
 import { httpError } from "../http.ts";
 import type {
   JobRunStatus,
@@ -398,6 +398,8 @@ interface ManagedJobRow {
   next_run_at: number | null;
   last_status: JobRunStatus;
   last_duration_ms: number | null;
+  last_summary: string | null;
+  last_detail: string | null;
 }
 
 function buildManagedJobStatements(
@@ -432,42 +434,80 @@ function buildManagedJobStatements(
     const summary = spec.summary === undefined ? null : spec.summary;
     const detail = spec.detail === undefined ? null : spec.detail;
 
-    statements.push({
-      sql: `INSERT INTO jobs (
-              key, node_id, managed_by_node_id, ping_token_hash, label,
-              schedule, interval_secs, grace_secs, muted_until, created_at,
-              started_at, last_run_at, next_run_at, last_status,
-              last_duration_ms, last_summary, last_detail
-            ) VALUES (?1, ?2, ?2, NULL, ?3, ?4, NULL, 3600, 0, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
-            ON CONFLICT(key) DO UPDATE SET
-              node_id = excluded.node_id,
-              managed_by_node_id = excluded.managed_by_node_id,
-              ping_token_hash = NULL,
-              label = excluded.label,
-              schedule = excluded.schedule,
-              interval_secs = NULL,
-              started_at = excluded.started_at,
-              last_run_at = excluded.last_run_at,
-              next_run_at = excluded.next_run_at,
-              last_status = excluded.last_status,
-              last_duration_ms = excluded.last_duration_ms,
-              last_summary = excluded.last_summary,
-              last_detail = excluded.last_detail`,
-      params: [
-        key,
-        nodeId,
-        label,
-        schedule,
-        createdAt,
-        startedAt,
-        lastRunAt,
-        nextRunAt,
-        spec.status,
-        durationMs,
-        summary,
-        detail,
-      ],
-    });
+    if (!prev) {
+      statements.push({
+        sql: `INSERT INTO jobs (
+                key, node_id, managed_by_node_id, ping_token_hash, label,
+                schedule, interval_secs, grace_secs, muted_until, created_at,
+                started_at, last_run_at, next_run_at, last_status,
+                last_duration_ms, last_summary, last_detail
+              ) VALUES (?1, ?2, ?2, NULL, ?3, ?4, NULL, 3600, 0, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+              ON CONFLICT(key) DO UPDATE SET
+                node_id = excluded.node_id,
+                managed_by_node_id = excluded.managed_by_node_id,
+                ping_token_hash = NULL,
+                label = excluded.label,
+                schedule = excluded.schedule,
+                interval_secs = NULL,
+                started_at = excluded.started_at,
+                last_run_at = excluded.last_run_at,
+                next_run_at = excluded.next_run_at,
+                last_status = excluded.last_status,
+                last_duration_ms = excluded.last_duration_ms,
+                last_summary = excluded.last_summary,
+                last_detail = excluded.last_detail`,
+        params: [
+          key,
+          nodeId,
+          label,
+          schedule,
+          createdAt,
+          startedAt,
+          lastRunAt,
+          nextRunAt,
+          spec.status,
+          durationMs,
+          summary,
+          detail,
+        ],
+      });
+    } else if (
+      prev.label !== label ||
+      prev.schedule !== schedule ||
+      prev.started_at !== startedAt ||
+      prev.last_run_at !== lastRunAt ||
+      prev.next_run_at !== nextRunAt ||
+      prev.last_status !== spec.status ||
+      prev.last_duration_ms !== durationMs ||
+      prev.last_summary !== summary ||
+      prev.last_detail !== detail
+    ) {
+      statements.push({
+        sql: `UPDATE jobs
+              SET label = ?1,
+                  schedule = ?2,
+                  started_at = ?3,
+                  last_run_at = ?4,
+                  next_run_at = ?5,
+                  last_status = ?6,
+                  last_duration_ms = ?7,
+                  last_summary = ?8,
+                  last_detail = ?9
+              WHERE key = ?10`,
+        params: [
+          label,
+          schedule,
+          startedAt,
+          lastRunAt,
+          nextRunAt,
+          spec.status,
+          durationMs,
+          summary,
+          detail,
+          key,
+        ],
+      });
+    }
 
     const targetMutedUntil = prev?.muted_until ?? 0;
     if (spec.status === "fail" || spec.status === "overdue") {
@@ -653,7 +693,8 @@ export async function ingestNodeReport(
     batchQueries.push(
       {
         sql: `SELECT key, label, schedule, muted_until, created_at,
-                     started_at, last_run_at, next_run_at, last_status, last_duration_ms
+                     started_at, last_run_at, next_run_at, last_status, last_duration_ms,
+                     last_summary, last_detail
               FROM jobs WHERE managed_by_node_id = ?1`,
         params: [payload.node_id],
       },
@@ -769,36 +810,79 @@ export async function ingestNodeReport(
   }
   const sparkJson = appendNodeSpark(existing?.spark_json, sampleValues, now);
 
-  const statements: SqlStatement[] = [
-    {
+  const systemJson = payload.system ? JSON.stringify(payload.system) : null;
+  const mountsJson = JSON.stringify(mounts);
+  const checksJson = JSON.stringify(checks);
+  const seriesJson = JSON.stringify(series);
+  const infoJson = JSON.stringify(info);
+  const netAt = rxBytes === null ? null : now;
+  const agentVersion = payload.agent_version ?? null;
+
+  const statements: SqlStatement[] = [];
+  if (existing) {
+    const sets: string[] = [
+      "interval_secs = ?1",
+      "grace_secs = ?2",
+      "public_managed = ?3",
+      "last_seen_at = ?4",
+      "prev_rx_bytes = ?5",
+      "prev_tx_bytes = ?6",
+      "prev_net_at = COALESCE(?7, prev_net_at)",
+      "rx_bps = ?8",
+      "tx_bps = ?9",
+      "month_rx_bytes = ?10",
+      "month_tx_bytes = ?11",
+      "traffic_period_start = ?12",
+      "system_json = ?13",
+      "mounts_json = ?14",
+      "checks_json = ?15",
+      "series_json = ?16",
+      "info_json = ?17",
+      "spark_json = ?18",
+      "agent_version = COALESCE(?19, agent_version)",
+    ];
+    const params: SqlParam[] = [
+      intervalSecs,
+      graceSecs,
+      publicManaged,
+      now,
+      rxBytes,
+      txBytes,
+      netAt,
+      rxBps,
+      txBps,
+      monthRx,
+      monthTx,
+      periodStart,
+      systemJson,
+      mountsJson,
+      checksJson,
+      seriesJson,
+      infoJson,
+      sparkJson,
+      agentVersion,
+    ];
+    if (label !== existing.label) {
+      params.push(label);
+      sets.push(`label = ?${params.length}`);
+    }
+    if (publicManaged === 1 && isPublic !== existing.is_public) {
+      params.push(isPublic);
+      sets.push(`is_public = ?${params.length}`);
+    }
+    params.push(nodeId);
+    statements.push({
+      sql: `UPDATE nodes SET ${sets.join(", ")} WHERE id = ?${params.length}`,
+      params,
+    });
+  } else {
+    statements.push({
       sql: `INSERT INTO nodes (
               id, label, token_hash, interval_secs, grace_secs, is_public, public_managed, sort_order, created_at,
               last_seen_at, prev_rx_bytes, prev_tx_bytes, prev_net_at,
               rx_bps, tx_bps, month_rx_bytes, month_tx_bytes, traffic_period_start,
               system_json, mounts_json, checks_json, series_json, info_json, spark_json, agent_version
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, COALESCE((SELECT MAX(sort_order) + 1 FROM nodes), 0), ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)
-            ON CONFLICT(id) DO UPDATE SET
-              label = excluded.label,
-              interval_secs = excluded.interval_secs,
-              grace_secs = excluded.grace_secs,
-              is_public = CASE WHEN excluded.public_managed = 1 THEN excluded.is_public ELSE nodes.is_public END,
-              public_managed = excluded.public_managed,
-              last_seen_at = excluded.last_seen_at,
-              prev_rx_bytes = excluded.prev_rx_bytes,
-              prev_tx_bytes = excluded.prev_tx_bytes,
-              prev_net_at = COALESCE(excluded.prev_net_at, nodes.prev_net_at),
-              rx_bps = excluded.rx_bps,
-              tx_bps = excluded.tx_bps,
-              month_rx_bytes = excluded.month_rx_bytes,
-              month_tx_bytes = excluded.month_tx_bytes,
-              traffic_period_start = excluded.traffic_period_start,
-              system_json = excluded.system_json,
-              mounts_json = excluded.mounts_json,
-              checks_json = excluded.checks_json,
-              series_json = excluded.series_json,
-              info_json = excluded.info_json,
-              spark_json = excluded.spark_json,
-              agent_version = COALESCE(excluded.agent_version, nodes.agent_version)`,
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, COALESCE((SELECT MAX(sort_order) + 1 FROM nodes), 0), ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)`,
       params: [
         nodeId,
         label,
@@ -811,22 +895,22 @@ export async function ingestNodeReport(
         now,
         rxBytes,
         txBytes,
-        rxBytes === null ? null : now,
+        netAt,
         rxBps,
         txBps,
         monthRx,
         monthTx,
         periodStart,
-        payload.system ? JSON.stringify(payload.system) : null,
-        JSON.stringify(mounts),
-        JSON.stringify(checks),
-        JSON.stringify(series),
-        JSON.stringify(info),
+        systemJson,
+        mountsJson,
+        checksJson,
+        seriesJson,
+        infoJson,
         sparkJson,
-        payload.agent_version ?? null,
+        agentVersion,
       ],
-    },
-  ];
+    });
+  }
   let monitorObservations: AlertObservation[] = [];
   if (payload.monitors !== undefined) {
     const managed = buildManagedMonitorStatements(
