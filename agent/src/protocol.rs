@@ -15,6 +15,7 @@ pub enum JobRunStatus {
     Running,
     Ok,
     Fail,
+    Overdue,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,10 +177,9 @@ pub struct JobSnapshot {
     pub key: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
-    pub status: JobRunStatus,
-    pub interval_secs: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub grace_secs: Option<u64>,
+    pub schedule: Option<String>,
+    pub status: JobRunStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_run_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]

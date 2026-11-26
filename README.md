@@ -165,7 +165,7 @@ path = "/volume2"
 label = "Volume 2"
 ```
 
-OpenWrt router / dynamic collectors example with `[[collectors]]` and `check_dirs`:
+OpenWrt router / dynamic collectors example with `[[collectors]]` and `collector_dirs`:
 
 ```toml
 hub_url = "https://status.example.com"

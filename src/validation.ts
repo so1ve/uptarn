@@ -45,6 +45,7 @@ const JOB_RUN_STATUSES = [
   "running",
   "ok",
   "fail",
+  "overdue",
 ] as const satisfies readonly JobRunStatus[];
 const TARGETS = [
   "node",
@@ -244,14 +245,9 @@ export function parseNodeReportPayload(raw: unknown): NodeReportPayload {
       return {
         key,
         label: str(j.label, `${p}.label`, 80),
+        schedule:
+          j.schedule === null ? null : str(j.schedule, `${p}.schedule`, 64),
         status: reqOneOf(j.status, `${p}.status`, JOB_RUN_STATUSES),
-        interval_secs: reqInt(
-          j.interval_secs,
-          `${p}.interval_secs`,
-          30,
-          2_592_000,
-        ),
-        grace_secs: int(j.grace_secs, `${p}.grace_secs`, 30, 604_800),
         last_run_at:
           j.last_run_at === null
             ? null
@@ -325,30 +321,44 @@ export function parseJobInput(raw: JobInput | unknown) {
   return {
     key,
     label,
-    interval_secs: reqInt(obj.interval_secs, "interval_secs", 30, 2_592_000),
+    schedule: str(obj.schedule, "schedule", 64) ?? null,
+    interval_secs:
+      int(obj.interval_secs, "interval_secs", 30, 2_592_000) ?? null,
     grace_secs: int(obj.grace_secs, "grace_secs", 30, 604_800) ?? 3600,
   };
 }
 
 export function parseJobPatch(raw: unknown): {
   label?: string;
-  interval_secs?: number;
+  schedule?: string | null;
+  interval_secs?: number | null;
   grace_secs?: number;
 } {
   const obj = asObj(raw, "job patch");
   const label = str(obj.label, "label", 80);
-  const intervalSecs = int(obj.interval_secs, "interval_secs", 30, 2_592_000);
+  const schedule = Object.hasOwn(obj, "schedule")
+    ? (str(obj.schedule, "schedule", 64) ?? null)
+    : undefined;
+  const intervalSecs = Object.hasOwn(obj, "interval_secs")
+    ? obj.interval_secs === null
+      ? null
+      : int(obj.interval_secs, "interval_secs", 30, 2_592_000)
+    : undefined;
   const graceSecs = int(obj.grace_secs, "grace_secs", 30, 604_800);
   if (
     label === undefined &&
+    schedule === undefined &&
     intervalSecs === undefined &&
     graceSecs === undefined
   ) {
-    bad("At least one of label, interval_secs, or grace_secs is required");
+    bad(
+      "At least one of label, schedule, interval_secs, or grace_secs is required",
+    );
   }
 
   return {
     ...(label === undefined ? {} : { label }),
+    ...(schedule === undefined ? {} : { schedule }),
     ...(intervalSecs === undefined ? {} : { interval_secs: intervalSecs }),
     ...(graceSecs === undefined ? {} : { grace_secs: graceSecs }),
   };

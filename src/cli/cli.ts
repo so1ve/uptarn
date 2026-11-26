@@ -905,10 +905,14 @@ export function createCli() {
         type: nonEmptyString,
         description: "Optional custom job key",
       },
+      schedule: {
+        type: nonEmptyString,
+        description: "Optional human-readable schedule (e.g. 'Daily 03:00')",
+      },
       interval: {
         type: jobIntervalSecs,
-        default: 86_400,
-        description: "Expected run interval in seconds (default: 86400)",
+        description:
+          "Optional watchdog interval in seconds (enables overdue alerts)",
       },
       grace: {
         type: jobGraceSecs,
@@ -926,7 +930,8 @@ export function createCli() {
       }>("POST", "/api/v1/admin/jobs", {
         key: ctx.flags.key,
         label: ctx.args.label,
-        interval_secs: ctx.flags.interval,
+        schedule: ctx.flags.schedule,
+        interval_secs: ctx.flags.interval ?? null,
         grace_secs: ctx.flags.grace,
       });
       emitJsonOr(ctx, res, () => {
@@ -945,10 +950,15 @@ export function createCli() {
         group: "fields",
         description: "New display label",
       },
-      interval: {
-        type: jobIntervalSecs,
+      schedule: {
+        type: String,
         group: "fields",
-        description: "Expected run interval in seconds",
+        description: "Schedule description (pass empty string to clear)",
+      },
+      interval: {
+        type: nonNegativeInt,
+        group: "fields",
+        description: "Watchdog interval in seconds (0 disables overdue alerts)",
       },
       grace: {
         type: jobGraceSecs,
@@ -961,9 +971,15 @@ export function createCli() {
     async run(ctx) {
       const patch = {
         ...(ctx.flags.label === undefined ? {} : { label: ctx.flags.label }),
+        ...(ctx.flags.schedule === undefined
+          ? {}
+          : { schedule: ctx.flags.schedule.trim() || null }),
         ...(ctx.flags.interval === undefined
           ? {}
-          : { interval_secs: ctx.flags.interval }),
+          : {
+              interval_secs:
+                ctx.flags.interval === 0 ? null : ctx.flags.interval,
+            }),
         ...(ctx.flags.grace === undefined
           ? {}
           : { grace_secs: ctx.flags.grace }),

@@ -1013,6 +1013,7 @@ function createInitialState(): DemoState {
       node_id: null,
       managed_by_node_id: null,
       label: "TLS Certificate Sync",
+      schedule: "Daily 02:00 UTC",
       interval_secs: 86_400,
       grace_secs: 3600,
       muted_until: 0,
@@ -1032,8 +1033,9 @@ function createInitialState(): DemoState {
       node_id: "edge-sg-01",
       managed_by_node_id: "edge-sg-01",
       label: "PostgreSQL Snapshot",
-      interval_secs: 21_600,
-      grace_secs: 1800,
+      schedule: "Every 6h",
+      interval_secs: null,
+      grace_secs: 3600,
       muted_until: 0,
       created_at: now - 20 * 86_400,
       started_at: null,
@@ -1051,8 +1053,9 @@ function createInitialState(): DemoState {
       node_id: "lab-01",
       managed_by_node_id: "lab-01",
       label: "Nightly Restic Backup",
-      interval_secs: 86_400,
-      grace_secs: 7200,
+      schedule: "Daily 03:00",
+      interval_secs: null,
+      grace_secs: 3600,
       muted_until: 0,
       created_at: now - 45 * 86_400,
       started_at: null,
@@ -1646,7 +1649,12 @@ export async function demoApiFetch<T = Record<string, unknown>>(
     if (snap.jobs.some((j) => j.key === key)) {
       throw new ApiError(409, `Job "${key}" already exists`);
     }
-    const intervalSecs = Number(payload.interval_secs ?? 86_400);
+    const schedule =
+      typeof payload.schedule === "string" && payload.schedule.trim()
+        ? payload.schedule.trim()
+        : null;
+    const intervalSecs =
+      typeof payload.interval_secs === "number" ? payload.interval_secs : null;
     const graceSecs = Number(payload.grace_secs ?? 3600);
     const token = `uptn_job_demo_${Math.random().toString(36).slice(2, 12)}`;
     snap.jobs.push({
@@ -1654,6 +1662,7 @@ export async function demoApiFetch<T = Record<string, unknown>>(
       node_id: null,
       managed_by_node_id: null,
       label,
+      schedule,
       interval_secs: intervalSecs,
       grace_secs: graceSecs,
       muted_until: 0,
@@ -1666,7 +1675,7 @@ export async function demoApiFetch<T = Record<string, unknown>>(
       last_duration_ms: null,
       last_summary: null,
       last_detail: null,
-      next_due_at: now + intervalSecs,
+      next_due_at: intervalSecs === null ? null : now + intervalSecs,
     });
     snap.jobs.sort((a, b) => a.key.localeCompare(b.key));
 
@@ -1722,10 +1731,21 @@ export async function demoApiFetch<T = Record<string, unknown>>(
       if (typeof payload.label === "string" && payload.label.trim()) {
         job.label = payload.label.trim();
       }
-      if (typeof payload.interval_secs === "number") {
-        job.interval_secs = payload.interval_secs;
+      if (Object.hasOwn(payload, "schedule")) {
+        job.schedule =
+          typeof payload.schedule === "string" && payload.schedule.trim()
+            ? payload.schedule.trim()
+            : null;
+      }
+      if (Object.hasOwn(payload, "interval_secs")) {
+        job.interval_secs =
+          typeof payload.interval_secs === "number"
+            ? payload.interval_secs
+            : null;
         job.next_due_at =
-          (job.last_run_at ?? job.created_at) + job.interval_secs;
+          job.interval_secs === null
+            ? null
+            : (job.last_run_at ?? job.created_at) + job.interval_secs;
       }
       if (typeof payload.grace_secs === "number") {
         job.grace_secs = payload.grace_secs;

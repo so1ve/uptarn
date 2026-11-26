@@ -52,13 +52,19 @@ function onIssuedPing(payload: {
 }
 
 function jobSchedule(job: JobSummary): string {
-  const parts = [`Every ${formatDuration(job.interval_secs)}`];
+  const parts: string[] = [];
+  if (job.schedule) {
+    parts.push(job.schedule);
+  } else if (job.interval_secs !== null) {
+    parts.push(`Every ${formatDuration(job.interval_secs)}`);
+  }
   if (job.last_duration_ms !== null) {
     parts.push(formatMs(job.last_duration_ms));
   }
   if (
     job.overall_status !== "overdue" &&
     job.overall_status !== "fail" &&
+    job.next_due_at !== null &&
     job.next_due_at > snap.value.now
   ) {
     parts.push(`next in ${formatRemaining(job.next_due_at, snap.value.now)}`);

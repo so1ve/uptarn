@@ -109,8 +109,11 @@ export async function runTick(
       sql: "SELECT id, label, interval_secs, grace_secs, muted_until, last_seen_at FROM nodes WHERE last_seen_at IS NOT NULL",
     },
     {
-      sql: `SELECT key, label, interval_secs, grace_secs, muted_until, created_at, last_run_at, next_run_at, last_status
-            FROM jobs WHERE last_status != 'fail'`,
+      sql: `SELECT key, label, managed_by_node_id, interval_secs, grace_secs, muted_until, created_at, last_run_at, next_run_at, last_status
+            FROM jobs
+            WHERE managed_by_node_id IS NULL
+              AND interval_secs IS NOT NULL
+              AND last_status NOT IN ('fail', 'overdue')`,
     },
     { sql: `SELECT ${ALERT_STATE_COLUMNS} FROM alert_states` },
     { sql: SELECT_ACTIVE_MAINTENANCES_SQL, params: [now] },
@@ -226,7 +229,8 @@ export async function runTick(
   }
 
   for (const job of jobs) {
-    if (now > jobNextDueAt(job) + job.grace_secs) {
+    const dueAt = jobNextDueAt(job);
+    if (dueAt !== null && now > dueAt + job.grace_secs) {
       observations.push({
         incidentKey: `job:${job.key}`,
         targetType: "job",

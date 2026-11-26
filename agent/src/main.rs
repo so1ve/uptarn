@@ -599,7 +599,7 @@ target = "127.0.0.1:5432"
         write_test_file(
             dir.path().join("10-jobs.sh"),
             r#"#!/bin/sh
-printf '%s' '{"jobs":[{"key":"restic","label":"Restic Backup","status":"ok","interval_secs":86400,"last_run_at":1700000000,"next_run_at":1700086400,"duration_ms":4200,"summary":"4.2s"}]}'
+printf '%s' '{"jobs":[{"key":"restic","label":"Restic Backup","status":"ok","schedule":"Daily 03:00","last_run_at":1700000000,"next_run_at":1700086400,"duration_ms":4200,"summary":"4.2s"}]}'
 "#,
             true,
         );
@@ -626,6 +626,7 @@ enabled = false
         assert_eq!(report.jobs.len(), 1);
         assert_eq!(report.jobs[0].key, "restic");
         assert_eq!(report.jobs[0].status, JobRunStatus::Ok);
+        assert_eq!(report.jobs[0].schedule.as_deref(), Some("Daily 03:00"));
         assert_eq!(report.jobs[0].next_run_at, Some(1_700_086_400));
 
         // Verify `run_job_wrapper` posts /start and /fail against a local HTTP

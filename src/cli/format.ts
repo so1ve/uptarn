@@ -486,8 +486,14 @@ export const renderJobsTable = (
         "right",
       ),
       col(
-        "INTERVAL",
-        (j) => theme.muted(formatDuration(j.interval_secs)),
+        "SCHEDULE",
+        (j) =>
+          theme.muted(
+            j.schedule ??
+              (j.interval_secs === null
+                ? "-"
+                : `every ${formatDuration(j.interval_secs)}`),
+          ),
         "right",
       ),
       col("SUMMARY", (j) => mutedOr(theme, j.last_summary)),
@@ -512,22 +518,29 @@ export function renderJobDetail(
           job.managed_by_node_id ? `agent (${job.managed_by_node_id})` : "push",
         ),
       ],
+      job.schedule ? ["Schedule", job.schedule] : false,
       [
         "Last run",
         job.last_run_at === null
           ? theme.muted("never")
           : formatAge(job.last_run_at, now),
       ],
-      [
-        "Next due",
-        job.next_due_at > now
-          ? `in ${formatRemaining(job.next_due_at, now)}`
-          : theme.error(`overdue by ${formatDuration(now - job.next_due_at)}`),
-      ],
-      [
-        "Interval / Grace",
-        `${formatDuration(job.interval_secs)} / ${formatDuration(job.grace_secs)}`,
-      ],
+      job.next_due_at === null
+        ? false
+        : [
+            "Next due",
+            job.next_due_at > now
+              ? `in ${formatRemaining(job.next_due_at, now)}`
+              : theme.error(
+                  `overdue by ${formatDuration(now - job.next_due_at)}`,
+                ),
+          ],
+      job.interval_secs === null
+        ? false
+        : [
+            "Watchdog",
+            `every ${formatDuration(job.interval_secs)} (+${formatDuration(job.grace_secs)} grace)`,
+          ],
       [
         "Duration",
         job.last_duration_ms === null

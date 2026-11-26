@@ -24,7 +24,6 @@ import {
 } from "../shared/index.ts";
 import type { AlertObservation, AlertStateRow } from "./alerts.ts";
 import { ALERT_STATE_COLUMNS, buildAlertStatements } from "./alerts.ts";
-import { jobNextDueAt, jobOverdueSummary } from "./jobs.ts";
 import type { MaintenanceRow } from "./maintenances.ts";
 import {
   SELECT_ACTIVE_MAINTENANCES_SQL,
@@ -391,8 +390,7 @@ function buildManagedMonitorStatements(
 interface ManagedJobRow {
   key: string;
   label: string;
-  interval_secs: number;
-  grace_secs: number;
+  schedule: string | null;
   muted_until: number;
   created_at: number;
   started_at: number | null;
@@ -418,7 +416,7 @@ function buildManagedJobStatements(
     nextKeys.add(key);
     const prev = existingByKey.get(key);
     const label = spec.label ?? prev?.label ?? spec.key;
-    const graceSecs = spec.grace_secs ?? prev?.grace_secs ?? 3600;
+    const schedule = spec.schedule === undefined ? null : spec.schedule;
     const createdAt = prev?.created_at ?? now;
     const startedAt =
       spec.status === "running" ? (prev?.started_at ?? now) : null;
@@ -437,17 +435,17 @@ function buildManagedJobStatements(
     statements.push({
       sql: `INSERT INTO jobs (
               key, node_id, managed_by_node_id, ping_token_hash, label,
-              interval_secs, grace_secs, muted_until, created_at,
+              schedule, interval_secs, grace_secs, muted_until, created_at,
               started_at, last_run_at, next_run_at, last_status,
               last_duration_ms, last_summary, last_detail
-            ) VALUES (?1, ?2, ?2, NULL, ?3, ?4, ?5, 0, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            ) VALUES (?1, ?2, ?2, NULL, ?3, ?4, NULL, 3600, 0, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
             ON CONFLICT(key) DO UPDATE SET
               node_id = excluded.node_id,
               managed_by_node_id = excluded.managed_by_node_id,
               ping_token_hash = NULL,
               label = excluded.label,
-              interval_secs = excluded.interval_secs,
-              grace_secs = excluded.grace_secs,
+              schedule = excluded.schedule,
+              interval_secs = NULL,
               started_at = excluded.started_at,
               last_run_at = excluded.last_run_at,
               next_run_at = excluded.next_run_at,
@@ -459,8 +457,7 @@ function buildManagedJobStatements(
         key,
         nodeId,
         label,
-        spec.interval_secs,
-        graceSecs,
+        schedule,
         createdAt,
         startedAt,
         lastRunAt,
@@ -472,37 +469,16 @@ function buildManagedJobStatements(
       ],
     });
 
-    const dueAt = jobNextDueAt({
-      created_at: createdAt,
-      last_run_at: lastRunAt,
-      next_run_at: nextRunAt,
-      interval_secs: spec.interval_secs,
-    });
-    const isOverdue = now > dueAt + graceSecs;
     const targetMutedUntil = prev?.muted_until ?? 0;
-
-    if (spec.status === "fail") {
+    if (spec.status === "fail" || spec.status === "overdue") {
       observations.push({
         incidentKey: `job:${key}`,
         targetType: "job",
         targetId: key,
         label: `Job: ${label}`,
         failing: true,
-        summary: summary ?? "Job failed",
-        threshold: 1,
-        targetMutedUntil,
-      });
-    } else if (isOverdue) {
-      observations.push({
-        incidentKey: `job:${key}`,
-        targetType: "job",
-        targetId: key,
-        label: `Job: ${label}`,
-        failing: true,
-        summary: jobOverdueSummary(
-          { last_run_at: lastRunAt, interval_secs: spec.interval_secs },
-          now,
-        ),
+        summary:
+          summary ?? (spec.status === "overdue" ? "Job overdue" : "Job failed"),
         threshold: 1,
         targetMutedUntil,
       });
@@ -676,7 +652,7 @@ export async function ingestNodeReport(
   if (payload.jobs !== undefined) {
     batchQueries.push(
       {
-        sql: `SELECT key, label, interval_secs, grace_secs, muted_until, created_at,
+        sql: `SELECT key, label, schedule, muted_until, created_at,
                      started_at, last_run_at, next_run_at, last_status, last_duration_ms
               FROM jobs WHERE managed_by_node_id = ?1`,
         params: [payload.node_id],

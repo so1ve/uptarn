@@ -20,7 +20,8 @@ export interface JobRow {
   managed_by_node_id: string | null;
   ping_token_hash: string | null;
   label: string;
-  interval_secs: number;
+  schedule: string | null;
+  interval_secs: number | null;
   grace_secs: number;
   muted_until: number;
   created_at: number;
@@ -36,36 +37,54 @@ export interface JobRow {
 export type JobPingAction = "ok" | "start" | "fail";
 
 export interface JobDueFields {
+  managed_by_node_id: string | null;
   created_at: number;
   last_run_at: number | null;
   next_run_at: number | null;
-  interval_secs: number;
+  interval_secs: number | null;
 }
 
-export const jobNextDueAt = (job: JobDueFields): number =>
-  job.next_run_at ?? (job.last_run_at ?? job.created_at) + job.interval_secs;
+export function jobNextDueAt(job: JobDueFields): number | null {
+  if (job.managed_by_node_id !== null) {
+    return job.next_run_at;
+  }
+  if (job.interval_secs === null) {
+    return null;
+  }
+
+  return (job.last_run_at ?? job.created_at) + job.interval_secs;
+}
 
 export function jobOverallStatus(
   job: JobDueFields & { grace_secs: number; last_status: JobRunStatus },
   now: number,
 ): JobOverallStatus {
-  if (job.last_status === "fail") {
-    return "fail";
+  if (job.managed_by_node_id !== null) {
+    return job.last_status;
   }
-  if (now > jobNextDueAt(job) + job.grace_secs) {
+  if (job.last_status === "fail" || job.last_status === "overdue") {
+    return job.last_status;
+  }
+  const dueAt = jobNextDueAt(job);
+  if (dueAt !== null && now > dueAt + job.grace_secs) {
     return "overdue";
   }
 
   return job.last_status;
 }
 
-export const jobOverdueSummary = (
-  job: { last_run_at: number | null; interval_secs: number },
+export function jobOverdueSummary(
+  job: { last_run_at: number | null; interval_secs: number | null },
   now: number,
-): string =>
-  job.last_run_at === null
-    ? `Overdue: never reported (expected every ${formatDuration(job.interval_secs)})`
-    : `Overdue: last finished ${formatAge(job.last_run_at, now)}`;
+): string {
+  if (job.last_run_at === null) {
+    return job.interval_secs === null
+      ? "Overdue: never reported"
+      : `Overdue: never reported (expected every ${formatDuration(job.interval_secs)})`;
+  }
+
+  return `Overdue: last finished ${formatAge(job.last_run_at, now)}`;
+}
 
 async function issueJobPingToken() {
   const token = generateRandomToken("uptn_job");
@@ -101,12 +120,13 @@ export async function createPushJob(
   const { token, hash } = await issueJobPingToken();
   const res = await db.run(
     `INSERT OR IGNORE INTO jobs
-       (key, node_id, managed_by_node_id, ping_token_hash, label, interval_secs, grace_secs, created_at, last_status)
-     VALUES (?1, NULL, NULL, ?2, ?3, ?4, ?5, ?6, 'pending')`,
+       (key, node_id, managed_by_node_id, ping_token_hash, label, schedule, interval_secs, grace_secs, created_at, last_status)
+     VALUES (?1, NULL, NULL, ?2, ?3, ?4, ?5, ?6, ?7, 'pending')`,
     [
       input.key,
       hash,
       input.label,
+      input.schedule,
       input.interval_secs,
       input.grace_secs,
       unixNow(),
@@ -129,7 +149,8 @@ export async function updatePushJob(
   key: string,
   patch: {
     label?: string;
-    interval_secs?: number;
+    schedule?: string | null;
+    interval_secs?: number | null;
     grace_secs?: number;
   },
 ): Promise<boolean> {
@@ -147,10 +168,14 @@ export async function updatePushJob(
     );
   }
   const sets: string[] = [];
-  const params: (string | number)[] = [];
+  const params: (string | number | null)[] = [];
   if (patch.label !== undefined) {
     params.push(patch.label);
     sets.push(`label = ?${params.length}`);
+  }
+  if (patch.schedule !== undefined) {
+    params.push(patch.schedule);
+    sets.push(`schedule = ?${params.length}`);
   }
   if (patch.interval_secs !== undefined) {
     params.push(patch.interval_secs);

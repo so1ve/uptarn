@@ -310,9 +310,14 @@ function diffJob(current: JobSummary, desired: NormalizedSyncJob): string[] {
       `label: ${JSON.stringify(current.label)} -> ${JSON.stringify(desired.label)}`,
     );
   }
+  if (current.schedule !== desired.schedule) {
+    changes.push(
+      `schedule: ${JSON.stringify(current.schedule)} -> ${JSON.stringify(desired.schedule)}`,
+    );
+  }
   if (current.interval_secs !== desired.interval_secs) {
     changes.push(
-      `interval_secs: ${current.interval_secs} -> ${desired.interval_secs}`,
+      `interval_secs: ${String(current.interval_secs)} -> ${String(desired.interval_secs)}`,
     );
   }
   if (current.grace_secs !== desired.grace_secs) {
@@ -836,13 +841,19 @@ export function renderSyncPlan(
   ]);
 
   pushSection("Jobs", [
-    ...plan.jobsCreate.map((j) =>
-      row(
+    ...plan.jobsCreate.map((j) => {
+      const desc =
+        j.schedule ??
+        (j.interval_secs === null
+          ? "push"
+          : `every ${formatDuration(j.interval_secs)}`);
+
+      return row(
         theme.success("+"),
         theme.bold(j.key),
-        `${j.label} ${theme.muted(`(every ${formatDuration(j.interval_secs)})`)}`,
-      ),
-    ),
+        `${j.label} ${theme.muted(`(${desc})`)}`,
+      );
+    }),
     ...plan.jobsUpdate.flatMap(({ job, changes }) => [
       row(theme.warn("~"), theme.bold(job.key), job.label),
       ...changes.map((c) => `      ${theme.muted(c)}`),
@@ -998,6 +1009,7 @@ export async function applySyncPlan(
       `/api/v1/admin/jobs/${encodeURIComponent(job.key)}`,
       {
         label: job.label,
+        schedule: job.schedule,
         interval_secs: job.interval_secs,
         grace_secs: job.grace_secs,
       },

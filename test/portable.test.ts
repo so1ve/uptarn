@@ -2763,8 +2763,8 @@ describe("uptarn portable server", () => {
           {
             key: "restic",
             label: "Restic Backup",
+            schedule: "Daily 03:00",
             status: "ok",
-            interval_secs: 86_400,
             last_run_at: nowSecs - 600,
             next_run_at: nowSecs + 85_800,
             duration_ms: 9500,
@@ -2783,9 +2783,22 @@ describe("uptarn portable server", () => {
     expect(agentJob).toMatchObject({
       node_id: "homelab",
       managed_by_node_id: "homelab",
+      schedule: "Daily 03:00",
+      interval_secs: null,
       overall_status: "ok",
       next_due_at: nowSecs + 85_800,
     });
+
+    // Hub tick does NOT mark agent collector jobs overdue; collector owns health status.
+    vi.advanceTimersByTime(200_000 * 1000);
+    await runTick(db, config);
+    snap = await (
+      await app.request("/api/v1/admin/snapshot", { headers: adminHeaders })
+    ).json<DashboardSnapshot>();
+
+    expect(
+      snap.jobs.find((j) => j.key === "homelab:restic")?.overall_status,
+    ).toBe("ok");
 
     // Hub cannot mutate or delete agent-managed jobs
     const patchAgent = await app.request(

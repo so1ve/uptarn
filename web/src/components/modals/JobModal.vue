@@ -28,6 +28,8 @@ const isEdit = computed(() => props.job !== null);
 const form = useModalForm(open, () => ({
   key: props.job?.key ?? "",
   label: props.job?.label ?? "",
+  schedule: props.job?.schedule ?? "",
+  watchdog: props.job ? props.job.interval_secs !== null : true,
   interval_secs: props.job?.interval_secs ?? 86_400,
   grace_secs: props.job?.grace_secs ?? 3600,
 }));
@@ -37,7 +39,10 @@ const onSubmit = () =>
     "save-job",
     isEdit.value ? "Could not update job" : "Could not create job",
     async () => {
-      const intervalSecs = Number(form.interval_secs || 86_400);
+      const schedule = form.schedule.trim() || null;
+      const intervalSecs = form.watchdog
+        ? Number(form.interval_secs || 86_400)
+        : null;
       const graceSecs = Number(form.grace_secs || 3600);
       if (props.job) {
         await apiFetch(
@@ -45,6 +50,7 @@ const onSubmit = () =>
           "PATCH",
           {
             label: form.label.trim(),
+            schedule,
             interval_secs: intervalSecs,
             grace_secs: graceSecs,
           },
@@ -61,6 +67,7 @@ const onSubmit = () =>
       }>("/api/v1/admin/jobs", "POST", {
         key: form.key.trim() || undefined,
         label: form.label.trim(),
+        schedule,
         interval_secs: intervalSecs,
         grace_secs: graceSecs,
       });
@@ -102,9 +109,25 @@ const onSubmit = () =>
           />
         </UFormField>
 
-        <div class="space-y-2">
+        <UFormField label="Schedule (optional)" name="schedule">
+          <UInput
+            v-model="form.schedule"
+            autocomplete="off"
+            class="w-full"
+            :maxlength="64"
+            placeholder="Daily 03:00"
+          />
+        </UFormField>
+
+        <USwitch v-model="form.watchdog" label="Alert if overdue" />
+
+        <div v-if="form.watchdog" class="space-y-2">
           <div class="grid grid-cols-2 gap-3">
-            <UFormField label="Interval (s)" name="interval_secs" required>
+            <UFormField
+              label="Expected every (s)"
+              name="interval_secs"
+              required
+            >
               <UInput
                 v-model.number="form.interval_secs"
                 class="w-full font-mono"
