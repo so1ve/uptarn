@@ -146,32 +146,41 @@ const memCaption = computed(() =>
           </div>
 
           <div
-            class="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 font-mono text-xs text-muted tabular-nums"
+            v-if="node.system?.load_1m !== undefined || disk || hasNet"
+            class="space-y-1 font-mono text-xs text-muted tabular-nums"
           >
-            <div class="flex items-center gap-3.5">
-              <span v-if="node.system?.load_1m !== undefined">
+            <div
+              v-if="node.system?.load_1m !== undefined || disk"
+              class="grid grid-cols-2 gap-x-5"
+            >
+              <span
+                v-if="node.system?.load_1m !== undefined"
+                class="whitespace-nowrap"
+              >
                 <span class="text-dimmed">Load</span>
                 {{ node.system.load_1m.toFixed(2) }}
               </span>
-              <span v-if="disk">
+              <span v-if="disk" class="whitespace-nowrap">
                 <span class="text-dimmed">Disk</span>
                 <span class="ml-1" :class="statusTextClass(disk.status, '')">
                   {{ disk.pct !== null ? `${Math.round(disk.pct)}%` : "Error" }}
                 </span>
               </span>
             </div>
-            <span
+            <div
               v-if="hasNet"
-              class="inline-flex items-center gap-3"
+              class="grid grid-cols-2 gap-x-5"
               :title="monthlyTrafficTitle"
             >
-              <span class="text-blue-600 dark:text-blue-400">
+              <span class="whitespace-nowrap text-blue-600 dark:text-blue-400">
                 ↓ {{ formatBps(node.rx_bps!) }}
               </span>
-              <span class="text-violet-600 dark:text-violet-400">
+              <span
+                class="whitespace-nowrap text-violet-600 dark:text-violet-400"
+              >
                 ↑ {{ formatBps(node.tx_bps!) }}
               </span>
-            </span>
+            </div>
           </div>
         </template>
 

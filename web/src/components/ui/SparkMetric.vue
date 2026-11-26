@@ -67,7 +67,10 @@ const option = computed(() => {
     </div>
     <EChart v-if="option" height="32px" :option />
     <UsageBar v-else :bar-class="cfg.barClass" height-class="h-1" :pct />
-    <div v-if="caption" class="font-mono text-[11px] text-dimmed tabular-nums">
+    <div
+      v-if="caption"
+      class="truncate font-mono text-[11px] text-dimmed tabular-nums"
+    >
       {{ caption }}
     </div>
   </div>

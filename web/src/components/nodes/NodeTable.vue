@@ -124,7 +124,7 @@ const rows = computed(() =>
             </span>
           </td>
           <td
-            class="px-3 py-3 text-right font-mono text-xs text-muted tabular-nums"
+            class="px-3 py-3 text-right font-mono text-xs whitespace-nowrap text-muted tabular-nums"
           >
             {{
               node.rx_bps !== null && node.tx_bps !== null
