@@ -707,3 +707,14 @@ export function parseSettingsPatch(raw: unknown) {
       : undefined,
   };
 }
+
+export function parseIncidentAckInput(raw: unknown): {
+  incident_key: string;
+  acknowledged: boolean;
+} {
+  const obj = asObj(raw, "incident ack input");
+  const incidentKey = reqStr(obj.incident_key, "incident_key", 200);
+  const acknowledged = bool(obj.acknowledged, "acknowledged");
+
+  return { incident_key: incidentKey, acknowledged: acknowledged ?? true };
+}

@@ -20,11 +20,11 @@ import type {
   MonitorInput,
   TargetType,
 } from "../shared/index.ts";
-import { unixNow } from "../shared/index.ts";
+import { pairIncidentEvents, unixNow } from "../shared/index.ts";
 import { parseTimestampSecs } from "../validation.ts";
 import {
   renderBanner,
-  renderIncidentEventsTable,
+  renderIncidentHistoryTable,
   renderIncidentsList,
   renderJobDetail,
   renderJobsTable,
@@ -1016,27 +1016,34 @@ export function createCli() {
   });
 
   // ── incident ──
-  admin
-    .subcommand("incident", {
-      aliases: ["inc"],
-      description: "Inspect active incidents and incident history",
-    })
-    .command("ls", {
-      default: true,
-      description: "List active incidents and recent history events",
-      flags: {
-        limit: {
-          type: nonNegativeInt,
-          default: 20,
-          description: "Maximum number of recent incident events to display",
-        },
-        ...jsonFlag,
+  const incCmd = admin.subcommand("incident", {
+    aliases: ["inc"],
+    description: "Inspect active incidents and incident history",
+  });
+
+  incCmd.command("ls", {
+    default: true,
+    description: "List active incidents and paired incident history",
+    flags: {
+      limit: {
+        type: nonNegativeInt,
+        default: 20,
+        description: "Maximum number of recent history incidents to display",
       },
-      async run(ctx) {
-        const { theme } = ctx.log;
-        const data = await ctx.state.fetchSnapshot();
-        const events = data.events.slice(0, ctx.flags.limit);
-        emitJsonOr(ctx, { incidents: data.incidents, events }, () => {
+      ...jsonFlag,
+    },
+    async run(ctx) {
+      const { theme } = ctx.log;
+      const data = await ctx.state.fetchSnapshot();
+      const activeKeys = new Set(data.incidents.map((i) => i.incident_key));
+      const history = pairIncidentEvents(data.events, activeKeys).slice(
+        0,
+        ctx.flags.limit,
+      );
+      emitJsonOr(
+        ctx,
+        { incidents: data.incidents, history, events: data.events },
+        () => {
           const now = data.now || unixNow();
           ctx.log.raw(
             [
@@ -1048,15 +1055,46 @@ export function createCli() {
               data.incidents.length === 0
                 ? `  ${theme.success("No active incidents.")}`
                 : renderIncidentsList(theme, data.incidents),
-              renderSection(theme, "History", `(${events.length})`),
-              events.length === 0
+              renderSection(theme, "History", `(${history.length})`),
+              history.length === 0
                 ? `  ${theme.muted("No incident history recorded.")}`
-                : renderIncidentEventsTable(theme, events, now),
+                : renderIncidentHistoryTable(theme, history, now),
             ].join("\n"),
           );
-        });
+        },
+      );
+    },
+  });
+
+  incCmd.command("ack <key>", {
+    description: "Acknowledge (or unacknowledge) an active incident",
+    args: {
+      key: { description: "Active incident key (from incident ls)" },
+    },
+    flags: {
+      undo: {
+        type: Boolean,
+        default: false,
+        description: "Clear acknowledgement instead of acknowledging",
       },
-    });
+      ...jsonFlag,
+    },
+    async run(ctx) {
+      const acknowledged = !ctx.flags.undo;
+      const res = await ctx.state.request<{ acknowledged_at: number | null }>(
+        "POST",
+        "/api/v1/admin/incidents/ack",
+        { incident_key: ctx.args.key, acknowledged },
+      );
+      emitJsonOr(ctx, { ok: true, ...res }, () => {
+        ctx.log.success(
+          acknowledged
+            ? `Acknowledged ${ctx.args.key}`
+            : `Cleared acknowledgement on ${ctx.args.key}`,
+        );
+      });
+    },
+  });
 
   // ── mute / unmute ──
   const muteArgs = {

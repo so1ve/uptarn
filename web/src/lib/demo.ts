@@ -1072,6 +1072,28 @@ function createInitialState(): DemoState {
 
   const events: AlertEventSummary[] = [
     {
+      id: 8,
+      incident_key: "job:nas-01:zfs-scrub",
+      target_type: "job",
+      target_id: "nas-01:zfs-scrub",
+      label: "Job: ZFS Scrub",
+      kind: "resolved",
+      summary: "Scrub completed with 0 errors",
+      created_at: now - 5400,
+      delivery: { status: "muted" },
+    },
+    {
+      id: 7,
+      incident_key: "job:nas-01:zfs-scrub",
+      target_type: "job",
+      target_id: "nas-01:zfs-scrub",
+      label: "Job: ZFS Scrub",
+      kind: "firing",
+      summary: "Pool scrub delayed during maintenance window",
+      created_at: now - 5400 - 720,
+      delivery: { status: "muted" },
+    },
+    {
       id: 6,
       incident_key: "monitor:chat",
       target_type: "monitor",
@@ -1091,7 +1113,7 @@ function createInitialState(): DemoState {
       kind: "firing",
       summary: "HTTP 502",
       created_at: now - 3 * 3600 - 240,
-      delivery: { telegram: "ok", matrix: "ok" },
+      delivery: { telegram: "ok", matrix: "error: HTTP 502: Bad Gateway" },
     },
     {
       id: 4,
@@ -1177,7 +1199,20 @@ function createInitialState(): DemoState {
           passkey_count: 1,
         },
       },
-      incidents: [],
+      incidents: [
+        {
+          incident_key: "node:nas-01:mount:/volume1",
+          target_type: "node",
+          target_id: "nas-01",
+          label: "Home NAS: Volume 1 (RAID)",
+          state: "failing",
+          consecutive_failures: 1,
+          opened_at: null,
+          acknowledged_at: now - 1200,
+          last_changed_at: now - 1800,
+          last_summary: "Volume 1 (RAID) at 87% capacity",
+        },
+      ],
       maintenances,
       nodes,
       monitors,
@@ -1800,6 +1835,18 @@ export async function demoApiFetch<T = Record<string, unknown>>(
     snap.maintenances.splice(idx, 1);
 
     return { ok: true } as T;
+  }
+
+  if (pathname === "/api/v1/admin/incidents/ack" && method === "POST") {
+    const key = String(payload.incident_key ?? "");
+    const acknowledged = payload.acknowledged !== false;
+    const target = snap.incidents.find((i) => i.incident_key === key);
+    if (!target) {
+      throw new ApiError(404, "Incident not found");
+    }
+    target.acknowledged_at = acknowledged ? now : null;
+
+    return { ok: true, acknowledged_at: target.acknowledged_at } as T;
   }
 
   if (pathname === "/api/v1/admin/mute" && method === "POST") {

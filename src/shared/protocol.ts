@@ -260,6 +260,7 @@ export interface IncidentSummary {
   state: "failing" | "open";
   consecutive_failures: number;
   opened_at: number | null;
+  acknowledged_at: number | null;
   last_changed_at: number;
   last_summary: string;
 }

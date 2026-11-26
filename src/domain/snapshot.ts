@@ -170,8 +170,9 @@ function buildPublicIncidents(
       continue;
     }
     if (ev.kind === "firing") {
+      const existing = pendingFiring.get(ev.incident_key);
       pendingFiring.set(ev.incident_key, {
-        startedAt: ev.created_at,
+        startedAt: existing?.startedAt ?? ev.created_at,
         reason: sanitizePublicReason(
           ev.target_type,
           ev.summary,
@@ -394,12 +395,12 @@ export async function getDashboardSnapshot(
     { sql: "SELECT * FROM monitors ORDER BY sort_order ASC, name ASC" },
     { sql: "SELECT * FROM jobs ORDER BY key ASC" },
     {
-      sql: `SELECT incident_key, target_type, target_id, label, state, consecutive_failures, opened_at, last_changed_at, last_summary
+      sql: `SELECT incident_key, target_type, target_id, label, state, consecutive_failures, opened_at, acknowledged_at, last_changed_at, last_summary
             FROM alert_states ORDER BY state DESC, last_changed_at DESC`,
     },
     {
       sql: `SELECT id, incident_key, target_type, target_id, label, kind, summary, created_at, delivery_json
-            FROM alert_events ORDER BY created_at DESC LIMIT 40`,
+            FROM alert_events ORDER BY created_at DESC LIMIT 100`,
     },
     {
       sql: "SELECT id, title, body, starts_at, ends_at, targets_json, created_at FROM maintenances ORDER BY starts_at DESC",

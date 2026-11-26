@@ -31,6 +31,7 @@ import {
   rotateNodeToken,
   runTick,
   sendTestNotification,
+  setIncidentAcknowledged,
   setTargetMute,
   updateMonitor,
   updateNode,
@@ -49,6 +50,7 @@ import type { TargetType } from "./shared/index.ts";
 import { errorMessage, unixNow } from "./shared/index.ts";
 import {
   parseCreateNodeInput,
+  parseIncidentAckInput,
   parseJobPatch,
   parseMonitorPatch,
   parseMuteInput,
@@ -325,6 +327,20 @@ export function createApp(
     }
 
     return c.json({ ok: true });
+  });
+
+  app.post("/api/v1/admin/incidents/ack", async (c) => {
+    const body = parseIncidentAckInput(await readJson(c));
+    const res = await setIncidentAcknowledged(
+      db,
+      body.incident_key,
+      body.acknowledged,
+    );
+    if (!res.found) {
+      throw httpError(404, "Incident not found");
+    }
+
+    return c.json({ ok: true, acknowledged_at: res.acknowledged_at });
   });
 
   app.post("/api/v1/admin/mute", async (c) => {

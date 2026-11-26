@@ -18,7 +18,11 @@ import {
   upsertMonitor,
 } from "../src/domain/index.ts";
 import type { DashboardSnapshot } from "../src/shared/index.ts";
-import { LiveStateBuffer, parseLiveIngestFrame } from "../src/shared/index.ts";
+import {
+  LiveStateBuffer,
+  pairIncidentEvents,
+  parseLiveIngestFrame,
+} from "../src/shared/index.ts";
 
 describe("uptarn portable server", () => {
   let db: NodeDatabase;
@@ -2100,18 +2104,24 @@ describe("uptarn portable server", () => {
       }),
     });
 
-    // Failing probes during active maintenance must suppress alert notifications/events
-    vi.stubGlobal(
-      "fetch",
-      (async () => new Response("err", { status: 503 })) satisfies typeof fetch,
-    );
+    // Failing probes during active maintenance must suppress notifications while recording muted history
+    const fetchedUrls: string[] = [];
+    vi.stubGlobal("fetch", (async (input) => {
+      fetchedUrls.push(String(input));
+
+      return new Response("err", { status: 503 });
+    }) satisfies typeof fetch);
     await runTick(db, config, { forceMonitors: true });
 
     const snap = await (
       await app.request("/api/v1/admin/snapshot", { headers: adminHeaders })
     ).json<DashboardSnapshot>();
 
-    expect(snap.events).toHaveLength(0);
+    expect(fetchedUrls.some((u) => u.includes("telegram"))).toBeFalsy();
+    expect(snap.events).toHaveLength(2);
+    expect(
+      snap.events.every((e) => e.delivery.status === "muted"),
+    ).toBeTruthy();
     expect(snap.maintenances).toHaveLength(2);
 
     const pubRes = await app.request("/api/v1/public/status");
@@ -2831,5 +2841,144 @@ describe("uptarn portable server", () => {
     ).json<DashboardSnapshot>();
 
     expect(snap.jobs.some((j) => j.key === "homelab:restic")).toBeFalsy();
+  });
+
+  it("acknowledges active incidents, records muted outage history, and pairs events", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-26T00:00:00Z"));
+    const config = loadConfig({
+      PUBLIC_BASE_URL: "http://localhost:8787",
+      ADMIN_TOKEN: "admin-tok",
+      FAILURE_THRESHOLD: "1",
+    });
+    const app = createApp(db, config);
+    const adminHeaders = {
+      "Authorization": "Bearer admin-tok",
+      "Content-Type": "application/json",
+    };
+
+    await upsertMonitor(db, {
+      id: "api",
+      name: "API",
+      url: "https://api.example.com/health",
+    });
+
+    // Fail monitor -> opens incident
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("down", { status: 503 })),
+    );
+    await runTick(db, config, { forceMonitors: true });
+
+    let snap = await (
+      await app.request("/api/v1/admin/snapshot", { headers: adminHeaders })
+    ).json<DashboardSnapshot>();
+
+    expect(snap.incidents).toHaveLength(1);
+    expect(snap.incidents[0].incident_key).toBe("monitor:api");
+    expect(snap.incidents[0].acknowledged_at).toBeNull();
+
+    // Acknowledge active incident -> persists across another failing tick
+    const ackRes = await app.request("/api/v1/admin/incidents/ack", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({ incident_key: "monitor:api", acknowledged: true }),
+    });
+
+    expect(ackRes.status).toBe(200);
+
+    const ackBody = await ackRes.json<{ acknowledged_at: number }>();
+
+    expect(ackBody.acknowledged_at).toBeTypeOf("number");
+
+    vi.advanceTimersByTime(65_000);
+    await runTick(db, config, { forceMonitors: true });
+    snap = await (
+      await app.request("/api/v1/admin/snapshot", { headers: adminHeaders })
+    ).json<DashboardSnapshot>();
+
+    expect(snap.incidents[0].acknowledged_at).toBe(ackBody.acknowledged_at);
+
+    // Unacknowledge works
+    const unackRes = await app.request("/api/v1/admin/incidents/ack", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({
+        incident_key: "monitor:api",
+        acknowledged: false,
+      }),
+    });
+
+    expect(unackRes.status).toBe(200);
+
+    snap = await (
+      await app.request("/api/v1/admin/snapshot", { headers: adminHeaders })
+    ).json<DashboardSnapshot>();
+
+    expect(snap.incidents[0].acknowledged_at).toBeNull();
+
+    // Re-ack then recover -> deletes alert_state and pairs history with duration
+    await app.request("/api/v1/admin/incidents/ack", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({ incident_key: "monitor:api", acknowledged: true }),
+    });
+    vi.advanceTimersByTime(120_000);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("ok", { status: 200 })),
+    );
+    await runTick(db, config, { forceMonitors: true });
+
+    snap = await (
+      await app.request("/api/v1/admin/snapshot", { headers: adminHeaders })
+    ).json<DashboardSnapshot>();
+
+    expect(snap.incidents).toHaveLength(0);
+
+    // Now mute monitor and trigger a muted outage -> should still record history with status: "muted"
+    await app.request("/api/v1/admin/mute", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({
+        target_type: "monitor",
+        target_id: "api",
+        duration_secs: 3600,
+      }),
+    });
+
+    vi.advanceTimersByTime(65_000);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("err", { status: 500 })),
+    );
+    await runTick(db, config, { forceMonitors: true });
+
+    vi.advanceTimersByTime(180_000);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("ok", { status: 200 })),
+    );
+    await runTick(db, config, { forceMonitors: true });
+
+    snap = await (
+      await app.request("/api/v1/admin/snapshot", { headers: adminHeaders })
+    ).json<DashboardSnapshot>();
+
+    const history = pairIncidentEvents(snap.events);
+
+    expect(history).toHaveLength(2);
+    expect(history[0]).toMatchObject({
+      incident_key: "monitor:api",
+      state: "resolved",
+      duration_secs: 180,
+      firing_delivery: { status: "muted" },
+      resolved_delivery: { status: "muted" },
+    });
+    expect(history[1]).toMatchObject({
+      incident_key: "monitor:api",
+      state: "resolved",
+      duration_secs: 185,
+    });
   });
 });

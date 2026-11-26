@@ -21,18 +21,21 @@ const { busy, run } = useAction();
 const { signOutState } = useUptarnStore();
 
 const totalIncidents = computed(() => snap.value.incidents.length);
+const unackedIncidents = computed(() =>
+  snap.value.incidents.filter((i) => i.acknowledged_at === null),
+);
 const activeMaintenancesCount = computed(
   () => snap.value.maintenances.filter((m) => m.state !== "completed").length,
 );
-const openIncidents = computed(
-  () => snap.value.incidents.filter((i) => i.state === "open").length,
+const unackedOpenIncidents = computed(
+  () => unackedIncidents.value.filter((i) => i.state === "open").length,
 );
 const incidentHeadline = computed(() => {
-  const titles = snap.value.incidents
+  const titles = unackedIncidents.value
     .slice(0, 3)
     .map((inc) => splitIncident(inc).title)
     .join(", ");
-  const extra = snap.value.incidents.length - 3;
+  const extra = unackedIncidents.value.length - 3;
 
   return extra > 0 ? `${titles} +${extra} more` : titles;
 });
@@ -60,7 +63,7 @@ const navItems = computed(() => [
     to: "/admin/incidents",
     label: "Incidents",
     count: totalIncidents.value,
-    urgent: totalIncidents.value > 0,
+    urgent: unackedIncidents.value.length > 0,
   },
   {
     to: "/admin/maintenances",
@@ -195,11 +198,11 @@ async function onSignOut() {
     </template>
 
     <StatusBanner
-      v-if="snap.incidents.length > 0 && !route.meta.hideIncidentBanner"
+      v-if="unackedIncidents.length > 0 && !route.meta.hideIncidentBanner"
       class="mb-6"
-      :title="`${snap.incidents.length} ${snap.incidents.length === 1 ? 'active incident' : 'active incidents'}`"
+      :title="`${unackedIncidents.length} ${unackedIncidents.length === 1 ? 'active incident' : 'active incidents'}`"
       to="/admin/incidents"
-      :tone="openIncidents > 0 ? 'fail' : 'warn'"
+      :tone="unackedOpenIncidents > 0 ? 'fail' : 'warn'"
     >
       <span class="truncate text-xs text-muted">{{ incidentHeadline }}</span>
       <template #trailing>

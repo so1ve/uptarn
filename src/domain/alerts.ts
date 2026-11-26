@@ -1,6 +1,6 @@
 import { hmacSha256Hex } from "../auth/index.ts";
 import type { LoadedConfig } from "../config.ts";
-import type { SqlStatement } from "../db/index.ts";
+import type { SqlDatabase, SqlStatement } from "../db/index.ts";
 import { readBoundedText } from "../http.ts";
 import type { TargetType } from "../shared/index.ts";
 import {
@@ -41,13 +41,28 @@ export interface AlertStateRow {
   state: "failing" | "open";
   consecutive_failures: number;
   opened_at: number | null;
+  acknowledged_at: number | null;
   notified_open: number;
   last_changed_at: number;
   last_summary: string;
 }
 
 export const ALERT_STATE_COLUMNS =
-  "incident_key, target_type, target_id, label, state, consecutive_failures, opened_at, notified_open, last_changed_at, last_summary";
+  "incident_key, target_type, target_id, label, state, consecutive_failures, opened_at, acknowledged_at, notified_open, last_changed_at, last_summary";
+
+export async function setIncidentAcknowledged(
+  db: SqlDatabase,
+  incidentKey: string,
+  acknowledged: boolean,
+): Promise<{ found: boolean; acknowledged_at: number | null }> {
+  const ackAt = acknowledged ? unixNow() : null;
+  const res = await db.run(
+    "UPDATE alert_states SET acknowledged_at = ?1 WHERE incident_key = ?2",
+    [ackAt, incidentKey],
+  );
+
+  return { found: res.changes > 0, acknowledged_at: ackAt };
+}
 
 // Prevent Telegram from turning domain names inside alert titles into blue links.
 const defangDomain = (text: string): string =>
@@ -310,6 +325,8 @@ export async function buildAlertStatements(
   }
 
   const notifications: { obs: AlertObservation; payload: AlertPayload }[] = [];
+  const mutedEvents: { obs: AlertObservation; kind: "firing" | "resolved" }[] =
+    [];
   for (const obs of deduped.values()) {
     const prev = byKey.get(obs.incidentKey);
     const isMuted = now < globalMutedUntil || now < obs.targetMutedUntil;
@@ -324,12 +341,16 @@ export async function buildAlertStatements(
           : (prev?.opened_at ?? null);
       let notifiedOpen = prev?.notified_open ?? 0;
 
-      if (nextState === "open" && notifiedOpen === 0 && !isMuted) {
-        notifiedOpen = 1;
-        notifications.push({
-          obs,
-          payload: toAlertPayload(obs, "firing", config.publicBaseUrl),
-        });
+      if (nextState === "open" && notifiedOpen === 0) {
+        if (!isMuted) {
+          notifiedOpen = 1;
+          notifications.push({
+            obs,
+            payload: toAlertPayload(obs, "firing", config.publicBaseUrl),
+          });
+        } else if (prev?.state !== "open") {
+          mutedEvents.push({ obs, kind: "firing" });
+        }
       }
 
       statements.push({
@@ -363,12 +384,32 @@ export async function buildAlertStatements(
           obs,
           payload: toAlertPayload(obs, "resolved", config.publicBaseUrl, dur),
         });
+      } else if (prev.state === "open") {
+        mutedEvents.push({ obs, kind: "resolved" });
       }
       statements.push({
         sql: "DELETE FROM alert_states WHERE incident_key = ?1",
         params: [obs.incidentKey],
       });
     }
+  }
+
+  const mutedDeliveryJson = JSON.stringify({ status: "muted" });
+  for (const { obs, kind } of mutedEvents) {
+    statements.push({
+      sql: `INSERT INTO alert_events (incident_key, target_type, target_id, label, kind, summary, created_at, delivery_json)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
+      params: [
+        obs.incidentKey,
+        obs.targetType,
+        obs.targetId,
+        obs.label,
+        kind,
+        obs.summary,
+        now,
+        mutedDeliveryJson,
+      ],
+    });
   }
 
   if (notifications.length > 0) {

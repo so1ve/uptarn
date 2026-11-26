@@ -245,16 +245,61 @@ export const targetMutedUntil = (
       ? snap.monitors.find((m) => m.id === targetId)?.muted_until
       : snap.jobs.find((j) => j.key === targetId)?.muted_until) ?? 0;
 
-export function deliveryStatus(delivery: Record<string, string>): {
+export interface DeliverySummary {
   text: string;
   warn: boolean;
-} {
-  if (delivery.status === "no_channels_configured") {
-    return { text: "No channel", warn: false };
-  }
-  const failed = Object.entries(delivery).filter(([, v]) => v !== "ok");
+  muted: boolean;
+  detail: string | null;
+}
 
-  return failed.length === 0
-    ? { text: "Delivered", warn: false }
-    : { text: `${failed.map(([k]) => k).join(", ")} failed`, warn: true };
+export function deliveryStatus(
+  firing: Record<string, string>,
+  resolved?: Record<string, string> | null,
+): DeliverySummary {
+  const deliveries = [firing, ...(resolved ? [resolved] : [])];
+  const failed = new Map<string, string>();
+  for (const d of deliveries) {
+    if (d.status) {
+      continue;
+    }
+    for (const [k, v] of Object.entries(d)) {
+      if (v !== "ok") {
+        failed.set(k, v);
+      }
+    }
+  }
+  if (failed.size > 0) {
+    return {
+      text: `${[...failed.keys()].join(", ")} failed`,
+      warn: true,
+      muted: false,
+      detail: [...failed.entries()].map(([k, v]) => `${k}: ${v}`).join("\n"),
+    };
+  }
+  if (deliveries.every((d) => d.status === "muted")) {
+    return {
+      text: "Muted",
+      warn: false,
+      muted: true,
+      detail: "Notifications were suppressed by mute or maintenance window",
+    };
+  }
+  if (deliveries.every((d) => d.status === "no_channels_configured")) {
+    return { text: "No channel", warn: false, muted: false, detail: null };
+  }
+  const channels = new Set<string>();
+  for (const d of deliveries) {
+    if (!d.status) {
+      for (const k of Object.keys(d)) {
+        channels.add(k);
+      }
+    }
+  }
+
+  return {
+    text: "Delivered",
+    warn: false,
+    muted: false,
+    detail: channels.size > 0 ? `Sent via ${[...channels].join(", ")}` : null,
+  };
 }

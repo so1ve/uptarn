@@ -4,9 +4,9 @@ import type { Theme } from "clerc";
 
 import type {
   AdminSettingsSummary,
-  AlertEventSummary,
   CheckSnapshot,
   DashboardSnapshot,
+  IncidentHistoryRecord,
   IncidentSummary,
   JobSummary,
   MaintenanceSummary,
@@ -558,32 +558,61 @@ export function renderJobDetail(
   return lines.join("\n");
 }
 
+function formatDeliveryTag(
+  theme: Theme,
+  delivery: Record<string, string>,
+): string {
+  if (delivery.status === "muted") {
+    return theme.muted("muted");
+  }
+  if (delivery.status === "no_channels_configured") {
+    return theme.muted("-");
+  }
+  const failed = Object.entries(delivery).filter(([, v]) => v !== "ok");
+
+  return failed.length === 0
+    ? theme.muted("sent")
+    : theme.warn(`${failed.map(([k]) => k).join(",")} err`);
+}
+
 export const renderIncidentsList = (
   theme: Theme,
   incidents: readonly IncidentSummary[],
 ): string =>
   incidents
-    .map(
-      (inc) =>
-        `  ${theme.error("!")} ${theme.bold(inc.label)} ${theme.muted(`[${inc.target_type}:${inc.target_id} ${inc.state}]`)}  ${inc.last_summary}`,
-    )
+    .map((inc) => {
+      const ack = inc.acknowledged_at === null ? "" : " acked";
+
+      return `  ${inc.acknowledged_at === null ? theme.error("!") : theme.muted("✓")} ${theme.bold(inc.label)} ${theme.muted(`[${inc.incident_key} ${inc.state}${ack}]`)}  ${inc.last_summary}`;
+    })
     .join("\n");
 
-export const renderIncidentEventsTable = (
+export const renderIncidentHistoryTable = (
   theme: Theme,
-  events: readonly AlertEventSummary[],
+  records: readonly IncidentHistoryRecord[],
   now: number,
 ): string =>
-  renderTable<AlertEventSummary>(
+  renderTable<IncidentHistoryRecord>(
     theme,
     [
-      col("KIND", (e) => formatStatus(theme, e.kind)),
-      col("TARGET", (e) => `${e.target_type}:${theme.bold(e.target_id)}`),
-      col("LABEL", (e) => e.label),
-      col("WHEN", (e) => theme.muted(formatAge(e.created_at, now)), "right"),
-      col("SUMMARY", (e) => theme.muted(e.summary)),
+      col("STATE", (r) =>
+        formatStatus(theme, r.state === "resolved" ? "resolved" : "firing"),
+      ),
+      col("TARGET", (r) => `${r.target_type}:${theme.bold(r.target_id)}`),
+      col("LABEL", (r) => r.label),
+      col(
+        "DURATION",
+        (r) =>
+          theme.muted(
+            r.duration_secs === null ? "-" : formatDuration(r.duration_secs),
+          ),
+        "right",
+      ),
+      col("WHEN", (r) => theme.muted(formatAge(r.started_at, now)), "right"),
+      col("NOTIFY", (r) => formatDeliveryTag(theme, r.firing_delivery)),
+      col("SUMMARY", (r) => theme.muted(r.summary)),
     ],
-    events,
+    records,
   );
 
 export const renderMaintenancesTable = (
