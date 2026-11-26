@@ -48,6 +48,7 @@
   "devDependencies": {
     "@cloudflare/vitest-plugin": "latest",
     "@iconify-json/lucide": "^1.2.158",
+    "@internationalized/date": "^3.12.4",
     "@nuxt/ui": "^4.13.0",
     "@so1ve/eslint-config": "^4.7.0",
     "@so1ve/prettier-config": "^4.7.0",

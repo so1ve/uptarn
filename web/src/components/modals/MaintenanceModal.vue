@@ -9,6 +9,7 @@ import {
   useSnapshot,
 } from "../../lib/index.ts";
 import ConfirmPopover from "../ui/ConfirmPopover.vue";
+import DateTimePicker from "../ui/DateTimePicker.vue";
 import SegmentedControl from "../ui/SegmentedControl.vue";
 
 const props = defineProps<{
@@ -31,19 +32,6 @@ const DURATION_PRESETS = [
   { label: "+4h", secs: 14_400 },
 ] as const;
 
-function toLocalInput(unixSecs: number): string {
-  const d = new Date(unixSecs * 1000);
-  const pad = (n: number) => String(n).padStart(2, "0");
-
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function fromLocalInput(raw: string): number {
-  const ms = Date.parse(raw);
-
-  return Number.isFinite(ms) ? Math.floor(ms / 1000) : 0;
-}
-
 const form = useModalForm(open, () => {
   const m = props.maintenance;
   const defaultStart = Math.ceil(snap.value.now / 300) * 300;
@@ -53,8 +41,8 @@ const form = useModalForm(open, () => {
     id: m?.id ?? "",
     title: m?.title ?? "",
     body: m?.body ?? "",
-    starts_at: toLocalInput(m?.starts_at ?? defaultStart),
-    ends_at: toLocalInput(m?.ends_at ?? defaultEnd),
+    starts_at: m?.starts_at ?? defaultStart,
+    ends_at: m?.ends_at ?? defaultEnd,
     scope: m && m.targets.length > 0 ? "selected" : "all",
     selectedKeys: new Set<string>(
       (m?.targets ?? []).map((t) => `${t.type}:${t.id}`),
@@ -63,22 +51,20 @@ const form = useModalForm(open, () => {
 });
 
 function applyDuration(secs: number) {
-  const start = fromLocalInput(form.starts_at) || snap.value.now;
-  form.ends_at = toLocalInput(start + secs);
+  const start = form.starts_at ?? snap.value.now;
+  form.ends_at = start + secs;
 }
 
-function toggleTarget(type: "monitor" | "node", id: string) {
+function setTarget(type: "monitor" | "node", id: string, checked: boolean) {
   const key = `${type}:${id}`;
-  if (form.selectedKeys.has(key)) {
-    form.selectedKeys.delete(key);
-  } else {
+  if (checked) {
     form.selectedKeys.add(key);
+  } else {
+    form.selectedKeys.delete(key);
   }
 }
 
 async function onSubmit() {
-  const startsAt = fromLocalInput(form.starts_at);
-  const endsAt = fromLocalInput(form.ends_at);
   const targets: MaintenanceTarget[] =
     form.scope === "all"
       ? []
@@ -95,6 +81,9 @@ async function onSubmit() {
     "save",
     "Could not save maintenance",
     async () => {
+      if (form.starts_at === null || form.ends_at === null) {
+        throw new Error("Start and end times are required");
+      }
       if (form.scope === "selected" && targets.length === 0) {
         throw new Error("Select at least one target, or switch to All targets");
       }
@@ -102,8 +91,8 @@ async function onSubmit() {
         id: form.id.trim() || undefined,
         title: form.title.trim(),
         body: form.body.trim(),
-        starts_at: startsAt,
-        ends_at: endsAt,
+        starts_at: form.starts_at,
+        ends_at: form.ends_at,
         targets,
       });
 
@@ -159,19 +148,19 @@ async function onDelete() {
         <div class="space-y-2">
           <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <UFormField label="Starts" name="starts_at" required>
-              <UInput
+              <DateTimePicker
                 v-model="form.starts_at"
-                class="w-full font-mono"
-                required
-                type="datetime-local"
+                aria-label="Maintenance start time"
+                class="w-full"
+                size="md"
               />
             </UFormField>
             <UFormField label="Ends" name="ends_at" required>
-              <UInput
+              <DateTimePicker
                 v-model="form.ends_at"
-                class="w-full font-mono"
-                required
-                type="datetime-local"
+                aria-label="Maintenance end time"
+                class="w-full"
+                size="md"
               />
             </UFormField>
           </div>
@@ -207,57 +196,61 @@ async function onDelete() {
           >
             <div v-if="snap.monitors.length > 0" class="space-y-1.5">
               <div class="text-xs font-medium text-muted">Monitors</div>
-              <div class="grid grid-cols-1 gap-1 sm:grid-cols-2">
-                <label
+              <div class="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                <div
                   v-for="mon in snap.monitors"
                   :key="mon.id"
-                  class="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-elevated"
+                  class="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-elevated"
                 >
-                  <input
-                    :checked="form.selectedKeys.has(`monitor:${mon.id}`)"
-                    class="accent-primary"
-                    type="checkbox"
-                    @change="toggleTarget('monitor', mon.id)"
+                  <UCheckbox
+                    class="min-w-0 flex-1"
+                    :label="mon.name"
+                    :model-value="form.selectedKeys.has(`monitor:${mon.id}`)"
+                    size="xs"
+                    @update:model-value="
+                      (v) => setTarget('monitor', mon.id, v === true)
+                    "
                   />
-                  <span class="truncate">{{ mon.name }}</span>
                   <UBadge
                     v-if="!mon.is_public"
-                    class="ml-auto shrink-0"
+                    class="shrink-0"
                     color="neutral"
                     size="xs"
                     variant="subtle"
                   >
                     Private
                   </UBadge>
-                </label>
+                </div>
               </div>
             </div>
 
             <div v-if="snap.nodes.length > 0" class="space-y-1.5">
               <div class="text-xs font-medium text-muted">Nodes</div>
-              <div class="grid grid-cols-1 gap-1 sm:grid-cols-2">
-                <label
+              <div class="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                <div
                   v-for="node in snap.nodes"
                   :key="node.id"
-                  class="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-elevated"
+                  class="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-elevated"
                 >
-                  <input
-                    :checked="form.selectedKeys.has(`node:${node.id}`)"
-                    class="accent-primary"
-                    type="checkbox"
-                    @change="toggleTarget('node', node.id)"
+                  <UCheckbox
+                    class="min-w-0 flex-1"
+                    :label="node.label"
+                    :model-value="form.selectedKeys.has(`node:${node.id}`)"
+                    size="xs"
+                    @update:model-value="
+                      (v) => setTarget('node', node.id, v === true)
+                    "
                   />
-                  <span class="truncate">{{ node.label }}</span>
                   <UBadge
                     v-if="!node.is_public"
-                    class="ml-auto shrink-0"
+                    class="shrink-0"
                     color="neutral"
                     size="xs"
                     variant="subtle"
                   >
                     Private
                   </UBadge>
-                </label>
+                </div>
               </div>
             </div>
           </div>
