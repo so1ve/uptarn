@@ -14,6 +14,7 @@ import {
 } from "../../lib/index.ts";
 import ConfirmPopover from "../ui/ConfirmPopover.vue";
 import DateTimePicker from "../ui/DateTimePicker.vue";
+import PrivateIcon from "../ui/PrivateIcon.vue";
 import SegmentedControl from "../ui/SegmentedControl.vue";
 
 const props = defineProps<{
@@ -228,15 +229,7 @@ async function onDelete() {
                       (v) => setTarget('monitor', mon.id, v === true)
                     "
                   />
-                  <UBadge
-                    v-if="!mon.is_public"
-                    class="shrink-0"
-                    color="neutral"
-                    size="xs"
-                    variant="subtle"
-                  >
-                    Private
-                  </UBadge>
+                  <PrivateIcon v-if="!mon.is_public" />
                 </div>
               </div>
             </div>
@@ -258,15 +251,7 @@ async function onDelete() {
                       (v) => setTarget('node', node.id, v === true)
                     "
                   />
-                  <UBadge
-                    v-if="!node.is_public"
-                    class="shrink-0"
-                    color="neutral"
-                    size="xs"
-                    variant="subtle"
-                  >
-                    Private
-                  </UBadge>
+                  <PrivateIcon v-if="!node.is_public" />
                 </div>
               </div>
             </div>

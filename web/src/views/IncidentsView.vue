@@ -8,6 +8,7 @@ import EmptyState from "../components/ui/EmptyState.vue";
 import MuteButton from "../components/ui/MuteButton.vue";
 import MutedBadge from "../components/ui/MutedBadge.vue";
 import PageHeader from "../components/ui/PageHeader.vue";
+import PrivateIcon from "../components/ui/PrivateIcon.vue";
 import SegmentedControl from "../components/ui/SegmentedControl.vue";
 import StatusDot from "../components/ui/StatusDot.vue";
 import type {
@@ -595,23 +596,14 @@ function timelineBusyKey(prefix: string): string | null {
                 >
                   {{ INCIDENT_REPORT_STATUS_LABEL[item.report.status] }}
                 </UBadge>
-                <UBadge
-                  v-if="!item.report.is_public"
-                  color="neutral"
-                  size="xs"
-                  variant="subtle"
-                >
-                  Private
-                </UBadge>
-                <UBadge
+                <PrivateIcon v-if="!item.report.is_public" />
+                <span
                   v-for="t in item.report.targets"
                   :key="`${t.type}:${t.id}`"
-                  color="neutral"
-                  size="xs"
-                  variant="subtle"
+                  class="text-xs font-normal text-dimmed"
                 >
                   {{ targetLabel(t) }}
-                </UBadge>
+                </span>
               </div>
 
               <div
@@ -688,18 +680,15 @@ function timelineBusyKey(prefix: string): string | null {
                 <StatusDot
                   :status="item.inc.state === 'open' ? 'fail' : 'warn'"
                 />
-                <UBadge color="neutral" size="xs" variant="subtle">
-                  {{ item.kind }}
-                </UBadge>
                 <span class="text-sm font-semibold">{{ item.title }}</span>
-                <UBadge
+                <span class="text-xs text-dimmed">{{ item.kind }}</span>
+                <span
                   v-if="item.inc.acknowledged_at !== null"
-                  color="neutral"
-                  size="xs"
-                  variant="subtle"
+                  class="inline-flex items-center gap-1 text-xs text-dimmed"
                 >
-                  Banner hidden
-                </UBadge>
+                  <UIcon class="size-3 shrink-0" name="i-lucide-eye-off" />
+                  <span>Hidden from banner</span>
+                </span>
                 <MutedBadge :now="snap.now" :until="item.mutedUntil" />
                 <span class="truncate font-mono text-xs text-muted">
                   {{ item.inc.last_summary }}
@@ -860,27 +849,16 @@ function timelineBusyKey(prefix: string): string | null {
                   @click="toggleItem(item.itemKey)"
                 >
                   <div class="flex min-w-0 flex-wrap items-center gap-2">
-                    <UBadge color="neutral" size="xs" variant="subtle">
-                      Manual
-                    </UBadge>
                     <span class="font-medium">{{ item.report.title }}</span>
-                    <UBadge
-                      v-if="!item.report.is_public"
-                      color="neutral"
-                      size="xs"
-                      variant="subtle"
-                    >
-                      Private
-                    </UBadge>
-                    <UBadge
+                    <PrivateIcon v-if="!item.report.is_public" />
+                    <span class="text-xs font-normal text-dimmed">Manual</span>
+                    <span
                       v-for="t in item.report.targets"
                       :key="`${t.type}:${t.id}`"
-                      color="neutral"
-                      size="xs"
-                      variant="subtle"
+                      class="text-xs font-normal text-dimmed"
                     >
                       {{ targetLabel(t) }}
-                    </UBadge>
+                    </span>
                   </div>
 
                   <div
@@ -995,13 +973,13 @@ function timelineBusyKey(prefix: string): string | null {
                   @click="toggleItem(item.itemKey)"
                 >
                   <div class="flex min-w-0 flex-wrap items-center gap-2">
-                    <UBadge color="neutral" size="xs" variant="subtle">
-                      {{ item.kind }}
-                    </UBadge>
                     <span class="font-medium">{{ item.title }}</span>
+                    <span class="text-xs font-normal text-dimmed">
+                      {{ item.kind }}
+                    </span>
                     <UBadge
                       v-if="item.delivery.muted"
-                      color="neutral"
+                      color="warning"
                       size="xs"
                       variant="subtle"
                     >

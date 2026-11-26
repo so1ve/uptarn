@@ -14,6 +14,7 @@ import {
   summarizeDisk,
 } from "../../lib/index.ts";
 import DragHandle from "../ui/DragHandle.vue";
+import PrivateIcon from "../ui/PrivateIcon.vue";
 import StatusDot from "../ui/StatusDot.vue";
 
 const emit = defineEmits<{
@@ -86,15 +87,7 @@ const rows = computed(() =>
               >
                 {{ node.id }}
               </span>
-              <UBadge
-                v-if="!node.is_public"
-                class="shrink-0"
-                color="neutral"
-                size="xs"
-                variant="subtle"
-              >
-                Private
-              </UBadge>
+              <PrivateIcon v-if="!node.is_public" />
             </div>
           </td>
           <td class="px-3 py-3 text-right font-mono text-xs tabular-nums">

@@ -18,6 +18,7 @@ import {
   useUptarnStore,
 } from "../../lib/index.ts";
 import MutedBadge from "../ui/MutedBadge.vue";
+import PrivateIcon from "../ui/PrivateIcon.vue";
 import SparkMetric from "../ui/SparkMetric.vue";
 import StatusDot from "../ui/StatusDot.vue";
 import UsageBar from "../ui/UsageBar.vue";
@@ -106,15 +107,7 @@ const standaloneLoad = computed(
           >
             {{ node.label }}
           </span>
-          <UBadge
-            v-if="!node.is_public"
-            class="shrink-0"
-            color="neutral"
-            size="xs"
-            variant="subtle"
-          >
-            Private
-          </UBadge>
+          <PrivateIcon v-if="!node.is_public" />
           <MutedBadge compact :now :until="node.muted_until" />
         </div>
 

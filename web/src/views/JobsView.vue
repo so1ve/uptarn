@@ -230,20 +230,16 @@ const onRemoveJob = (key: string) =>
             </span>
             <RouterLink
               v-if="job.node_id"
+              class="inline-flex items-center gap-1 font-mono text-xs text-muted transition-colors hover:text-primary"
               :to="`/admin/nodes/${encodeURIComponent(job.node_id)}`"
             >
-              <UBadge
-                class="font-mono hover:opacity-80"
-                color="neutral"
-                size="xs"
-                variant="subtle"
-              >
-                {{ job.node_id }}
-              </UBadge>
+              <UIcon
+                class="size-3 shrink-0 text-dimmed"
+                name="i-lucide-server"
+              />
+              <span>on {{ job.node_id }}</span>
             </RouterLink>
-            <UBadge v-else color="neutral" size="xs" variant="subtle">
-              Push
-            </UBadge>
+            <span v-else class="font-mono text-xs text-dimmed">Push ping</span>
             <MutedBadge :now="snap.now" :until="job.muted_until" />
           </div>
 

@@ -6,6 +6,7 @@ import NodeChartsGrid from "../components/nodes/NodeChartsGrid.vue";
 import NodeTelemetryPanel from "../components/nodes/NodeTelemetryPanel.vue";
 import ConfirmPopover from "../components/ui/ConfirmPopover.vue";
 import MuteButton from "../components/ui/MuteButton.vue";
+import PrivateIcon from "../components/ui/PrivateIcon.vue";
 import StatusDot from "../components/ui/StatusDot.vue";
 import {
   apiFetch,
@@ -284,14 +285,7 @@ async function onDelete() {
             >
               {{ node.id }}
             </span>
-            <UBadge
-              v-if="!node.is_public"
-              color="neutral"
-              size="xs"
-              variant="subtle"
-            >
-              Private
-            </UBadge>
+            <PrivateIcon v-if="!node.is_public" />
           </div>
           <div
             class="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-xs text-muted tabular-nums"

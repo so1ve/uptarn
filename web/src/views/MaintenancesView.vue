@@ -154,25 +154,13 @@ function openModal(item: MaintenanceSummary | null) {
               {{ m.body }}
             </p>
 
-            <div class="flex flex-wrap items-center gap-1.5 pl-4">
-              <UBadge
-                v-if="m.targets.length === 0"
-                color="neutral"
-                size="xs"
-                variant="subtle"
-              >
-                All targets
-              </UBadge>
-              <UBadge
-                v-for="t in m.targets"
-                v-else
-                :key="`${t.type}:${t.id}`"
-                color="neutral"
-                size="xs"
-                variant="subtle"
-              >
+            <div
+              class="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 pl-4 text-xs text-dimmed"
+            >
+              <span v-if="m.targets.length === 0">All targets</span>
+              <span v-for="t in m.targets" v-else :key="`${t.type}:${t.id}`">
                 {{ targetLabel(t) }}
-              </UBadge>
+              </span>
             </div>
           </li>
         </ol>

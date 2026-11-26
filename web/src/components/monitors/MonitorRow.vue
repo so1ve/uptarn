@@ -19,6 +19,7 @@ import {
 import DragHandle from "../ui/DragHandle.vue";
 import MuteButton from "../ui/MuteButton.vue";
 import MutedBadge from "../ui/MutedBadge.vue";
+import PrivateIcon from "../ui/PrivateIcon.vue";
 import StatusDot from "../ui/StatusDot.vue";
 import MonitorBars from "./MonitorBars.vue";
 
@@ -40,8 +41,6 @@ const props = withDefaults(
   }>(),
   { window: "24h" },
 );
-
-const PROBE_BADGE = { http: "Agent", tcp: "TCP", exec: "Exec" } as const;
 
 const adminMon = computed<MonitorSummary | null>(() =>
   "probe" in props.monitor ? props.monitor : null,
@@ -71,10 +70,10 @@ const uptimeBreakdown = computed(() =>
   }),
 );
 
-const probeBadge = computed<string | null>(() => {
-  const probe = adminMon.value?.probe;
+const agentNodeId = computed<string | null>(() => {
+  const mon = adminMon.value;
 
-  return probe?.from === "agent" ? PROBE_BADGE[probe.type] : null;
+  return mon?.probe.from === "agent" ? mon.managed_by_node_id : null;
 });
 
 const displayLink = computed(() => {
@@ -89,13 +88,7 @@ const displayLink = computed(() => {
       };
     }
     if (probe.type === "http" && probe.target) {
-      return { href: probe.target, text: stripUrlScheme(probe.target) };
-    }
-    if (adminMon.value.public_url) {
-      return {
-        href: adminMon.value.public_url,
-        text: stripUrlScheme(adminMon.value.public_url),
-      };
+      return { href: probe.target, text: probe.target };
     }
 
     return null;
@@ -105,10 +98,21 @@ const displayLink = computed(() => {
   return url ? { href: url, text: stripUrlScheme(url) } : null;
 });
 
-const targetText = computed(() => {
+const targetText = computed<string | null>(() => {
   const probe = adminMon.value?.probe;
+  if (probe?.from !== "agent" || !probe.target) {
+    return null;
+  }
+  if (probe.type === "tcp") {
+    return probe.target.startsWith("tcp://")
+      ? probe.target
+      : `tcp://${probe.target}`;
+  }
+  if (probe.type === "exec") {
+    return `$ ${probe.target}`;
+  }
 
-  return probe?.from === "agent" && probe.type !== "http" ? probe.target : null;
+  return null;
 });
 
 const errorText = computed(() =>
@@ -156,15 +160,7 @@ const errorText = computed(() =>
             {{ monitor.name }}
           </span>
 
-          <UBadge
-            v-if="probeBadge"
-            class="shrink-0"
-            color="neutral"
-            size="xs"
-            variant="subtle"
-          >
-            {{ probeBadge }}
-          </UBadge>
+          <PrivateIcon v-if="adminMon && !adminMon.is_public" />
           <UBadge
             v-if="!monitor.enabled"
             class="shrink-0"
@@ -174,35 +170,34 @@ const errorText = computed(() =>
           >
             Paused
           </UBadge>
-          <UBadge
-            v-if="adminMon && !adminMon.is_public"
-            class="shrink-0"
-            color="neutral"
-            size="xs"
-            variant="subtle"
-          >
-            Private
-          </UBadge>
           <MutedBadge v-if="adminMon" :now :until="adminMon.muted_until" />
         </div>
 
-        <a
-          v-if="displayLink"
-          class="inline-flex max-w-full items-center gap-1 font-mono text-[11.5px] text-dimmed transition-colors hover:text-primary"
-          :href="displayLink.href"
-          rel="noreferrer"
-          target="_blank"
-          @click.stop
-        >
-          <span class="truncate">{{ displayLink.text }}</span>
-          <UIcon class="size-3 shrink-0" name="i-lucide-external-link" />
-        </a>
         <div
-          v-else-if="targetText"
-          class="truncate font-mono text-[11.5px] text-dimmed"
-          :title="targetText"
+          v-if="agentNodeId || displayLink || targetText"
+          class="flex min-w-0 items-center gap-2 font-mono text-[11.5px] text-dimmed"
         >
-          {{ targetText }}
+          <span v-if="agentNodeId" class="shrink-0 text-muted">
+            on {{ agentNodeId }}
+          </span>
+          <a
+            v-if="displayLink"
+            class="inline-flex min-w-0 items-center gap-1 transition-colors hover:text-primary"
+            :href="displayLink.href"
+            rel="noreferrer"
+            target="_blank"
+            @click.stop
+          >
+            <span class="truncate">{{ displayLink.text }}</span>
+            <UIcon class="size-3 shrink-0" name="i-lucide-external-link" />
+          </a>
+          <span
+            v-else-if="targetText"
+            class="min-w-0 truncate"
+            :title="targetText"
+          >
+            {{ targetText }}
+          </span>
         </div>
       </div>
     </div>
@@ -302,7 +297,7 @@ const errorText = computed(() =>
       <span v-else class="inline-flex items-center gap-1.5">
         <span
           v-if="adminMon && adminMon.last_http_status !== null"
-          class="rounded bg-muted px-1.5 py-0.5 text-[10.5px] leading-none text-muted"
+          class="text-dimmed"
         >
           HTTP {{ adminMon.last_http_status }}
         </span>

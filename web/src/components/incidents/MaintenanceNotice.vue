@@ -69,17 +69,9 @@ defineProps<{
 
       <div
         v-if="m.targets.length > 0"
-        class="flex flex-wrap items-center gap-1.5 pl-6 pt-0.5"
+        class="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 pl-6 pt-0.5 text-xs text-dimmed"
       >
-        <UBadge
-          v-for="name in m.targets"
-          :key="name"
-          color="neutral"
-          size="xs"
-          variant="subtle"
-        >
-          {{ name }}
-        </UBadge>
+        <span v-for="name in m.targets" :key="name">{{ name }}</span>
       </div>
     </div>
   </section>

@@ -91,15 +91,13 @@ function toggleKey(key: string) {
             >
               {{ INCIDENT_REPORT_STATUS_LABEL[rep.status] }}
             </UBadge>
-            <UBadge
+            <span
               v-for="name in rep.targets"
               :key="name"
-              color="neutral"
-              size="xs"
-              variant="subtle"
+              class="text-xs font-normal text-dimmed"
             >
               {{ name }}
-            </UBadge>
+            </span>
           </div>
 
           <div

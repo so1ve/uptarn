@@ -62,15 +62,9 @@ function scalarSummaryNote(series: SeriesSnapshot): string | null {
     <div class="flex min-w-0 items-center gap-2">
       <StatusDot :status />
       <span class="truncate font-medium">{{ label }}</span>
-      <UBadge
-        v-if="group"
-        class="shrink-0"
-        color="neutral"
-        size="xs"
-        variant="subtle"
-      >
+      <span v-if="group" class="shrink-0 text-xs text-dimmed">
         {{ group }}
-      </UBadge>
+      </span>
     </div>
   </DefineRowLabel>
 
