@@ -180,7 +180,7 @@ const onSubmit = () =>
           :loading="busy === 'save-job'"
           type="submit"
         >
-          {{ isEdit ? "Save changes" : "Create job" }}
+          {{ isEdit ? "Save" : "Create" }}
         </UButton>
       </div>
     </template>

@@ -503,7 +503,7 @@ async function testChannel(channel: NotificationChannelName) {
             variant="soft"
             @click="testChannel('telegram')"
           >
-            Test Telegram
+            Test
           </UButton>
         </div>
       </form>
@@ -651,7 +651,7 @@ async function testChannel(channel: NotificationChannelName) {
             variant="soft"
             @click="testChannel('matrix')"
           >
-            Test Matrix
+            Test
           </UButton>
         </div>
       </form>
@@ -847,7 +847,7 @@ async function testChannel(channel: NotificationChannelName) {
             variant="soft"
             @click="testChannel('webhook')"
           >
-            Test Webhook
+            Test
           </UButton>
         </div>
       </form>

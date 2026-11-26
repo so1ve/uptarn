@@ -280,7 +280,7 @@ async function onDelete() {
             v-if="isEdit && !managedByNode"
             color="error"
             confirm-label="Delete"
-            label="Delete monitor"
+            label="Delete"
             :loading="busy === 'delete'"
             size="sm"
             @confirm="onDelete"

@@ -35,7 +35,7 @@ function handleConfirm() {
 
 <template>
   <UPopover v-model:open="open">
-    <UButton :color :loading :size :variant>
+    <UButton class="whitespace-nowrap" :color :loading :size :variant>
       {{ label }}
     </UButton>
     <template #content>

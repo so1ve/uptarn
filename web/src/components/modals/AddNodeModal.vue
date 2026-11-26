@@ -119,7 +119,7 @@ const onSubmit = () =>
           :loading="busy === 'create'"
           type="submit"
         >
-          Create node
+          Create
         </UButton>
       </div>
     </template>
