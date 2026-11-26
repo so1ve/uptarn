@@ -71,6 +71,12 @@ const issue = computed(() =>
     : nodeIssueSummary(props.node, hasCompute.value),
 );
 
+const cpuCaption = computed(() =>
+  props.node.system?.load_1m === undefined
+    ? undefined
+    : `Load ${props.node.system.load_1m.toFixed(2)}`,
+);
+
 const memCaption = computed(() =>
   props.node.system?.mem_used_bytes !== undefined &&
   props.node.system.mem_total_bytes !== undefined
@@ -80,11 +86,15 @@ const memCaption = computed(() =>
       )
     : undefined,
 );
+
+const standaloneLoad = computed(
+  () => !hasCpu.value && props.node.system?.load_1m !== undefined,
+);
 </script>
 
 <template>
   <RouterLink
-    class="group flex flex-col justify-between gap-4 rounded-xl border border-default bg-surface px-5 py-4 transition-colors hover:border-accented"
+    class="group flex flex-col rounded-xl border border-default bg-surface px-5 py-4 transition-colors hover:border-accented"
     :to="`/admin/nodes/${encodeURIComponent(node.id)}`"
   >
     <div class="space-y-4">
@@ -108,17 +118,35 @@ const memCaption = computed(() =>
           <MutedBadge compact :now :until="node.muted_until" />
         </div>
 
+        <UTooltip
+          v-if="issue"
+          :text="
+            node.system
+              ? `${issue.text} (Up ${formatDuration(node.system.uptime_secs)})`
+              : issue.text
+          "
+        >
+          <span
+            class="max-w-[50%] shrink truncate text-right text-xs font-medium tabular-nums"
+            :class="statusTextClass(issue.tone)"
+          >
+            {{ issue.text }}
+          </span>
+        </UTooltip>
         <span
-          v-if="!offline && !pending && node.system"
+          v-else-if="offline"
+          class="inline-flex shrink-0 items-center gap-1.5 font-mono text-xs tabular-nums"
+        >
+          <span class="text-red-500 dark:text-red-400">Offline</span>
+          <span v-if="node.last_seen_at !== null" class="text-dimmed">
+            {{ formatAge(node.last_seen_at, now) }}
+          </span>
+        </span>
+        <span
+          v-else-if="!pending && node.system"
           class="shrink-0 font-mono text-xs text-muted tabular-nums"
         >
           Up {{ formatDuration(node.system.uptime_secs) }}
-        </span>
-        <span
-          v-else-if="offline"
-          class="shrink-0 font-mono text-xs text-red-500 dark:text-red-400"
-        >
-          Offline
         </span>
       </div>
 
@@ -132,6 +160,7 @@ const memCaption = computed(() =>
           >
             <SparkMetric
               v-if="hasCpu"
+              :caption="cpuCaption"
               :history="cpuHistory"
               kind="cpu"
               :pct="cpuPct!"
@@ -146,41 +175,36 @@ const memCaption = computed(() =>
           </div>
 
           <div
-            v-if="node.system?.load_1m !== undefined || disk || hasNet"
-            class="space-y-1 font-mono text-xs text-muted tabular-nums"
+            v-if="standaloneLoad || disk || hasNet"
+            class="flex items-center justify-between gap-2 font-mono text-[11.5px] whitespace-nowrap text-muted tabular-nums"
           >
             <div
-              v-if="node.system?.load_1m !== undefined || disk"
-              class="grid grid-cols-2 gap-x-5"
+              v-if="standaloneLoad || disk"
+              class="flex shrink-0 items-center gap-3"
             >
-              <span
-                v-if="node.system?.load_1m !== undefined"
-                class="whitespace-nowrap"
-              >
+              <span v-if="standaloneLoad">
                 <span class="text-dimmed">Load</span>
-                {{ node.system.load_1m.toFixed(2) }}
+                {{ node.system!.load_1m!.toFixed(2) }}
               </span>
-              <span v-if="disk" class="whitespace-nowrap">
+              <span v-if="disk">
                 <span class="text-dimmed">Disk</span>
                 <span class="ml-1" :class="statusTextClass(disk.status, '')">
                   {{ disk.pct !== null ? `${Math.round(disk.pct)}%` : "Error" }}
                 </span>
               </span>
             </div>
-            <div
+            <span
               v-if="hasNet"
-              class="grid grid-cols-2 gap-x-5"
+              class="inline-flex shrink-0 items-center gap-2.5"
               :title="monthlyTrafficTitle"
             >
-              <span class="whitespace-nowrap text-blue-600 dark:text-blue-400">
+              <span class="text-blue-600 dark:text-blue-400">
                 ↓ {{ formatBps(node.rx_bps!) }}
               </span>
-              <span
-                class="whitespace-nowrap text-violet-600 dark:text-violet-400"
-              >
+              <span class="text-violet-600 dark:text-violet-400">
                 ↑ {{ formatBps(node.tx_bps!) }}
               </span>
-            </div>
+            </span>
           </div>
         </template>
 
@@ -203,22 +227,6 @@ const memCaption = computed(() =>
           </div>
         </div>
       </div>
-    </div>
-
-    <div
-      v-if="issue || (offline && node.last_seen_at !== null)"
-      class="border-t border-default pt-2.5 text-xs"
-    >
-      <span
-        v-if="issue"
-        class="block truncate"
-        :class="statusTextClass(issue.tone)"
-      >
-        {{ issue.text }}
-      </span>
-      <span v-else class="block font-mono text-dimmed tabular-nums">
-        Seen {{ formatAge(node.last_seen_at, now) }}
-      </span>
     </div>
   </RouterLink>
 </template>
