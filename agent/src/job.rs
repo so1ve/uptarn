@@ -9,6 +9,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::process::Command;
 
 use crate::config::non_empty;
+use crate::hub::build_http_client;
 
 const TAIL_CAP_BYTES: usize = 2048;
 
@@ -95,11 +96,11 @@ pub async fn run_job_wrapper(
     cmd_parts: &[String],
 ) -> Result<i32> {
     let base_url = resolve_ping_url(ping_url, ping_url_file)?;
-    let client = Client::builder()
-        .timeout(Duration::from_secs(10))
-        .user_agent(concat!("uptarn-agent/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .expect("build reqwest client");
+    let client = build_http_client(
+        concat!("uptarn-agent/", env!("CARGO_PKG_VERSION")),
+        Some(Duration::from_secs(10)),
+        base_url.starts_with("https://"),
+    )?;
 
     let (program, args) = cmd_parts
         .split_first()

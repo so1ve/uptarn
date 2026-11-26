@@ -7,6 +7,7 @@ use tokio::process::Command;
 use tokio::time::timeout;
 
 use crate::config::{MonitorConfig, non_empty};
+use crate::hub::build_http_client;
 use crate::protocol::{MonitorProbeFrom, MonitorProbeReport, MonitorProbeType, MonitorSpec};
 
 const MAX_BODY_BYTES: usize = 65_536;
@@ -14,23 +15,12 @@ const MAX_ERROR_CHARS: usize = 240;
 const MAX_TARGET_CHARS: usize = 120;
 
 static HTTP_PROBE_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let user_agent = concat!("uptarn-agent-probe/", env!("CARGO_PKG_VERSION"));
-    reqwest::Client::builder()
-        .user_agent(user_agent)
-        .build()
-        .unwrap_or_else(|_| {
-            // Allow plain HTTP probes in environments without system CA certs
-            // (e.g. Nix build sandbox or minimal containers).
-            let tls = rustls::ClientConfig::builder()
-                .with_root_certificates(rustls::RootCertStore::empty())
-                .with_no_client_auth();
-            reqwest::Client::builder()
-                .user_agent(user_agent)
-                .tls_backend_preconfigured(tls)
-                .build()
-                .expect("build fallback HTTP probe client")
-        })
+    build_http_client(
+        concat!("uptarn-agent-probe/", env!("CARGO_PKG_VERSION")),
+        None,
+        false,
+    )
+    .expect("build HTTP probe client")
 });
 
 fn round1(value: f64) -> f64 {

@@ -7,6 +7,38 @@ use serde::Serialize;
 use crate::config::AgentConfig;
 use crate::protocol::NodeReportPayload;
 
+pub fn build_http_client(
+    user_agent: &str,
+    timeout: Option<Duration>,
+    require_tls_roots: bool,
+) -> Result<Client> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let make = || {
+        let builder = Client::builder().user_agent(user_agent);
+        if let Some(dur) = timeout {
+            builder.timeout(dur)
+        } else {
+            builder
+        }
+    };
+
+    match make().build() {
+        Ok(client) => Ok(client),
+        Err(err) if require_tls_roots => {
+            Err(err).context("failed to initialize HTTPS client (check system CA certificates)")
+        }
+        Err(_) => {
+            let tls = rustls::ClientConfig::builder()
+                .with_root_certificates(rustls::RootCertStore::empty())
+                .with_no_client_auth();
+            make()
+                .tls_backend_preconfigured(tls)
+                .build()
+                .context("failed to initialize plain HTTP client")
+        }
+    }
+}
+
 pub struct HubClient {
     http: Client,
     hub_url: String,
@@ -16,11 +48,11 @@ pub struct HubClient {
 
 impl HubClient {
     pub fn from_config(cfg: &AgentConfig) -> Result<Self> {
-        let http = Client::builder()
-            .timeout(Duration::from_secs(12))
-            .user_agent(concat!("uptarn-agent/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .expect("build reqwest client");
+        let http = build_http_client(
+            concat!("uptarn-agent/", env!("CARGO_PKG_VERSION")),
+            Some(Duration::from_secs(12)),
+            cfg.hub_url.starts_with("https://"),
+        )?;
 
         Ok(Self {
             http,
