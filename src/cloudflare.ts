@@ -13,7 +13,7 @@ export interface CloudflareWorkerEnv extends ServerRuntimeEnv {
   LIVE_HUB?: DurableObjectNamespace<LiveHub>;
 }
 
-const PUBLIC_CACHE_TTL_SECS = 10;
+const PUBLIC_CACHE_TTL_SECS = 15;
 const CACHEABLE_PUBLIC_PATHS = new Set([
   "/api/v1/boot",
   "/api/v1/public/status",

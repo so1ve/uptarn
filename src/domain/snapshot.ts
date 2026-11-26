@@ -495,7 +495,7 @@ export async function getDashboardSnapshot(
       last_latency_ms: row.last_latency_ms,
       last_error: row.last_error,
       samples,
-      rollups: parseMonitorRollups(row.rollup_json, samples),
+      rollups: parseMonitorRollups(row.rollup_json),
     };
   });
 
@@ -652,7 +652,7 @@ export async function getPublicStatusSnapshot(
               : "Unreachable"
           : null,
       samples: allSamples.slice(-36),
-      rollups: parseMonitorRollups(row.rollup_json, allSamples),
+      rollups: parseMonitorRollups(row.rollup_json),
     };
   });
 

@@ -124,7 +124,7 @@ describe("uptarn Cloudflare Worker runtime", () => {
     );
 
     expect(status1.status).toBe(200);
-    expect(status1.headers.get("Cache-Control")).toContain("s-maxage=10");
+    expect(status1.headers.get("Cache-Control")).toContain("s-maxage=15");
 
     const firstNow = (await status1.json<{ now: number }>()).now;
 

@@ -29,7 +29,7 @@ export interface IssuedToken {
 const LIVE_PING_MS = 25_000;
 const LIVE_MIN_BACKOFF_MS = 1500;
 const LIVE_MAX_BACKOFF_MS = 30_000;
-const LIVE_POLL_FALLBACK_MS = 30_000;
+const LIVE_POLL_FALLBACK_MS = 60_000;
 
 const publicStatus = ref<PublicStatusSnapshot | null>(null);
 const snapshot = ref<DashboardSnapshot | null>(null);
@@ -372,6 +372,8 @@ export function useLiveRefresh(
   let pingTimer: ReturnType<typeof setInterval> | null = null;
   let backoffMs = LIVE_MIN_BACKOFF_MS;
   let disposed = false;
+  let focused = document.hasFocus();
+  const isWindowActive = (): boolean => !document.hidden && focused;
 
   function clearTimers() {
     if (reconnectTimer !== null) {
@@ -434,12 +436,12 @@ export function useLiveRefresh(
         return;
       }
       disconnectLive();
-      if (!disposed && !document.hidden && reconnectTimer === null) {
+      if (!disposed && isWindowActive() && reconnectTimer === null) {
         const delay = backoffMs;
         backoffMs = Math.min(LIVE_MAX_BACKOFF_MS, backoffMs * 2);
         reconnectTimer = setTimeout(() => {
           reconnectTimer = null;
-          if (!disposed && !document.hidden && socket === null) {
+          if (!disposed && isWindowActive() && socket === null) {
             connectWebSocketLive();
           }
         }, delay);
@@ -460,7 +462,7 @@ export function useLiveRefresh(
       demoPending = true;
       const session = liveSession;
       void import("./demo.ts").then(({ subscribeDemoLive }) => {
-        if (disposed || document.hidden || session !== liveSession) {
+        if (disposed || !isWindowActive() || session !== liveSession) {
           return;
         }
         demoPending = false;
@@ -477,12 +479,12 @@ export function useLiveRefresh(
     }
   }
 
-  if (!document.hidden) {
+  if (isWindowActive()) {
     startLive();
   }
 
   useIntervalFn(() => {
-    if (document.hidden) {
+    if (!isWindowActive()) {
       return;
     }
     // Relax full HTTP polling to 30s while WebSocket live stream is active.
@@ -495,8 +497,8 @@ export function useLiveRefresh(
     void refresher.refresh();
   }, intervalMs);
 
-  function onVisible() {
-    if (document.hidden) {
+  function syncActivity() {
+    if (!isWindowActive()) {
       disconnectLive();
 
       return;
@@ -507,8 +509,20 @@ export function useLiveRefresh(
     }
   }
 
-  useEventListener(document, "visibilitychange", onVisible);
-  useEventListener(window, "focus", onVisible);
+  useEventListener(document, "visibilitychange", () => {
+    if (!document.hidden) {
+      focused = document.hasFocus();
+    }
+    syncActivity();
+  });
+  useEventListener(window, "focus", () => {
+    focused = true;
+    syncActivity();
+  });
+  useEventListener(window, "blur", () => {
+    focused = false;
+    disconnectLive();
+  });
 
   onScopeDispose(() => {
     disposed = true;

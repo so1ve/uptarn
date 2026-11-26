@@ -18,7 +18,7 @@ const hasPublicContent = computed(
 );
 
 onMounted(() => {
-  if (adminPreview.value) {
+  if (adminPreview.value && !publicStatus.value) {
     loadError.value = null;
     void refreshPublicStatus({ force: true });
   }

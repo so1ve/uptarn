@@ -73,7 +73,7 @@ const navItems = computed(() => [
 const isNavActive = (to: string) =>
   route.path === to || route.path.startsWith(`${to}/`);
 
-useLiveRefresh("admin", 10_000, 3000);
+useLiveRefresh("admin");
 
 const onCheckNow = () =>
   run(

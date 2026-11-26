@@ -53,7 +53,7 @@ useTitle(
       : "Status - Uptarn",
   { restoreOnUnmount: false },
 );
-useLiveRefresh("public", 10_000, 3000);
+useLiveRefresh("public");
 
 const hasContent = computed(
   () => props.status.monitors.length > 0 || props.status.nodes.length > 0,

@@ -130,33 +130,14 @@ function addSampleToCompact(
   }
 }
 
-function loadCompactRollups(
-  raw: string | null | undefined,
-  fallbackSamples?: readonly MonitorSample[],
-): CompactRollups {
-  const parsed = raw ? (JSON.parse(raw) as CompactRollups) : {};
-  const hasData =
-    (parsed.m30?.length ?? 0) > 0 ||
-    (parsed.h6?.length ?? 0) > 0 ||
-    (parsed.d1?.length ?? 0) > 0;
-  if (!hasData && fallbackSamples && fallbackSamples.length > 0) {
-    const seeded: CompactRollups = {};
-    for (const s of fallbackSamples) {
-      addSampleToCompact(seeded, s.ts, s.ok, s.latency_ms);
-    }
-
-    return seeded;
-  }
-
-  return parsed;
-}
+const loadCompactRollups = (raw: string | null | undefined): CompactRollups =>
+  raw ? (JSON.parse(raw) as CompactRollups) : {};
 
 export function appendMonitorRollup(
   rawRollup: string | null | undefined,
-  rawSamples: string | null | undefined,
   sample: MonitorSample,
 ): string {
-  const rollup = loadCompactRollups(rawRollup, parseMonitorSamples(rawSamples));
+  const rollup = loadCompactRollups(rawRollup);
   addSampleToCompact(rollup, sample.ts, sample.ok, sample.latency_ms);
 
   return JSON.stringify(rollup);
@@ -176,9 +157,8 @@ const toRollupBuckets = (
 
 export function parseMonitorRollups(
   raw: string | null | undefined,
-  fallbackSamples?: readonly MonitorSample[],
 ): MonitorRollups {
-  const compact = loadCompactRollups(raw, fallbackSamples);
+  const compact = loadCompactRollups(raw);
 
   return {
     m30: toRollupBuckets(compact.m30),
@@ -220,11 +200,10 @@ export function buildMonitorResultStatement(
     latency_ms: res.latencyMs,
   };
   const samplesJson = appendMonitorSample(monitor.samples_json, sample);
-  const rollupJson = appendMonitorRollup(
-    monitor.rollup_json,
-    monitor.samples_json,
-    { ...sample, ts: now },
-  );
+  const rollupJson = appendMonitorRollup(monitor.rollup_json, {
+    ...sample,
+    ts: now,
+  });
 
   if (options.updateCheckedAt === false) {
     return {
