@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { createReusableTemplate } from "@vueuse/core";
+import { ref } from "vue";
 
+import JobModal from "../components/modals/JobModal.vue";
+import JobPingModal from "../components/modals/JobPingModal.vue";
 import ConfirmPopover from "../components/ui/ConfirmPopover.vue";
 import EmptyState from "../components/ui/EmptyState.vue";
 import MuteButton from "../components/ui/MuteButton.vue";
@@ -13,6 +16,7 @@ import {
   formatAge,
   formatDuration,
   formatMs,
+  formatRemaining,
   useAction,
   usePageTitle,
   useSnapshot,
@@ -26,8 +30,107 @@ const [DefineJobActions, JobActions] = createReusableTemplate<{
   job: JobSummary;
 }>();
 
-const jobSchedule = (job: JobSummary): string =>
-  `Every ${formatDuration(job.interval_secs)}${job.last_duration_ms === null ? "" : `, ${formatMs(job.last_duration_ms)}`}`;
+const jobModalOpen = ref(false);
+const editingJob = ref<JobSummary | null>(null);
+const pingModalOpen = ref(false);
+const issuedPing = ref<{ key: string; label: string; pingUrl: string } | null>(
+  null,
+);
+
+function openJobModal(job: JobSummary | null) {
+  editingJob.value = job;
+  jobModalOpen.value = true;
+}
+
+function onIssuedPing(payload: {
+  key: string;
+  label: string;
+  pingUrl: string;
+}) {
+  issuedPing.value = payload;
+  pingModalOpen.value = true;
+}
+
+function jobSchedule(job: JobSummary): string {
+  const parts = [`Every ${formatDuration(job.interval_secs)}`];
+  if (job.last_duration_ms !== null) {
+    parts.push(formatMs(job.last_duration_ms));
+  }
+  if (
+    job.overall_status !== "overdue" &&
+    job.overall_status !== "fail" &&
+    job.next_due_at > snap.value.now
+  ) {
+    parts.push(`next in ${formatRemaining(job.next_due_at, snap.value.now)}`);
+  }
+
+  return parts.join(" · ");
+}
+
+function statusTiming(job: JobSummary): { text: string; cls: string } {
+  if (job.overall_status === "overdue") {
+    return { text: "Overdue", cls: "text-red-500 dark:text-red-400" };
+  }
+  if (job.overall_status === "fail") {
+    return {
+      text:
+        job.last_run_at === null
+          ? "Failed"
+          : formatAge(job.last_run_at, snap.value.now),
+      cls: "text-red-500 dark:text-red-400",
+    };
+  }
+  if (job.overall_status === "running") {
+    const elapsed =
+      job.started_at === null
+        ? ""
+        : ` ${formatDuration(Math.max(0, snap.value.now - job.started_at))}`;
+
+    return {
+      text: `Running${elapsed}`,
+      cls: "text-sky-600 dark:text-sky-400",
+    };
+  }
+  if (job.overall_status === "pending") {
+    return { text: "Pending", cls: "text-dimmed" };
+  }
+
+  return {
+    text:
+      job.last_run_at === null
+        ? "Pending"
+        : formatAge(job.last_run_at, snap.value.now),
+    cls: "text-muted",
+  };
+}
+
+function jobSummaryText(job: JobSummary): string {
+  if (job.overall_status === "overdue") {
+    if (job.last_run_at === null) {
+      return "Never reported";
+    }
+
+    return `Last finished ${formatAge(job.last_run_at, snap.value.now)}${job.last_summary ? ` (${job.last_summary})` : ""}`;
+  }
+  if (job.overall_status === "pending") {
+    return "Waiting for first report";
+  }
+
+  return job.last_summary ?? job.last_status;
+}
+
+const onRotatePing = (job: JobSummary) =>
+  run(`rotate:${job.key}`, "Rotation failed", async () => {
+    const res = await apiFetch<{ key: string; ping_url: string }>(
+      `/api/v1/admin/jobs/${encodeURIComponent(job.key)}/rotate-token`,
+      "POST",
+    );
+    onIssuedPing({
+      key: res.key,
+      label: job.label,
+      pingUrl: res.ping_url,
+    });
+  });
 
 const onRemoveJob = (key: string) =>
   run(
@@ -53,25 +156,58 @@ const onRemoveJob = (key: string) =>
         :target-id="job.key"
         target-type="job"
       />
-      <ConfirmPopover
-        label="Remove"
-        :loading="busy === job.key"
-        @confirm="onRemoveJob(job.key)"
-      >
-        Remove
-        <strong>{{ job.label }}</strong>
-        ?
-      </ConfirmPopover>
+      <template v-if="!job.managed_by_node_id">
+        <UButton
+          aria-label="Edit job"
+          class="font-sans"
+          color="neutral"
+          icon="i-lucide-pencil"
+          size="xs"
+          variant="ghost"
+          @click="openJobModal(job)"
+        />
+        <ConfirmPopover
+          class="font-sans"
+          confirm-color="primary"
+          confirm-label="Rotate"
+          label="Rotate URL"
+          :loading="busy === `rotate:${job.key}`"
+          @confirm="onRotatePing(job)"
+        >
+          Rotate ping URL for
+          <strong>{{ job.label }}</strong>
+          ? The current URL will stop working.
+        </ConfirmPopover>
+        <ConfirmPopover
+          class="font-sans"
+          label="Remove"
+          :loading="busy === job.key"
+          @confirm="onRemoveJob(job.key)"
+        >
+          Remove
+          <strong>{{ job.label }}</strong>
+          ?
+        </ConfirmPopover>
+      </template>
     </DefineJobActions>
 
-    <PageHeader title="Jobs" />
+    <PageHeader title="Jobs">
+      <UButton
+        color="primary"
+        icon="i-lucide-plus"
+        size="xs"
+        @click="openJobModal(null)"
+      >
+        Add job
+      </UButton>
+    </PageHeader>
 
     <EmptyState v-if="snap.jobs.length === 0">
-      No jobs yet. Report runs with
+      No jobs yet. Create a push job for a ping URL, or emit
       <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
-        uptarn-agent run
+        jobs[]
       </code>
-      .
+      from an agent collector.
     </EmptyState>
 
     <div v-else class="divide-y divide-default border-y border-default">
@@ -99,24 +235,17 @@ const onRemoveJob = (key: string) =>
                 {{ job.node_id }}
               </UBadge>
             </RouterLink>
+            <UBadge v-else color="neutral" size="xs" variant="subtle">
+              Push
+            </UBadge>
             <MutedBadge :now="snap.now" :until="job.muted_until" />
           </div>
 
           <div
             class="flex shrink-0 items-center gap-2 pt-0.5 font-mono text-xs tabular-nums sm:pt-0"
           >
-            <span
-              :class="
-                job.overall_status === 'ok'
-                  ? 'text-muted'
-                  : 'text-red-500 dark:text-red-400'
-              "
-            >
-              {{
-                job.overall_status === "overdue"
-                  ? "Overdue"
-                  : formatAge(job.last_run_at, snap.now)
-              }}
+            <span :class="statusTiming(job).cls">
+              {{ statusTiming(job).text }}
             </span>
 
             <div class="hidden items-center gap-1 sm:flex">
@@ -135,11 +264,7 @@ const onRemoveJob = (key: string) =>
                 : 'text-muted'
             "
           >
-            {{
-              job.overall_status === "overdue"
-                ? `Last finished ${formatAge(job.last_run_at, snap.now)}${job.last_summary ? ` (${job.last_summary})` : ""}`
-                : (job.last_summary ?? job.last_status)
-            }}
+            {{ jobSummaryText(job) }}
           </span>
           <span
             class="hidden shrink-0 font-mono text-[11px] text-dimmed tabular-nums sm:inline"
@@ -148,7 +273,9 @@ const onRemoveJob = (key: string) =>
           </span>
         </div>
 
-        <div class="flex items-center justify-between gap-2 pl-4 sm:hidden">
+        <div
+          class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 pl-4 sm:hidden"
+        >
           <span class="font-mono text-[11px] text-dimmed tabular-nums">
             {{ jobSchedule(job) }}
           </span>
@@ -163,5 +290,12 @@ const onRemoveJob = (key: string) =>
           >{{ job.last_detail }}</pre>
       </div>
     </div>
+
+    <JobModal
+      v-model:open="jobModalOpen"
+      :job="editingJob"
+      @issued="onIssuedPing"
+    />
+    <JobPingModal v-model:open="pingModalOpen" :issued="issuedPing" />
   </div>
 </template>

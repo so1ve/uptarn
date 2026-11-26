@@ -7,7 +7,9 @@ import type { LoadedConfig } from "../config.ts";
 import type { SqlDatabase, SqlStatement } from "../db/index.ts";
 import { httpError } from "../http.ts";
 import type {
+  JobRunStatus,
   MonitorProbe,
+  NodeJobSnapshot,
   NodeMonitorSpec,
   NodeReportPayload,
   SeriesPoint,
@@ -22,6 +24,7 @@ import {
 } from "../shared/index.ts";
 import type { AlertObservation, AlertStateRow } from "./alerts.ts";
 import { ALERT_STATE_COLUMNS, buildAlertStatements } from "./alerts.ts";
+import { jobNextDueAt, jobOverdueSummary } from "./jobs.ts";
 import type { MaintenanceRow } from "./maintenances.ts";
 import {
   SELECT_ACTIVE_MAINTENANCES_SQL,
@@ -385,6 +388,156 @@ function buildManagedMonitorStatements(
   return { statements, observations };
 }
 
+interface ManagedJobRow {
+  key: string;
+  label: string;
+  interval_secs: number;
+  grace_secs: number;
+  muted_until: number;
+  created_at: number;
+  started_at: number | null;
+  last_run_at: number | null;
+  next_run_at: number | null;
+  last_status: JobRunStatus;
+  last_duration_ms: number | null;
+}
+
+function buildManagedJobStatements(
+  nodeId: string,
+  specs: readonly NodeJobSnapshot[],
+  existing: readonly ManagedJobRow[],
+  now: number,
+): { statements: SqlStatement[]; observations: AlertObservation[] } {
+  const statements: SqlStatement[] = [];
+  const observations: AlertObservation[] = [];
+  const existingByKey = new Map(existing.map((row) => [row.key, row]));
+  const nextKeys = new Set<string>();
+
+  for (const spec of specs) {
+    const key = `${nodeId}:${spec.key}`.slice(0, 64);
+    nextKeys.add(key);
+    const prev = existingByKey.get(key);
+    const label = spec.label ?? prev?.label ?? spec.key;
+    const graceSecs = spec.grace_secs ?? prev?.grace_secs ?? 3600;
+    const createdAt = prev?.created_at ?? now;
+    const startedAt =
+      spec.status === "running" ? (prev?.started_at ?? now) : null;
+    const lastRunAt =
+      spec.last_run_at === undefined
+        ? (prev?.last_run_at ?? null)
+        : spec.last_run_at;
+    const nextRunAt = spec.next_run_at === undefined ? null : spec.next_run_at;
+    const durationMs =
+      spec.duration_ms === undefined
+        ? (prev?.last_duration_ms ?? null)
+        : spec.duration_ms;
+    const summary = spec.summary === undefined ? null : spec.summary;
+    const detail = spec.detail === undefined ? null : spec.detail;
+
+    statements.push({
+      sql: `INSERT INTO jobs (
+              key, node_id, managed_by_node_id, ping_token_hash, label,
+              interval_secs, grace_secs, muted_until, created_at,
+              started_at, last_run_at, next_run_at, last_status,
+              last_duration_ms, last_summary, last_detail
+            ) VALUES (?1, ?2, ?2, NULL, ?3, ?4, ?5, 0, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            ON CONFLICT(key) DO UPDATE SET
+              node_id = excluded.node_id,
+              managed_by_node_id = excluded.managed_by_node_id,
+              ping_token_hash = NULL,
+              label = excluded.label,
+              interval_secs = excluded.interval_secs,
+              grace_secs = excluded.grace_secs,
+              started_at = excluded.started_at,
+              last_run_at = excluded.last_run_at,
+              next_run_at = excluded.next_run_at,
+              last_status = excluded.last_status,
+              last_duration_ms = excluded.last_duration_ms,
+              last_summary = excluded.last_summary,
+              last_detail = excluded.last_detail`,
+      params: [
+        key,
+        nodeId,
+        label,
+        spec.interval_secs,
+        graceSecs,
+        createdAt,
+        startedAt,
+        lastRunAt,
+        nextRunAt,
+        spec.status,
+        durationMs,
+        summary,
+        detail,
+      ],
+    });
+
+    const dueAt = jobNextDueAt({
+      created_at: createdAt,
+      last_run_at: lastRunAt,
+      next_run_at: nextRunAt,
+      interval_secs: spec.interval_secs,
+    });
+    const isOverdue = now > dueAt + graceSecs;
+    const targetMutedUntil = prev?.muted_until ?? 0;
+
+    if (spec.status === "fail") {
+      observations.push({
+        incidentKey: `job:${key}`,
+        targetType: "job",
+        targetId: key,
+        label: `Job: ${label}`,
+        failing: true,
+        summary: summary ?? "Job failed",
+        threshold: 1,
+        targetMutedUntil,
+      });
+    } else if (isOverdue) {
+      observations.push({
+        incidentKey: `job:${key}`,
+        targetType: "job",
+        targetId: key,
+        label: `Job: ${label}`,
+        failing: true,
+        summary: jobOverdueSummary(
+          { last_run_at: lastRunAt, interval_secs: spec.interval_secs },
+          now,
+        ),
+        threshold: 1,
+        targetMutedUntil,
+      });
+    } else if (spec.status === "ok") {
+      observations.push({
+        incidentKey: `job:${key}`,
+        targetType: "job",
+        targetId: key,
+        label: `Job: ${label}`,
+        failing: false,
+        summary: summary ?? "Job succeeded",
+        threshold: 1,
+        targetMutedUntil,
+      });
+    }
+  }
+
+  for (const prev of existing) {
+    if (!nextKeys.has(prev.key)) {
+      statements.push(
+        {
+          sql: "DELETE FROM alert_states WHERE target_type = 'job' AND target_id = ?1",
+          params: [prev.key],
+        },
+        {
+          sql: "DELETE FROM jobs WHERE key = ?1 AND managed_by_node_id = ?2",
+          params: [prev.key, nodeId],
+        },
+      );
+    }
+  }
+
+  return { statements, observations };
+}
+
 const utcDaysInMonth = (year: number, monthIndex: number): number =>
   new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
 
@@ -501,6 +654,8 @@ export async function ingestNodeReport(
     },
     { sql: SELECT_ACTIVE_MAINTENANCES_SQL, params: [now] },
   ];
+  const monitorBatchIdx =
+    payload.monitors === undefined ? -1 : batchQueries.length;
   if (payload.monitors !== undefined) {
     batchQueries.push(
       {
@@ -517,26 +672,44 @@ export async function ingestNodeReport(
       },
     );
   }
+  const jobBatchIdx = payload.jobs === undefined ? -1 : batchQueries.length;
+  if (payload.jobs !== undefined) {
+    batchQueries.push(
+      {
+        sql: `SELECT key, label, interval_secs, grace_secs, muted_until, created_at,
+                     started_at, last_run_at, next_run_at, last_status, last_duration_ms
+              FROM jobs WHERE managed_by_node_id = ?1`,
+        params: [payload.node_id],
+      },
+      {
+        sql: `SELECT ${ALERT_STATE_COLUMNS} FROM alert_states
+              WHERE target_type = 'job'
+                AND target_id IN (SELECT key FROM jobs WHERE managed_by_node_id = ?1)`,
+        params: [payload.node_id],
+      },
+    );
+  }
 
   const [incomingHash, batchResults] = await Promise.all([
     sha256Hex(bearerToken),
     db.allBatch(batchQueries),
   ]);
-  const [
-    settingRows,
-    nodeRows,
-    existingAlertStates,
-    activeMaintenanceRows,
-    managedMonitorRows = [],
-    existingMonitorAlertStates = [],
-  ] = batchResults as [
-    SettingRow[],
-    NodeIngestRow[],
-    AlertStateRow[],
-    MaintenanceRow[],
-    ManagedMonitorRow[]?,
-    AlertStateRow[]?,
-  ];
+  const settingRows = batchResults[0] as SettingRow[];
+  const nodeRows = batchResults[1] as NodeIngestRow[];
+  const existingAlertStates = batchResults[2] as AlertStateRow[];
+  const activeMaintenanceRows = batchResults[3] as MaintenanceRow[];
+  const managedMonitorRows = (
+    monitorBatchIdx >= 0 ? batchResults[monitorBatchIdx] : []
+  ) as ManagedMonitorRow[];
+  const existingMonitorAlertStates = (
+    monitorBatchIdx >= 0 ? batchResults[monitorBatchIdx + 1] : []
+  ) as AlertStateRow[];
+  const managedJobRows = (
+    jobBatchIdx >= 0 ? batchResults[jobBatchIdx] : []
+  ) as ManagedJobRow[];
+  const existingJobAlertStates = (
+    jobBatchIdx >= 0 ? batchResults[jobBatchIdx + 1] : []
+  ) as AlertStateRow[];
   const activeMaintenances = parseActiveMaintenances(activeMaintenanceRows);
 
   const settings = parseRuntimeSettings(settingRows, config);
@@ -693,6 +866,17 @@ export async function ingestNodeReport(
     statements.push(...managed.statements);
     monitorObservations = managed.observations;
   }
+  let jobObservations: AlertObservation[] = [];
+  if (payload.jobs !== undefined) {
+    const managedJobs = buildManagedJobStatements(
+      nodeId,
+      payload.jobs,
+      managedJobRows,
+      now,
+    );
+    statements.push(...managedJobs.statements);
+    jobObservations = managedJobs.observations;
+  }
 
   if (Object.keys(sampleValues).length > 0) {
     statements.push({
@@ -765,6 +949,18 @@ export async function ingestNodeReport(
         config,
         monitorObservations,
         existingMonitorAlertStates,
+        settings.globalMutedUntil,
+        now,
+        false,
+      )),
+    );
+  }
+  if (jobObservations.length > 0) {
+    statements.push(
+      ...(await buildAlertStatements(
+        config,
+        jobObservations,
+        existingJobAlertStates,
         settings.globalMutedUntil,
         now,
         false,

@@ -48,20 +48,15 @@ enum Commands {
         #[arg(long)]
         push: bool,
     },
-    /// Execute a command and report job completion or failure to Uptarn
+    /// Execute a command and report start/completion/failure to a push job ping
+    /// URL
     Run {
-        /// Unique job key (e.g. homelab-restic)
-        #[arg(long)]
-        job: String,
-        /// Optional display label
-        #[arg(long)]
-        label: Option<String>,
-        /// Expected schedule interval (e.g. 24h, 30m, 3600s)
-        #[arg(long)]
-        every: String,
-        /// Grace window before job is marked overdue (e.g. 2h, 30m)
-        #[arg(long, default_value = "1h")]
-        grace: String,
+        /// Push job ping URL (e.g. https://status.example.com/ping/uptn_job_...)
+        #[arg(long, env = "UPTARN_PING_URL")]
+        ping_url: Option<String>,
+        /// Path to a file containing the push job ping URL
+        #[arg(long, env = "UPTARN_PING_URL_FILE")]
+        ping_url_file: Option<String>,
         /// Command and arguments to execute
         #[arg(required = true, trailing_var_arg = true)]
         cmd: Vec<String>,
@@ -135,13 +130,11 @@ async fn main() -> Result<()> {
         Commands::Daemon => run_daemon(&cli.config).await,
         Commands::Once { push } => run_once(&cli.config, push).await,
         Commands::Run {
-            job,
-            label,
-            every,
-            grace,
+            ping_url,
+            ping_url_file,
             cmd,
         } => {
-            let code = run_job_wrapper(&cli.config, job, label, &every, &grace, &cmd).await?;
+            let code = run_job_wrapper(ping_url.as_deref(), ping_url_file.as_deref(), &cmd).await?;
             if code != 0 {
                 std::process::exit(code);
             }
@@ -166,8 +159,7 @@ mod tests {
     use tokio::net::TcpListener;
 
     use super::*;
-    use crate::config::parse_duration_secs;
-    use crate::protocol::{HealthStatus, MonitorProbeType, MonitorSpec};
+    use crate::protocol::{HealthStatus, JobRunStatus, MonitorProbeType, MonitorSpec};
 
     fn write_test_file(path: impl AsRef<Path>, body: &str, executable: bool) {
         use std::os::unix::fs::PermissionsExt;
@@ -175,15 +167,6 @@ mod tests {
         std::fs::write(path.as_ref(), body).unwrap();
         let mode = if executable { 0o755 } else { 0o644 };
         std::fs::set_permissions(path.as_ref(), std::fs::Permissions::from_mode(mode)).unwrap();
-    }
-
-    #[test]
-    fn parses_human_durations() {
-        assert_eq!(parse_duration_secs("60").unwrap(), 60);
-        assert_eq!(parse_duration_secs("90s").unwrap(), 90);
-        assert_eq!(parse_duration_secs("15m").unwrap(), 900);
-        assert_eq!(parse_duration_secs("24h").unwrap(), 86_400);
-        assert_eq!(parse_duration_secs("2d").unwrap(), 172_800);
     }
 
     #[tokio::test]
@@ -212,7 +195,7 @@ os_info = false
 path = "/tmp"
 label = "Temp"
 
-[[checks]]
+[[collectors]]
 key = "router_ext"
 label = "Router checks"
 format = "json"
@@ -239,7 +222,7 @@ command = ["sh", "-c", 'printf "%s" "{{\"checks\":[{{\"key\":\"tailscale\",\"lab
     }
 
     #[tokio::test]
-    async fn discovers_check_dirs_and_dynamic_mounts_without_reload() {
+    async fn discovers_collector_dirs_and_dynamic_mounts_without_reload() {
         let dir = tempfile::tempdir().unwrap();
         let write_script = |name: &str, body: &str, executable: bool| {
             write_test_file(dir.path().join(name), body, executable);
@@ -261,7 +244,7 @@ command = ["sh", "-c", 'printf "%s" "{{\"checks\":[{{\"key\":\"tailscale\",\"lab
 hub_url = "https://status.example.com"
 node_id = "nas"
 token = "uptn_tok"
-check_dirs = ["{dir_path}"]
+collector_dirs = ["{dir_path}"]
 
 [system]
 enabled = false
@@ -297,7 +280,7 @@ enabled = false
     }
 
     #[tokio::test]
-    async fn supports_toml_dropins_and_script_header_metadata_in_check_dirs() {
+    async fn supports_toml_dropins_and_script_header_metadata_in_collector_dirs() {
         let dir = tempfile::tempdir().unwrap();
         let lib_dir = dir.path().join(".lib");
         std::fs::create_dir(&lib_dir).unwrap();
@@ -322,12 +305,12 @@ command = ["./.lib/unit.sh", "ddclient.service", "ddclient.timer"]
         write_file(
             dir.path().join("20-units.toml"),
             r#"
-[[checks]]
+[[collectors]]
 key = "warn_svc"
 label = "Warn Service"
 command = ["./.lib/unit.sh", "warn.service"]
 
-[[checks]]
+[[collectors]]
 key = "json_svc"
 label = "JSON Service"
 command = ["sh", "-c", 'printf "%s" "{\"checks\":[{\"key\":\"inner\",\"label\":\"Inner\",\"status\":\"ok\",\"summary\":\"ready\"}]}"']
@@ -358,7 +341,7 @@ token = "uptn_tok"
 [system]
 enabled = false
 
-[[check_dirs]]
+[[collector_dirs]]
 path = "{dir_path}"
 group = "custom"
 warn_exit_code = 2
@@ -444,7 +427,7 @@ grace_secs = 90
 [system]
 enabled = false
 
-[[checks]]
+[[collectors]]
 type = "tcp"
 key = "tcp.local"
 label = "Local TCP"
@@ -608,5 +591,86 @@ target = "127.0.0.1:5432"
         )
         .unwrap();
         assert!(AgentConfig::load(hub_tcp.path()).is_err());
+    }
+
+    #[tokio::test]
+    async fn collects_jobs_from_collector_json_and_runs_ping_wrapper() {
+        let dir = tempfile::tempdir().unwrap();
+        write_test_file(
+            dir.path().join("10-jobs.sh"),
+            r#"#!/bin/sh
+printf '%s' '{"jobs":[{"key":"restic","label":"Restic Backup","status":"ok","interval_secs":86400,"last_run_at":1700000000,"next_run_at":1700086400,"duration_ms":4200,"summary":"4.2s"}]}'
+"#,
+            true,
+        );
+
+        let mut cfg_file = NamedTempFile::new().unwrap();
+        write!(
+            cfg_file,
+            r#"
+hub_url = "https://status.example.com"
+node_id = "homelab"
+token = "uptn_tok"
+collector_dirs = ["{dir_path}"]
+
+[system]
+enabled = false
+"#,
+            dir_path = dir.path().display()
+        )
+        .unwrap();
+
+        let cfg = AgentConfig::load(cfg_file.path()).unwrap();
+        let mut cpu = CpuTracker::default();
+        let report = collect_report(&cfg, &mut cpu).await;
+        assert_eq!(report.jobs.len(), 1);
+        assert_eq!(report.jobs[0].key, "restic");
+        assert_eq!(report.jobs[0].status, JobRunStatus::Ok);
+        assert_eq!(report.jobs[0].next_run_at, Some(1_700_086_400));
+
+        // Verify `run_job_wrapper` posts /start and /fail against a local HTTP
+        // server
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let mut paths = Vec::new();
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut buf = [0u8; 2048];
+                let n = stream.read(&mut buf).await.unwrap();
+                let req = String::from_utf8_lossy(&buf[..n]);
+                let first_line = req.lines().next().unwrap_or_default().to_string();
+                paths.push(first_line);
+                let _ = stream
+                    .write_all(
+                        b"HTTP/1.1 200 OK
+Content-Length: 3
+Connection: close
+
+ok
+",
+                    )
+                    .await;
+            }
+            paths
+        });
+
+        let ping_url = format!("http://{addr}/ping/uptn_job_test123");
+        let code = run_job_wrapper(
+            Some(&ping_url),
+            None,
+            &[
+                "sh".to_string(),
+                "-c".to_string(),
+                "echo boom >&2; exit 7".to_string(),
+            ],
+        )
+        .await
+        .unwrap();
+        assert_eq!(code, 7);
+
+        let paths = server.await.unwrap();
+        assert!(paths[0].starts_with("POST /ping/uptn_job_test123/start "));
+        assert!(paths[1].starts_with("POST /ping/uptn_job_test123/fail "));
     }
 }

@@ -18,30 +18,38 @@ import type { LoadedConfig } from "./config.ts";
 import type { SqlDatabase } from "./db/index.ts";
 import {
   createNode,
+  createPushJob,
   deleteMaintenance,
   deleteTarget,
   getDashboardSnapshot,
   getNodeHistory,
   getPublicStatusSnapshot,
-  ingestJobReport,
+  handleJobPing,
   ingestNodeReport,
   reorderTargets,
+  rotateJobPingToken,
   rotateNodeToken,
   runTick,
   sendTestNotification,
   setTargetMute,
   updateMonitor,
   updateNode,
+  updatePushJob,
   updateRuntimeSettings,
   upsertMaintenance,
   upsertMonitor,
 } from "./domain/index.ts";
-import { extractBearer, httpError, readJson } from "./http.ts";
+import {
+  extractBearer,
+  httpError,
+  readJson,
+  readOptionalText,
+} from "./http.ts";
 import type { TargetType } from "./shared/index.ts";
 import { errorMessage, unixNow } from "./shared/index.ts";
 import {
   parseCreateNodeInput,
-  parseJobReportPayload,
+  parseJobPatch,
   parseMonitorPatch,
   parseMuteInput,
   parseNodePatch,
@@ -51,7 +59,7 @@ import {
 } from "./validation.ts";
 
 const MAX_INGEST_REPORT_BYTES = 256 * 1024;
-const MAX_INGEST_JOB_BYTES = 32 * 1024;
+const MAX_PING_BODY_BYTES = 16 * 1024;
 
 const resolveMutedUntil = (
   mutedUntil?: number,
@@ -158,17 +166,35 @@ export function createApp(
     return c.json({ ok: true, registered });
   });
 
-  app.post("/api/v1/ingest/job", async (c) => {
-    const token = requireBearer(c);
-    await ingestJobReport(
-      db,
-      config,
-      parseJobReportPayload(await readJson(c, MAX_INGEST_JOB_BYTES)),
-      token,
-    );
+  const pingRoute = (action: "ok" | "start" | "fail") => async (c: Context) => {
+    c.header("Cache-Control", "no-store");
+    const rawDuration =
+      c.req.query("duration_ms") ?? c.req.header("X-Uptarn-Duration-Ms");
+    const parsedDuration =
+      rawDuration === undefined || rawDuration === ""
+        ? null
+        : Number(rawDuration);
+    const durationMs =
+      parsedDuration !== null &&
+      Number.isFinite(parsedDuration) &&
+      parsedDuration >= 0
+        ? Math.floor(parsedDuration)
+        : null;
+    const body = await readOptionalText(c, MAX_PING_BODY_BYTES);
+    await handleJobPing(db, config, c.req.param("token") ?? "", action, {
+      body,
+      durationMs,
+    });
 
-    return c.json({ ok: true });
-  });
+    return c.text("ok\n");
+  };
+
+  app.get("/ping/:token", pingRoute("ok"));
+  app.post("/ping/:token", pingRoute("ok"));
+  app.get("/ping/:token/start", pingRoute("start"));
+  app.post("/ping/:token/start", pingRoute("start"));
+  app.get("/ping/:token/fail", pingRoute("fail"));
+  app.post("/ping/:token/fail", pingRoute("fail"));
 
   app.use("/api/v1/admin/*", requireAdmin(db, config));
 
@@ -260,6 +286,29 @@ export function createApp(
 
   app.delete("/api/v1/admin/monitors/:id", (c) =>
     removeOr404(c, db, "monitor", c.req.param("id")),
+  );
+
+  app.post("/api/v1/admin/jobs", async (c) =>
+    c.json(
+      { ok: true, ...(await createPushJob(db, config, await readJson(c))) },
+      201,
+    ),
+  );
+
+  app.patch("/api/v1/admin/jobs/:key", async (c) => {
+    const patch = parseJobPatch(await readJson(c));
+    if (!(await updatePushJob(db, c.req.param("key"), patch))) {
+      throw httpError(404, "Not found");
+    }
+
+    return c.json({ ok: true, ...patch });
+  });
+
+  app.post("/api/v1/admin/jobs/:key/rotate-token", async (c) =>
+    c.json({
+      ok: true,
+      ...(await rotateJobPingToken(db, config, c.req.param("key"))),
+    }),
   );
 
   app.delete("/api/v1/admin/jobs/:key", (c) =>

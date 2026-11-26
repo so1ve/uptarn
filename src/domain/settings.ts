@@ -3,6 +3,7 @@ import type { LoadedConfig } from "../config.ts";
 import type { SqlDatabase, SqlStatement } from "../db/index.ts";
 import type { SiteLink, TargetType } from "../shared/index.ts";
 import { unixNow } from "../shared/index.ts";
+import { assertJobHubManaged } from "./jobs.ts";
 import { assertMonitorHubManaged } from "./monitors.ts";
 
 export interface RuntimeSettings {
@@ -179,6 +180,8 @@ export async function deleteTarget(
 ): Promise<boolean> {
   if (targetType === "monitor") {
     await assertMonitorHubManaged(db, targetId);
+  } else if (targetType === "job") {
+    await assertJobHubManaged(db, targetId);
   }
   const { table, pk } = TARGET_TABLE[targetType];
   const statements: SqlStatement[] = [
@@ -188,10 +191,16 @@ export async function deleteTarget(
     },
   ];
   if (targetType === "node") {
-    statements.push({
-      sql: "DELETE FROM alert_states WHERE target_type = 'monitor' AND target_id IN (SELECT id FROM monitors WHERE managed_by_node_id = ?1)",
-      params: [targetId],
-    });
+    statements.push(
+      {
+        sql: "DELETE FROM alert_states WHERE target_type = 'monitor' AND target_id IN (SELECT id FROM monitors WHERE managed_by_node_id = ?1)",
+        params: [targetId],
+      },
+      {
+        sql: "DELETE FROM alert_states WHERE target_type = 'job' AND target_id IN (SELECT key FROM jobs WHERE managed_by_node_id = ?1)",
+        params: [targetId],
+      },
+    );
   }
   statements.push({
     sql: `DELETE FROM ${table} WHERE ${pk} = ?1`,

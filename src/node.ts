@@ -116,7 +116,7 @@ export async function startNodeServer(
     app.use(route, staticHandler);
   }
   app.get("*", async (c, next) => {
-    if (c.req.path.startsWith("/api/")) {
+    if (c.req.path.startsWith("/api/") || c.req.path.startsWith("/ping/")) {
       await next();
 
       return;

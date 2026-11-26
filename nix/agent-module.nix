@@ -67,13 +67,13 @@ in
     extraPackages = lib.mkOption {
       type = lib.types.listOf lib.types.package;
       default = [ ];
-      description = "Extra packages added to PATH for [[checks]] and exec [[monitors]].";
+      description = "Extra packages added to PATH for [[collectors]] and exec [[monitors]].";
     };
 
     settings = lib.mkOption {
       inherit (tomlFormat) type;
       default = { };
-      description = "Additional agent.toml configuration (system, mounts, checks, check_dirs, info, monitors).";
+      description = "Additional agent.toml configuration (system, mounts, collectors, collector_dirs, info, monitors).";
     };
   };
 

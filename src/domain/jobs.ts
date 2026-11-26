@@ -1,9 +1,14 @@
-import { sha256Hex, timingSafeEqualText } from "../auth/index.ts";
+import { generateRandomToken, sha256Hex } from "../auth/index.ts";
 import type { LoadedConfig } from "../config.ts";
 import type { SqlDatabase, SqlStatement } from "../db/index.ts";
 import { httpError } from "../http.ts";
-import type { JobReportPayload } from "../shared/index.ts";
-import { unixNow } from "../shared/index.ts";
+import type {
+  JobInput,
+  JobOverallStatus,
+  JobRunStatus,
+} from "../shared/index.ts";
+import { formatAge, formatDuration, unixNow } from "../shared/index.ts";
+import { parseJobInput } from "../validation.ts";
 import type { AlertStateRow } from "./alerts.ts";
 import { ALERT_STATE_COLUMNS, buildAlertStatements } from "./alerts.ts";
 import type { SettingRow } from "./settings.ts";
@@ -12,73 +17,262 @@ import { SELECT_SETTINGS_SQL, parseRuntimeSettings } from "./settings.ts";
 export interface JobRow {
   key: string;
   node_id: string | null;
+  managed_by_node_id: string | null;
+  ping_token_hash: string | null;
   label: string;
   interval_secs: number;
   grace_secs: number;
   muted_until: number;
   created_at: number;
-  last_run_at: number;
-  last_status: "ok" | "fail";
+  started_at: number | null;
+  last_run_at: number | null;
+  next_run_at: number | null;
+  last_status: JobRunStatus;
   last_duration_ms: number | null;
   last_summary: string | null;
   last_detail: string | null;
 }
 
-export async function ingestJobReport(
+export type JobPingAction = "ok" | "start" | "fail";
+
+export interface JobDueFields {
+  created_at: number;
+  last_run_at: number | null;
+  next_run_at: number | null;
+  interval_secs: number;
+}
+
+export const jobNextDueAt = (job: JobDueFields): number =>
+  job.next_run_at ?? (job.last_run_at ?? job.created_at) + job.interval_secs;
+
+export function jobOverallStatus(
+  job: JobDueFields & { grace_secs: number; last_status: JobRunStatus },
+  now: number,
+): JobOverallStatus {
+  if (job.last_status === "fail") {
+    return "fail";
+  }
+  if (now > jobNextDueAt(job) + job.grace_secs) {
+    return "overdue";
+  }
+
+  return job.last_status;
+}
+
+export const jobOverdueSummary = (
+  job: { last_run_at: number | null; interval_secs: number },
+  now: number,
+): string =>
+  job.last_run_at === null
+    ? `Overdue: never reported (expected every ${formatDuration(job.interval_secs)})`
+    : `Overdue: last finished ${formatAge(job.last_run_at, now)}`;
+
+async function issueJobPingToken() {
+  const token = generateRandomToken("uptn_job");
+
+  return { token, hash: await sha256Hex(token) };
+}
+
+export const buildJobPingUrl = (publicBaseUrl: string, token: string): string =>
+  `${publicBaseUrl.replace(/\/+$/, "")}/ping/${token}`;
+
+export async function assertJobHubManaged(
+  db: SqlDatabase,
+  key: string,
+): Promise<void> {
+  const existing = await db.first<{ managed_by_node_id: string | null }>(
+    "SELECT managed_by_node_id FROM jobs WHERE key = ?1",
+    [key],
+  );
+  if (existing?.managed_by_node_id) {
+    throw httpError(
+      409,
+      `Job "${key}" is managed by node "${existing.managed_by_node_id}"`,
+    );
+  }
+}
+
+export async function createPushJob(
   db: SqlDatabase,
   config: LoadedConfig,
-  payload: JobReportPayload,
-  bearerToken: string,
-): Promise<void> {
-  const now = unixNow();
-  const [tokenHash, isAdmin] = await Promise.all([
-    sha256Hex(bearerToken),
-    config.adminToken === null
-      ? false
-      : timingSafeEqualText(bearerToken, config.adminToken),
+  raw: JobInput | unknown,
+): Promise<{ key: string; label: string; token: string; ping_url: string }> {
+  const input = parseJobInput(raw);
+  const { token, hash } = await issueJobPingToken();
+  const res = await db.run(
+    `INSERT OR IGNORE INTO jobs
+       (key, node_id, managed_by_node_id, ping_token_hash, label, interval_secs, grace_secs, created_at, last_status)
+     VALUES (?1, NULL, NULL, ?2, ?3, ?4, ?5, ?6, 'pending')`,
+    [
+      input.key,
+      hash,
+      input.label,
+      input.interval_secs,
+      input.grace_secs,
+      unixNow(),
+    ],
+  );
+  if (res.changes === 0) {
+    throw httpError(409, `Job "${input.key}" already exists`);
+  }
+
+  return {
+    key: input.key,
+    label: input.label,
+    token,
+    ping_url: buildJobPingUrl(config.publicBaseUrl, token),
+  };
+}
+
+export async function updatePushJob(
+  db: SqlDatabase,
+  key: string,
+  patch: {
+    label?: string;
+    interval_secs?: number;
+    grace_secs?: number;
+  },
+): Promise<boolean> {
+  const existing = await db.first<{ managed_by_node_id: string | null }>(
+    "SELECT managed_by_node_id FROM jobs WHERE key = ?1",
+    [key],
+  );
+  if (!existing) {
+    return false;
+  }
+  if (existing.managed_by_node_id) {
+    throw httpError(
+      409,
+      `Job "${key}" is managed by node "${existing.managed_by_node_id}"`,
+    );
+  }
+  const sets: string[] = [];
+  const params: (string | number)[] = [];
+  if (patch.label !== undefined) {
+    params.push(patch.label);
+    sets.push(`label = ?${params.length}`);
+  }
+  if (patch.interval_secs !== undefined) {
+    params.push(patch.interval_secs);
+    sets.push(`interval_secs = ?${params.length}`);
+  }
+  if (patch.grace_secs !== undefined) {
+    params.push(patch.grace_secs);
+    sets.push(`grace_secs = ?${params.length}`);
+  }
+  params.push(key);
+  const res = await db.run(
+    `UPDATE jobs SET ${sets.join(", ")} WHERE key = ?${params.length}`,
+    params,
+  );
+
+  return res.changes > 0;
+}
+
+export async function rotateJobPingToken(
+  db: SqlDatabase,
+  config: LoadedConfig,
+  key: string,
+): Promise<{ key: string; token: string; ping_url: string }> {
+  const existing = await db.first<{ managed_by_node_id: string | null }>(
+    "SELECT managed_by_node_id FROM jobs WHERE key = ?1",
+    [key],
+  );
+  if (!existing) {
+    throw httpError(404, `Job "${key}" not found`);
+  }
+  if (existing.managed_by_node_id) {
+    throw httpError(
+      409,
+      `Job "${key}" is managed by node "${existing.managed_by_node_id}"`,
+    );
+  }
+  const { token, hash } = await issueJobPingToken();
+  await db.run("UPDATE jobs SET ping_token_hash = ?1 WHERE key = ?2", [
+    hash,
+    key,
   ]);
 
-  const incidentKey = `job:${payload.job_key}`;
-  const readQueries: SqlStatement[] = [
+  return {
+    key,
+    token,
+    ping_url: buildJobPingUrl(config.publicBaseUrl, token),
+  };
+}
+
+function summarizePingBody(
+  body: string | null,
+  pick: "first" | "last",
+): string | null {
+  if (!body) {
+    return null;
+  }
+  const lines = body
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const chosen = pick === "first" ? lines[0] : lines.at(-1);
+
+  return chosen ? chosen.slice(0, 240) : null;
+}
+
+export async function handleJobPing(
+  db: SqlDatabase,
+  config: LoadedConfig,
+  token: string,
+  action: JobPingAction,
+  options: { body?: string | null; durationMs?: number | null } = {},
+): Promise<void> {
+  const now = unixNow();
+  const tokenHash = await sha256Hex(token);
+  const job = await db.first<JobRow>(
+    "SELECT * FROM jobs WHERE ping_token_hash = ?1",
+    [tokenHash],
+  );
+  if (!job) {
+    throw httpError(404, "Not found");
+  }
+
+  const body = options.body?.trim() ? options.body.trim().slice(0, 4096) : null;
+
+  if (action === "start") {
+    await db.run(
+      `UPDATE jobs
+       SET started_at = ?1,
+           last_status = 'running',
+           last_summary = COALESCE(?2, last_summary),
+           last_detail = NULL
+       WHERE key = ?3`,
+      [now, summarizePingBody(body, "first"), job.key],
+    );
+
+    return;
+  }
+
+  const durationMs =
+    options.durationMs !== undefined && options.durationMs !== null
+      ? Math.max(0, Math.floor(options.durationMs))
+      : job.started_at !== null && now >= job.started_at
+        ? (now - job.started_at) * 1000
+        : null;
+
+  const isFail = action === "fail";
+  const summary = isFail
+    ? (summarizePingBody(body, "last") ?? "Job failed")
+    : (summarizePingBody(body, "first") ??
+      (durationMs === null
+        ? "ok"
+        : `completed in ${(durationMs / 1000).toFixed(1)}s`));
+  const detail = isFail ? body : null;
+
+  const incidentKey = `job:${job.key}`;
+  const [settingRows, alertRows] = (await db.allBatch([
     { sql: SELECT_SETTINGS_SQL },
-    {
-      sql: "SELECT label, grace_secs, muted_until, created_at FROM jobs WHERE key = ?1",
-      params: [payload.job_key],
-    },
     {
       sql: `SELECT ${ALERT_STATE_COLUMNS} FROM alert_states WHERE incident_key = ?1`,
       params: [incidentKey],
     },
-  ];
-  if (!isAdmin) {
-    readQueries.push({
-      sql: "SELECT id FROM nodes WHERE token_hash = ?1",
-      params: [tokenHash],
-    });
-  }
-
-  const [settingRows, jobRows, alertRows, nodeAuthRows] = (await db.allBatch(
-    readQueries,
-  )) as [
-    SettingRow[],
-    Pick<JobRow, "label" | "grace_secs" | "muted_until" | "created_at">[],
-    AlertStateRow[],
-    { id: string }[] | undefined,
-  ];
-
-  let resolvedNodeId = payload.node_id ?? null;
-  if (!isAdmin) {
-    const matched = nodeAuthRows?.[0];
-    if (!matched || (resolvedNodeId && matched.id !== resolvedNodeId)) {
-      throw httpError(401, "Invalid token for job report");
-    }
-    resolvedNodeId = matched.id;
-  }
-
-  const existing = jobRows[0] ?? null;
-  const label = payload.label ?? existing?.label ?? payload.job_key;
-  const graceSecs = payload.grace_secs ?? existing?.grace_secs ?? 3600;
-  const mutedUntil = existing?.muted_until ?? 0;
+  ])) as [SettingRow[], AlertStateRow[]];
   const settings = parseRuntimeSettings(settingRows, config);
 
   const alertStmts = await buildAlertStatements(
@@ -87,14 +281,12 @@ export async function ingestJobReport(
       {
         incidentKey,
         targetType: "job",
-        targetId: payload.job_key,
-        label: `Job: ${label}`,
-        failing: payload.status === "fail",
-        summary:
-          payload.summary ??
-          (payload.status === "fail" ? "Job failed" : "Job succeeded"),
+        targetId: job.key,
+        label: `Job: ${job.label}`,
+        failing: isFail,
+        summary,
         threshold: 1,
-        targetMutedUntil: mutedUntil,
+        targetMutedUntil: job.muted_until,
       },
     ],
     alertRows,
@@ -102,36 +294,27 @@ export async function ingestJobReport(
     now,
   );
 
-  await db.batch([
+  const statements: SqlStatement[] = [
     {
-      sql: `INSERT INTO jobs
-            (key, node_id, label, interval_secs, grace_secs, muted_until, created_at, last_run_at, last_status, last_duration_ms, last_summary, last_detail)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
-            ON CONFLICT(key) DO UPDATE SET
-              node_id = COALESCE(excluded.node_id, jobs.node_id),
-              label = excluded.label,
-              interval_secs = excluded.interval_secs,
-              grace_secs = excluded.grace_secs,
-              last_run_at = excluded.last_run_at,
-              last_status = excluded.last_status,
-              last_duration_ms = excluded.last_duration_ms,
-              last_summary = excluded.last_summary,
-              last_detail = excluded.last_detail`,
+      sql: `UPDATE jobs
+            SET started_at = NULL,
+                last_run_at = ?1,
+                next_run_at = NULL,
+                last_status = ?2,
+                last_duration_ms = ?3,
+                last_summary = ?4,
+                last_detail = ?5
+            WHERE key = ?6`,
       params: [
-        payload.job_key,
-        resolvedNodeId,
-        label,
-        payload.interval_secs,
-        graceSecs,
-        mutedUntil,
-        existing?.created_at ?? now,
         now,
-        payload.status,
-        payload.duration_ms ?? null,
-        payload.summary ?? null,
-        payload.detail ?? null,
+        isFail ? "fail" : "ok",
+        durationMs,
+        summary,
+        detail,
+        job.key,
       ],
     },
     ...alertStmts,
-  ]);
+  ];
+  await db.batch(statements);
 }

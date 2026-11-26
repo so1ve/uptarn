@@ -2,12 +2,14 @@ import { generateRandomToken } from "./auth/index.ts";
 import { httpError } from "./http.ts";
 import type {
   HealthStatus,
-  JobReportPayload,
+  JobInput,
+  JobRunStatus,
   MaintenanceInput,
   MaintenanceTarget,
   MonitorInput,
   MonitorKind,
   MonitorResult,
+  NodeJobSnapshot,
   NodeMonitorSpec,
   NodeReportPayload,
   SeriesUnit,
@@ -38,6 +40,12 @@ const MONITOR_KINDS = [
   "exec",
 ] as const satisfies readonly MonitorKind[];
 const MONITOR_SOURCES = ["hub", "agent"] as const;
+const JOB_RUN_STATUSES = [
+  "pending",
+  "running",
+  "ok",
+  "fail",
+] as const satisfies readonly JobRunStatus[];
 const TARGETS = [
   "node",
   "monitor",
@@ -223,6 +231,46 @@ export function parseNodeReportPayload(raw: unknown): NodeReportPayload {
     });
   }
 
+  let jobs: NodeJobSnapshot[] | undefined;
+  if (obj.jobs !== undefined && obj.jobs !== null) {
+    const seenJobKeys = new Set<string>();
+    jobs = list(obj.jobs, "jobs", 64, (j, p) => {
+      const key = slug(j.key, `${p}.key`);
+      if (seenJobKeys.has(key)) {
+        bad(`${p}.key duplicate "${key}"`);
+      }
+      seenJobKeys.add(key);
+
+      return {
+        key,
+        label: str(j.label, `${p}.label`, 80),
+        status: reqOneOf(j.status, `${p}.status`, JOB_RUN_STATUSES),
+        interval_secs: reqInt(
+          j.interval_secs,
+          `${p}.interval_secs`,
+          30,
+          2_592_000,
+        ),
+        grace_secs: int(j.grace_secs, `${p}.grace_secs`, 30, 604_800),
+        last_run_at:
+          j.last_run_at === null
+            ? null
+            : int(j.last_run_at, `${p}.last_run_at`, 0),
+        next_run_at:
+          j.next_run_at === null
+            ? null
+            : int(j.next_run_at, `${p}.next_run_at`, 0),
+        duration_ms:
+          j.duration_ms === null
+            ? null
+            : int(j.duration_ms, `${p}.duration_ms`, 0),
+        summary:
+          j.summary === null ? null : str(j.summary, `${p}.summary`, 240),
+        detail: j.detail === null ? null : str(j.detail, `${p}.detail`, 4096),
+      };
+    });
+  }
+
   return {
     node_id: slug(obj.node_id, "node_id"),
     label: str(obj.label, "label", 80),
@@ -264,25 +312,45 @@ export function parseNodeReportPayload(raw: unknown): NodeReportPayload {
       value: reqStr(inf.value, `${p}.value`, 512),
     })),
     monitors,
+    jobs,
   };
 }
 
-export function parseJobReportPayload(raw: unknown): JobReportPayload {
-  const obj = asObj(raw, "job payload");
+export function parseJobInput(raw: JobInput | unknown) {
+  const obj = asObj(raw, "job input");
+  const label = reqStr(obj.label, "label", 80);
+  const rawKey = str(obj.key, "key", 64);
+  const key = rawKey ? slug(rawKey, "key") : generateSlugId("job", label);
 
   return {
-    job_key: slug(obj.job_key, "job_key"),
-    node_id:
-      obj.node_id === undefined || obj.node_id === null
-        ? undefined
-        : slug(obj.node_id, "node_id"),
-    label: str(obj.label, "label", 80),
+    key,
+    label,
     interval_secs: reqInt(obj.interval_secs, "interval_secs", 30, 2_592_000),
-    grace_secs: int(obj.grace_secs, "grace_secs", 30, 604_800),
-    status: reqOneOf(obj.status, "status", ["ok", "fail"] as const),
-    duration_ms: int(obj.duration_ms, "duration_ms", 0),
-    summary: str(obj.summary, "summary", 240),
-    detail: str(obj.detail, "detail", 4096),
+    grace_secs: int(obj.grace_secs, "grace_secs", 30, 604_800) ?? 3600,
+  };
+}
+
+export function parseJobPatch(raw: unknown): {
+  label?: string;
+  interval_secs?: number;
+  grace_secs?: number;
+} {
+  const obj = asObj(raw, "job patch");
+  const label = str(obj.label, "label", 80);
+  const intervalSecs = int(obj.interval_secs, "interval_secs", 30, 2_592_000);
+  const graceSecs = int(obj.grace_secs, "grace_secs", 30, 604_800);
+  if (
+    label === undefined &&
+    intervalSecs === undefined &&
+    graceSecs === undefined
+  ) {
+    bad("At least one of label, interval_secs, or grace_secs is required");
+  }
+
+  return {
+    ...(label === undefined ? {} : { label }),
+    ...(intervalSecs === undefined ? {} : { interval_secs: intervalSecs }),
+    ...(graceSecs === undefined ? {} : { grace_secs: graceSecs }),
   };
 }
 

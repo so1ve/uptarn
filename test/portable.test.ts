@@ -11,7 +11,8 @@ import { loadConfig } from "../src/config.ts";
 import type { NodeDatabase } from "../src/db/node.ts";
 import { applyMigrations, openNodeSqlite } from "../src/db/node.ts";
 import {
-  ingestJobReport,
+  createPushJob,
+  handleJobPing,
   ingestNodeReport,
   runTick,
   upsertMonitor,
@@ -577,21 +578,16 @@ describe("uptarn portable server", () => {
     ).resolves.toEqual([]);
 
     sentRequests.length = 0;
-    await ingestJobReport(
-      db,
-      config,
-      {
-        job_key: "homelab-restic",
-        node_id: "homelab",
-        label: "Restic Backup",
-        interval_secs: 3600,
-        grace_secs: 600,
-        status: "ok",
-        duration_ms: 14_200,
-        summary: "snapshot a1b2c3d saved",
-      },
-      "enroll-tok",
-    );
+    const pushJob = await createPushJob(db, config, {
+      key: "homelab-restic",
+      label: "Restic Backup",
+      interval_secs: 3600,
+      grace_secs: 600,
+    });
+    await handleJobPing(db, config, pushJob.token, "ok", {
+      durationMs: 14_200,
+      body: "snapshot a1b2c3d saved",
+    });
 
     await upsertMonitor(db, {
       id: "vault",
@@ -2342,22 +2338,16 @@ describe("uptarn portable server", () => {
 
     expect(reportRes.status).toBe(413);
 
-    const oversizedJob = JSON.stringify({
-      job_key: "big-job",
-      interval_secs: 60,
-      status: "ok",
-      detail: "y".repeat(33 * 1024),
-    });
-    const jobRes = await app.request("/api/v1/ingest/job", {
+    const removedJobIngest = await app.request("/api/v1/ingest/job", {
       method: "POST",
       headers: {
         "Authorization": "Bearer admin-tok",
         "Content-Type": "application/json",
       },
-      body: oversizedJob,
+      body: "{}",
     });
 
-    expect(jobRes.status).toBe(413);
+    expect(removedJobIngest.status).toBe(404);
   });
 
   it("tracks monthly node traffic across reports, reboots, reset day changes, and cycle rollovers", async () => {
@@ -2634,5 +2624,199 @@ describe("uptarn portable server", () => {
     buf.setNodeVisibility("web-1", "n_aaaa1111", false);
 
     expect(buf.publicInitPayload(1003).nodes).toEqual({});
+  });
+
+  it("supports push jobs with pending->overdue alerts, /ping start/ok/fail, rotation, and collector-managed jobs", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-01T00:00:00Z"));
+    const config = loadConfig({
+      PUBLIC_BASE_URL: "https://status.example.com",
+      ADMIN_TOKEN: "admin-tok",
+      AUTO_REGISTER: "true",
+      ENROLLMENT_TOKEN: "enroll-tok",
+    });
+    const app = createApp(db, config);
+    const adminHeaders = {
+      "Authorization": "Bearer admin-tok",
+      "Content-Type": "application/json",
+    };
+
+    // 1. Create a push job -> immediately exists as pending
+    const createRes = await app.request("/api/v1/admin/jobs", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({
+        key: "db-backup",
+        label: "DB Backup",
+        interval_secs: 3600,
+        grace_secs: 300,
+      }),
+    });
+
+    expect(createRes.status).toBe(201);
+
+    const created = await createRes.json<{
+      key: string;
+      token: string;
+      ping_url: string;
+    }>();
+
+    expect(created.key).toBe("db-backup");
+    expect(created.token).toMatch(/^uptn_job_/);
+
+    let snap = await (
+      await app.request("/api/v1/admin/snapshot", { headers: adminHeaders })
+    ).json<DashboardSnapshot>();
+
+    expect(snap.jobs).toHaveLength(1);
+    expect(snap.jobs[0]).toMatchObject({
+      key: "db-backup",
+      managed_by_node_id: null,
+      overall_status: "pending",
+      last_status: "pending",
+      last_run_at: null,
+    });
+
+    // 2. If never reported past interval + grace, runTick fires overdue incident
+    vi.advanceTimersByTime(4000 * 1000);
+    await runTick(db, config);
+    snap = await (
+      await app.request("/api/v1/admin/snapshot", { headers: adminHeaders })
+    ).json<DashboardSnapshot>();
+
+    expect(snap.jobs[0].overall_status).toBe("overdue");
+    expect(
+      snap.incidents.some((i) => i.incident_key === "job:db-backup"),
+    ).toBeTruthy();
+
+    // 3. /ping/:token/start -> running, then /ping/:token -> ok with auto duration & resolves incident
+    const startRes = await app.request(`/ping/${created.token}/start`, {
+      method: "POST",
+    });
+
+    expect(startRes.status).toBe(200);
+
+    vi.advanceTimersByTime(12 * 1000);
+    const okRes = await app.request(`/ping/${created.token}`, {
+      method: "POST",
+      body: "uploaded 42 MiB",
+    });
+
+    expect(okRes.status).toBe(200);
+
+    snap = await (
+      await app.request("/api/v1/admin/snapshot", { headers: adminHeaders })
+    ).json<DashboardSnapshot>();
+
+    expect(snap.jobs[0]).toMatchObject({
+      overall_status: "ok",
+      last_status: "ok",
+      last_duration_ms: 12_000,
+      last_summary: "uploaded 42 MiB",
+      last_detail: null,
+    });
+    expect(
+      snap.incidents.some((i) => i.incident_key === "job:db-backup"),
+    ).toBeFalsy();
+
+    // 4. /ping/:token/fail -> fail with tail detail + incident
+    const failRes = await app.request(`/ping/${created.token}/fail`, {
+      method: "POST",
+      body: "step 1 ok\nfatal: disk full",
+    });
+
+    expect(failRes.status).toBe(200);
+
+    snap = await (
+      await app.request("/api/v1/admin/snapshot", { headers: adminHeaders })
+    ).json<DashboardSnapshot>();
+
+    expect(snap.jobs[0]).toMatchObject({
+      overall_status: "fail",
+      last_summary: "fatal: disk full",
+      last_detail: "step 1 ok\nfatal: disk full",
+    });
+
+    // 5. Rotate token invalidates old token
+    const rotateRes = await app.request(
+      "/api/v1/admin/jobs/db-backup/rotate-token",
+      { method: "POST", headers: adminHeaders },
+    );
+
+    expect(rotateRes.status).toBe(200);
+
+    const oldPing = await app.request(`/ping/${created.token}`, {
+      method: "GET",
+    });
+
+    expect(oldPing.status).toBe(404);
+
+    // 6. Collector-managed jobs synced via node report (namespaced, read-only on hub, pruned when removed)
+    const nowSecs = Math.floor(Date.now() / 1000);
+    await ingestNodeReport(
+      db,
+      config,
+      {
+        node_id: "homelab",
+        label: "Homelab",
+        jobs: [
+          {
+            key: "restic",
+            label: "Restic Backup",
+            status: "ok",
+            interval_secs: 86_400,
+            last_run_at: nowSecs - 600,
+            next_run_at: nowSecs + 85_800,
+            duration_ms: 9500,
+            summary: "snapshot ok",
+          },
+        ],
+      },
+      "enroll-tok",
+    );
+
+    snap = await (
+      await app.request("/api/v1/admin/snapshot", { headers: adminHeaders })
+    ).json<DashboardSnapshot>();
+    const agentJob = snap.jobs.find((j) => j.key === "homelab:restic");
+
+    expect(agentJob).toMatchObject({
+      node_id: "homelab",
+      managed_by_node_id: "homelab",
+      overall_status: "ok",
+      next_due_at: nowSecs + 85_800,
+    });
+
+    // Hub cannot mutate or delete agent-managed jobs
+    const patchAgent = await app.request(
+      "/api/v1/admin/jobs/homelab%3Arestic",
+      {
+        method: "PATCH",
+        headers: adminHeaders,
+        body: JSON.stringify({ label: "Nope" }),
+      },
+    );
+
+    expect(patchAgent.status).toBe(409);
+
+    const delAgent = await app.request("/api/v1/admin/jobs/homelab%3Arestic", {
+      method: "DELETE",
+      headers: adminHeaders,
+    });
+
+    expect(delAgent.status).toBe(409);
+
+    // Removing job from collector report prunes it cleanly
+    await ingestNodeReport(
+      db,
+      config,
+      { node_id: "homelab", label: "Homelab", jobs: [] },
+      "enroll-tok",
+    );
+    snap = await (
+      await app.request("/api/v1/admin/snapshot", { headers: adminHeaders })
+    ).json<DashboardSnapshot>();
+
+    expect(snap.jobs.some((j) => j.key === "homelab:restic")).toBeFalsy();
   });
 });

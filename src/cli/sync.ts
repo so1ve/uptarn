@@ -2,15 +2,18 @@ import type { Theme } from "clerc";
 
 import type {
   DashboardSnapshot,
+  JobSummary,
   MaintenanceSummary,
   MonitorSummary,
   SiteLink,
 } from "../shared/index.ts";
+import { formatDuration } from "../shared/index.ts";
 import {
   normalizeGroup,
   normalizePrimaryMount,
   normalizeSiteLinks,
   normalizeSiteTitle,
+  parseJobInput,
   parseMaintenanceInput,
   parseMonitorInput,
   parseMonitorPatch,
@@ -19,6 +22,7 @@ import {
 import { renderSection } from "./format.ts";
 
 export type NormalizedSyncMonitor = ReturnType<typeof parseMonitorInput>;
+export type NormalizedSyncJob = ReturnType<typeof parseJobInput>;
 export type NormalizedSyncMaintenance = ReturnType<
   typeof parseMaintenanceInput
 >;
@@ -46,6 +50,7 @@ export interface SyncSpec {
     traffic_reset_day?: number;
   }[];
   monitors?: SyncMonitorEntry[];
+  jobs?: NormalizedSyncJob[];
   maintenances?: NormalizedSyncMaintenance[];
 }
 
@@ -84,6 +89,11 @@ export interface SyncPlan {
   unmanagedMonitors: { id: string; name: string }[];
   managedMonitorConflicts: { id: string; nodeId: string; reason: string }[];
   monitorOrder: string[] | null;
+  jobsCreate: NormalizedSyncJob[];
+  jobsUpdate: { job: NormalizedSyncJob; changes: string[] }[];
+  jobsDelete: { key: string; label: string }[];
+  unmanagedJobs: { key: string; label: string }[];
+  managedJobConflicts: { key: string; nodeId: string; reason: string }[];
   maintenancesCreate: NormalizedSyncMaintenance[];
   maintenancesUpdate: {
     maintenance: NormalizedSyncMaintenance;
@@ -212,6 +222,27 @@ export function parseSyncSpec(raw: unknown): SyncSpec {
     },
   );
 
+  if (obj.jobs !== undefined && obj.jobs !== null) {
+    if (!Array.isArray(obj.jobs)) {
+      throw new TypeError("jobs must be an array");
+    }
+    const seenKeys = new Set<string>();
+    spec.jobs = obj.jobs.map((entry, idx) => {
+      const label = `jobs[${idx}]`;
+      const rec = asRecord(entry, label);
+      if (typeof rec.key !== "string" || !rec.key.trim()) {
+        throw new Error(`${label}.key is required for declarative sync`);
+      }
+      const parsed = parseJobInput(rec);
+      if (seenKeys.has(parsed.key)) {
+        throw new Error(`${label}.key duplicate "${parsed.key}"`);
+      }
+      seenKeys.add(parsed.key);
+
+      return parsed;
+    });
+  }
+
   spec.maintenances = parseUniqueArray(
     obj.maintenances,
     "maintenances",
@@ -270,6 +301,25 @@ function diffMonitor(
   return HUB_MONITOR_DIFF_KEYS.filter((f) => flat[f] !== desired[f]).map(
     (f) => `${f}: ${JSON.stringify(flat[f])} -> ${JSON.stringify(desired[f])}`,
   );
+}
+
+function diffJob(current: JobSummary, desired: NormalizedSyncJob): string[] {
+  const changes: string[] = [];
+  if (current.label !== desired.label) {
+    changes.push(
+      `label: ${JSON.stringify(current.label)} -> ${JSON.stringify(desired.label)}`,
+    );
+  }
+  if (current.interval_secs !== desired.interval_secs) {
+    changes.push(
+      `interval_secs: ${current.interval_secs} -> ${desired.interval_secs}`,
+    );
+  }
+  if (current.grace_secs !== desired.grace_secs) {
+    changes.push(`grace_secs: ${current.grace_secs} -> ${desired.grace_secs}`);
+  }
+
+  return changes;
 }
 
 function diffMaintenance(
@@ -546,6 +596,50 @@ export function computeSyncPlan(
     );
   }
 
+  const jobsCreate: NormalizedSyncJob[] = [];
+  const jobsUpdate: SyncPlan["jobsUpdate"] = [];
+  const jobsDelete: SyncPlan["jobsDelete"] = [];
+  const unmanagedJobs: SyncPlan["unmanagedJobs"] = [];
+  const managedJobConflicts: SyncPlan["managedJobConflicts"] = [];
+
+  if (spec.jobs !== undefined) {
+    const byKey = new Map(current.jobs.map((j) => [j.key, j]));
+    const declaredSet = new Set<string>();
+    for (const desired of spec.jobs) {
+      declaredSet.add(desired.key);
+      const existing = byKey.get(desired.key);
+      if (!existing) {
+        jobsCreate.push(desired);
+
+        continue;
+      }
+      if (existing.managed_by_node_id) {
+        managedJobConflicts.push({
+          key: desired.key,
+          nodeId: existing.managed_by_node_id,
+          reason: `managed by node "${existing.managed_by_node_id}"`,
+        });
+
+        continue;
+      }
+      const changes = diffJob(existing, desired);
+      if (changes.length > 0) {
+        jobsUpdate.push({ job: desired, changes });
+      }
+    }
+    for (const existing of current.jobs) {
+      if (declaredSet.has(existing.key) || existing.managed_by_node_id) {
+        continue;
+      }
+      const ref = { key: existing.key, label: existing.label };
+      if (prune) {
+        jobsDelete.push(ref);
+      } else {
+        unmanagedJobs.push(ref);
+      }
+    }
+  }
+
   const maintenancesCreate: NormalizedSyncMaintenance[] = [];
   const maintenancesUpdate: SyncPlan["maintenancesUpdate"] = [];
   const maintenancesDelete: SyncPlan["maintenancesDelete"] = [];
@@ -594,6 +688,11 @@ export function computeSyncPlan(
     unmanagedMonitors,
     managedMonitorConflicts,
     monitorOrder,
+    jobsCreate,
+    jobsUpdate,
+    jobsDelete,
+    unmanagedJobs,
+    managedJobConflicts,
     maintenancesCreate,
     maintenancesUpdate,
     maintenancesDelete,
@@ -607,11 +706,16 @@ export function computeSyncPlan(
       monitorPatches.length > 0 ||
       monitorsDelete.length > 0 ||
       monitorOrder !== null ||
+      jobsCreate.length > 0 ||
+      jobsUpdate.length > 0 ||
+      jobsDelete.length > 0 ||
       maintenancesCreate.length > 0 ||
       maintenancesUpdate.length > 0 ||
       maintenancesDelete.length > 0,
     hasConflicts:
-      managedNodeConflicts.length > 0 || managedMonitorConflicts.length > 0,
+      managedNodeConflicts.length > 0 ||
+      managedMonitorConflicts.length > 0 ||
+      managedJobConflicts.length > 0,
   };
 }
 
@@ -731,6 +835,33 @@ export function renderSyncPlan(
     ),
   ]);
 
+  pushSection("Jobs", [
+    ...plan.jobsCreate.map((j) =>
+      row(
+        theme.success("+"),
+        theme.bold(j.key),
+        `${j.label} ${theme.muted(`(every ${formatDuration(j.interval_secs)})`)}`,
+      ),
+    ),
+    ...plan.jobsUpdate.flatMap(({ job, changes }) => [
+      row(theme.warn("~"), theme.bold(job.key), job.label),
+      ...changes.map((c) => `      ${theme.muted(c)}`),
+    ]),
+    ...plan.jobsDelete.map((j) =>
+      row(theme.error("-"), theme.bold(j.key), theme.muted(j.label)),
+    ),
+    ...plan.unmanagedJobs.map((j) =>
+      row(
+        theme.muted("?"),
+        theme.muted(j.key),
+        theme.muted(`${j.label} (unmanaged; pass --prune to remove)`),
+      ),
+    ),
+    ...plan.managedJobConflicts.map((c) =>
+      row(theme.error("!"), theme.bold(c.key), theme.error(c.reason)),
+    ),
+  ]);
+
   pushSection("Maintenances", [
     ...plan.maintenancesCreate.map((m) =>
       row(theme.success("+"), theme.bold(m.id), m.title),
@@ -757,15 +888,20 @@ export function renderSyncPlan(
     );
   } else if (options.dryRun) {
     const createCount =
-      plan.monitorsCreate.length + plan.maintenancesCreate.length;
+      plan.monitorsCreate.length +
+      plan.jobsCreate.length +
+      plan.maintenancesCreate.length;
     const updateCount =
       plan.monitorsUpdate.length +
       plan.monitorPatches.length +
       plan.nodePatches.length +
+      plan.jobsUpdate.length +
       plan.maintenancesUpdate.length +
       (plan.settingsPatch ? 1 : 0);
     const deleteCount =
-      plan.monitorsDelete.length + plan.maintenancesDelete.length;
+      plan.monitorsDelete.length +
+      plan.jobsDelete.length +
+      plan.maintenancesDelete.length;
     const parts = [
       createCount > 0 && `+${createCount} create`,
       updateCount > 0 && `~${updateCount} update`,
@@ -780,10 +916,19 @@ export function renderSyncPlan(
   return lines.join("\n");
 }
 
+export interface SyncApplyResult {
+  createdJobs: {
+    key: string;
+    label: string;
+    token: string;
+    ping_url: string;
+  }[];
+}
+
 export async function applySyncPlan(
   request: AdminRequestFn,
   plan: SyncPlan,
-): Promise<void> {
+): Promise<SyncApplyResult> {
   if (plan.hasConflicts) {
     const reasons = [
       ...plan.managedNodeConflicts.map(
@@ -792,6 +937,7 @@ export async function applySyncPlan(
       ...plan.managedMonitorConflicts.map(
         (c) => `monitor "${c.id}" ${c.reason}`,
       ),
+      ...plan.managedJobConflicts.map((c) => `job "${c.key}" ${c.reason}`),
     ];
 
     throw new Error(
@@ -836,6 +982,33 @@ export async function applySyncPlan(
       ids: plan.monitorOrder,
     });
   }
+  const createdJobs: SyncApplyResult["createdJobs"] = [];
+  for (const job of plan.jobsCreate) {
+    const res = await request<{
+      key: string;
+      label: string;
+      token: string;
+      ping_url: string;
+    }>("POST", "/api/v1/admin/jobs", job);
+    createdJobs.push(res);
+  }
+  for (const { job } of plan.jobsUpdate) {
+    await request(
+      "PATCH",
+      `/api/v1/admin/jobs/${encodeURIComponent(job.key)}`,
+      {
+        label: job.label,
+        interval_secs: job.interval_secs,
+        grace_secs: job.grace_secs,
+      },
+    );
+  }
+  for (const job of plan.jobsDelete) {
+    await request(
+      "DELETE",
+      `/api/v1/admin/jobs/${encodeURIComponent(job.key)}`,
+    );
+  }
   for (const maint of [
     ...plan.maintenancesCreate,
     ...plan.maintenancesUpdate.map((u) => u.maintenance),
@@ -848,4 +1021,6 @@ export async function applySyncPlan(
       `/api/v1/admin/maintenances/${encodeURIComponent(maint.id)}`,
     );
   }
+
+  return { createdJobs };
 }

@@ -4,11 +4,11 @@ use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::timeout;
 
-use crate::config::{ExecCheckConfig, ExecOutputFormat};
+use crate::config::{ExecCollectorConfig, ExecOutputFormat};
 use crate::protocol::{CheckSnapshot, HealthStatus, StructuredExecOutput};
 
 fn failed_exec(
-    cfg: &ExecCheckConfig,
+    cfg: &ExecCollectorConfig,
     summary: impl Into<String>,
     detail: Option<String>,
 ) -> StructuredExecOutput {
@@ -25,7 +25,7 @@ fn failed_exec(
 }
 
 fn parse_json_output(
-    cfg: &ExecCheckConfig,
+    cfg: &ExecCollectorConfig,
     stdout: &str,
     exit_status: ExitStatus,
 ) -> StructuredExecOutput {
@@ -66,7 +66,7 @@ fn parse_json_output(
 }
 
 fn parse_exit_output(
-    cfg: &ExecCheckConfig,
+    cfg: &ExecCollectorConfig,
     stdout: String,
     stderr: String,
     exit_status: ExitStatus,
@@ -118,7 +118,7 @@ fn parse_exit_output(
     }
 }
 
-pub async fn collect_item(cfg: &ExecCheckConfig) -> StructuredExecOutput {
+pub async fn collect_item(cfg: &ExecCollectorConfig) -> StructuredExecOutput {
     let Some((program, args)) = cfg.command.split_first() else {
         return failed_exec(cfg, "empty command in [[checks]]", None);
     };

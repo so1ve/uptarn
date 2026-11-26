@@ -96,6 +96,23 @@ export type NodeMonitorSpec =
       result?: MonitorResult | null;
     };
 
+export type JobRunStatus = "pending" | "running" | "ok" | "fail";
+
+export type JobOverallStatus = JobRunStatus | "overdue";
+
+export interface NodeJobSnapshot {
+  key: string;
+  label?: string;
+  status: JobRunStatus;
+  interval_secs: number;
+  grace_secs?: number;
+  last_run_at?: number | null;
+  next_run_at?: number | null;
+  duration_ms?: number | null;
+  summary?: string | null;
+  detail?: string | null;
+}
+
 export interface NodeReportPayload {
   node_id: string;
   label?: string;
@@ -109,18 +126,14 @@ export interface NodeReportPayload {
   series?: SeriesSnapshot[];
   info?: InfoSnapshot[];
   monitors?: NodeMonitorSpec[];
+  jobs?: NodeJobSnapshot[];
 }
 
-export interface JobReportPayload {
-  job_key: string;
-  node_id?: string;
-  label?: string;
+export interface JobInput {
+  key?: string;
+  label: string;
   interval_secs: number;
   grace_secs?: number;
-  status: "ok" | "fail";
-  duration_ms?: number;
-  summary?: string;
-  detail?: string;
 }
 
 export interface MonitorInput {
@@ -221,13 +234,17 @@ export interface MonitorSummary {
 export interface JobSummary {
   key: string;
   node_id: string | null;
+  managed_by_node_id: string | null;
   label: string;
   interval_secs: number;
   grace_secs: number;
   muted_until: number;
-  last_run_at: number;
-  overall_status: "ok" | "fail" | "overdue";
-  last_status: "ok" | "fail";
+  created_at: number;
+  started_at: number | null;
+  last_run_at: number | null;
+  next_run_at: number | null;
+  overall_status: JobOverallStatus;
+  last_status: JobRunStatus;
   last_duration_ms: number | null;
   last_summary: string | null;
   last_detail: string | null;

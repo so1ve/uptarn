@@ -452,9 +452,9 @@ export function createCli() {
       const shouldApply = !ctx.flags.dryRun && plan.hasChanges;
 
       if (ctx.flags.json) {
-        if (shouldApply) {
-          await applySyncPlan(request, plan);
-        }
+        const appliedResult = shouldApply
+          ? await applySyncPlan(request, plan)
+          : null;
         ctx.log.raw(
           JSON.stringify(
             {
@@ -462,6 +462,9 @@ export function createCli() {
               dry_run: Boolean(ctx.flags.dryRun),
               applied: shouldApply,
               plan,
+              ...(appliedResult && appliedResult.createdJobs.length > 0
+                ? { created_jobs: appliedResult.createdJobs }
+                : {}),
             },
             null,
             2,
@@ -482,8 +485,13 @@ export function createCli() {
         renderSyncPlan(ctx.log.theme, plan, { dryRun: ctx.flags.dryRun }),
       );
       if (shouldApply) {
-        await applySyncPlan(request, plan);
+        const appliedResult = await applySyncPlan(request, plan);
         ctx.log.success("Applied changes to hub.");
+        for (const created of appliedResult.createdJobs) {
+          ctx.log.raw(
+            `  Ping URL (${ctx.log.theme.bold(created.key)})  ${ctx.log.theme.warn(created.ping_url)}`,
+          );
+        }
       }
     },
   });
@@ -876,8 +884,8 @@ export function createCli() {
     apiBase: "/api/v1/admin/jobs",
     arg: "key",
     argDesc: "Job key",
-    listDesc: "List all reported jobs",
-    empty: "No jobs reported.",
+    listDesc: "List all jobs",
+    empty: "No jobs configured.",
     pick: (d) => d.jobs,
     renderList: renderJobsTable,
     show: {
@@ -885,7 +893,110 @@ export function createCli() {
       find: (d, key) => d.jobs.find((j) => j.key === key),
       render: renderJobDetail,
     },
-    rmDesc: "Delete a job and its incident state",
+    rmDesc: "Delete a hub-managed push job and its incident state",
+  });
+  const jobIntervalSecs = Types.Integer({ min: 30, max: 2_592_000 });
+  const jobGraceSecs = Types.Integer({ min: 30, max: 604_800 });
+  job.command("add <label>", {
+    description: "Create a hub-managed push job and issue its ping URL",
+    args: { label: { description: "Display label for the job" } },
+    flags: {
+      key: {
+        type: nonEmptyString,
+        description: "Optional custom job key",
+      },
+      interval: {
+        type: jobIntervalSecs,
+        default: 86_400,
+        description: "Expected run interval in seconds (default: 86400)",
+      },
+      grace: {
+        type: jobGraceSecs,
+        default: 3600,
+        description: "Grace period before overdue in seconds (default: 3600)",
+      },
+      ...jsonFlag,
+    },
+    async run(ctx) {
+      const res = await ctx.state.request<{
+        key: string;
+        label: string;
+        token: string;
+        ping_url: string;
+      }>("POST", "/api/v1/admin/jobs", {
+        key: ctx.flags.key,
+        label: ctx.args.label,
+        interval_secs: ctx.flags.interval,
+        grace_secs: ctx.flags.grace,
+      });
+      emitJsonOr(ctx, res, () => {
+        ctx.log
+          .success(`Created job ${ctx.log.theme.bold(res.key)} (${res.label})`)
+          .line(`Ping URL  ${ctx.log.theme.warn(res.ping_url)}`);
+      });
+    },
+  });
+  job.command("edit <key>", {
+    description: "Update a hub-managed push job",
+    args: { key: { description: "Job key" } },
+    flags: {
+      label: {
+        type: nonEmptyString,
+        group: "fields",
+        description: "New display label",
+      },
+      interval: {
+        type: jobIntervalSecs,
+        group: "fields",
+        description: "Expected run interval in seconds",
+      },
+      grace: {
+        type: jobGraceSecs,
+        group: "fields",
+        description: "Grace period before overdue in seconds",
+      },
+      ...jsonFlag,
+    },
+    rules: [(r) => [r.atLeastOne(r.group("fields"))]],
+    async run(ctx) {
+      const patch = {
+        ...(ctx.flags.label === undefined ? {} : { label: ctx.flags.label }),
+        ...(ctx.flags.interval === undefined
+          ? {}
+          : { interval_secs: ctx.flags.interval }),
+        ...(ctx.flags.grace === undefined
+          ? {}
+          : { grace_secs: ctx.flags.grace }),
+      };
+      const res = await ctx.state.request<{ ok: boolean }>(
+        "PATCH",
+        `/api/v1/admin/jobs/${encodeURIComponent(ctx.args.key)}`,
+        patch,
+      );
+      emitJsonOr(ctx, res, () => {
+        ctx.log.success(`Updated job ${ctx.log.theme.bold(ctx.args.key)}.`);
+      });
+    },
+  });
+  job.command("rotate <key>", {
+    description: "Rotate a push job's ping URL token",
+    args: { key: { description: "Job key" } },
+    flags: jsonFlag,
+    async run(ctx) {
+      const res = await ctx.state.request<{
+        key: string;
+        token: string;
+        ping_url: string;
+      }>(
+        "POST",
+        `/api/v1/admin/jobs/${encodeURIComponent(ctx.args.key)}/rotate-token`,
+      );
+      emitJsonOr(ctx, res, () => {
+        ctx.log
+          .success(`Rotated ping token for ${ctx.log.theme.bold(res.key)}`)
+          .line(`Ping URL  ${ctx.log.theme.warn(res.ping_url)}`);
+      });
+    },
   });
 
   // ── incident ──

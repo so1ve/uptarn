@@ -89,8 +89,8 @@ path = "/srv/nas/data"
 label = "NAS Data"
 timeout_ms = 3000
 
-# Node-attached checks (type defaults to "exec"; also supports "tls" and "tcp").
-[[checks]]
+# Node-attached collectors (type defaults to "exec"; also supports "tls" and "tcp").
+[[collectors]]
 key = "systemd"
 label = "systemd"
 group = "system"
@@ -100,7 +100,7 @@ command = [
   "u=$(systemctl list-units --state=failed --no-legend --plain | awk '{print $1}'); [ -z \"$u\" ] && echo '0 failed units' || { echo \"failed: $(echo \"$u\" | paste -sd, -)\"; exit 1; }",
 ]
 
-[[checks]]
+[[collectors]]
 type = "tcp"
 key = "tcp.edge"
 label = "Edge Relay"
@@ -108,7 +108,7 @@ group = "network"
 target = "edge.example.com:443"
 count = 4
 
-[[checks]]
+[[collectors]]
 type = "tls"
 key = "tls.main"
 label = "*.example.com TLS"
@@ -165,7 +165,7 @@ path = "/volume2"
 label = "Volume 2"
 ```
 
-OpenWrt router / dynamic collectors example with `[[checks]]` and `check_dirs`:
+OpenWrt router / dynamic collectors example with `[[collectors]]` and `check_dirs`:
 
 ```toml
 hub_url = "https://status.example.com"
@@ -176,10 +176,10 @@ token = "uptn_node_..."
 # Automatically scan this directory on each tick without restarting the agent.
 # Supports both:
 #   1. Executable scripts (optional `# uptarn.key/label/group/warn_exit_code/format/timeout_ms = ...` headers)
-#   2. `.toml` drop-ins (single check or `[[checks]]` array, full `command = [...]` args, `./` relative paths)
-check_dirs = ["/etc/uptarn/checks.d"]
+#   2. `.toml` drop-ins (single check or `[[collectors]]` array, full `command = [...]` args, `./` relative paths)
+collector_dirs = ["/etc/uptarn/collectors.d"]
 
-[[checks]]
+[[collectors]]
 key = "tailscale"
 label = "Tailscale"
 group = "network"
@@ -189,22 +189,21 @@ command = [
   "tailscale status --peers=false >/dev/null && echo connected",
 ]
 
-[[checks]]
+[[collectors]]
 key = "wan6"
 label = "WAN IPv6"
 format = "json"
 command = ["/etc/uptarn/check-wan6.sh"]
 ```
 
-Wrap scheduled backups (Dead Man's Switch + failure stderr capture):
+Monitor scheduled jobs either via collector JSON (`jobs[]` emitted from `collector_dirs` — zero wrapper changes) or via Hub Push Ping URLs (`/ping/<token>`):
 
 ```sh
-uptarn-agent run -c /etc/uptarn/agent.toml \
-  --job homelab-restic \
-  --label "Homelab Restic" \
-  --every 24h \
-  --grace 2h \
-  -- restic-backups-homelab
+# Plain curl (no agent required)
+curl -fsS -m 10 https://status.example.com/ping/uptn_job_...
+
+# Or wrap any command to track /start, duration, and /fail stderr tail (no agent.toml needed)
+uptarn-agent run --ping-url-file /run/secrets/restic-ping-url -- restic backup /data
 ```
 
 Or run the agent via Docker (`ghcr.io/so1ve/uptarn-agent`, `linux/amd64` + `linux/arm64`):

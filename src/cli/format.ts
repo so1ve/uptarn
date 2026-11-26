@@ -118,9 +118,10 @@ export function renderTable<T>(
   ].join("\n");
 }
 
-const STATUS_STYLE: Record<string, "success" | "warn" | "error"> = {
+const STATUS_STYLE: Record<string, "success" | "accent" | "warn" | "error"> = {
   ok: "success",
   resolved: "success",
+  running: "accent",
   warn: "warn",
   pending: "warn",
   active: "warn",
@@ -471,10 +472,17 @@ export const renderJobsTable = (
     [
       col("KEY", (j) => theme.bold(j.key)),
       col("STATUS", (j) => formatStatus(theme, j.overall_status)),
-      col("NODE", (j) => mutedOr(theme, j.node_id)),
+      col("SOURCE", (j) =>
+        theme.muted(
+          j.managed_by_node_id ? `agent (${j.managed_by_node_id})` : "push",
+        ),
+      ),
       col(
         "LAST RUN",
-        (j) => theme.muted(formatAge(j.last_run_at, now)),
+        (j) =>
+          theme.muted(
+            j.last_run_at === null ? "never" : formatAge(j.last_run_at, now),
+          ),
         "right",
       ),
       col(
@@ -498,8 +506,18 @@ export function renderJobDetail(
     renderKv(theme, [
       ["Status", formatStatus(theme, job.overall_status)],
       ["Last status", formatStatus(theme, job.last_status)],
-      ["Node", job.node_id ?? theme.muted("-")],
-      ["Last run", formatAge(job.last_run_at, now)],
+      [
+        "Source",
+        theme.muted(
+          job.managed_by_node_id ? `agent (${job.managed_by_node_id})` : "push",
+        ),
+      ],
+      [
+        "Last run",
+        job.last_run_at === null
+          ? theme.muted("never")
+          : formatAge(job.last_run_at, now),
+      ],
       [
         "Next due",
         job.next_due_at > now

@@ -1010,12 +1010,16 @@ function createInitialState(): DemoState {
   const jobs: JobSummary[] = [
     {
       key: "cert-sync",
-      node_id: "edge-us-01",
+      node_id: null,
+      managed_by_node_id: null,
       label: "TLS Certificate Sync",
       interval_secs: 86_400,
       grace_secs: 3600,
       muted_until: 0,
+      created_at: now - 30 * 86_400,
+      started_at: null,
       last_run_at: now - 11 * 3600,
+      next_run_at: null,
       overall_status: "ok",
       last_status: "ok",
       last_duration_ms: 1420,
@@ -1024,13 +1028,17 @@ function createInitialState(): DemoState {
       next_due_at: now + 13 * 3600,
     },
     {
-      key: "db-snapshot",
+      key: "edge-sg-01:db-snapshot",
       node_id: "edge-sg-01",
+      managed_by_node_id: "edge-sg-01",
       label: "PostgreSQL Snapshot",
       interval_secs: 21_600,
       grace_secs: 1800,
       muted_until: 0,
+      created_at: now - 20 * 86_400,
+      started_at: null,
       last_run_at: now - 42 * 60,
+      next_run_at: now + 21_600 - 42 * 60,
       overall_status: "ok",
       last_status: "ok",
       last_duration_ms: 6840,
@@ -1039,13 +1047,17 @@ function createInitialState(): DemoState {
       next_due_at: now + 21_600 - 42 * 60,
     },
     {
-      key: "nightly-backup",
+      key: "lab-01:nightly-backup",
       node_id: "lab-01",
+      managed_by_node_id: "lab-01",
       label: "Nightly Restic Backup",
       interval_secs: 86_400,
       grace_secs: 7200,
       muted_until: 0,
+      created_at: now - 45 * 86_400,
+      started_at: null,
       last_run_at: now - 5 * 3600,
+      next_run_at: now + 19 * 3600,
       overall_status: "ok",
       last_status: "ok",
       last_duration_ms: 42_300,
@@ -1618,16 +1630,114 @@ export async function demoApiFetch<T = Record<string, unknown>>(
     }
   }
 
+  if (pathname === "/api/v1/admin/jobs" && method === "POST") {
+    const label = String(payload.label ?? "").trim();
+    if (!label) {
+      throw new ApiError(400, "label is required");
+    }
+    const rawKey = String(payload.key ?? "").trim();
+    const key =
+      rawKey ||
+      `${label
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 32)}-${Math.random().toString(36).slice(2, 6)}`;
+    if (snap.jobs.some((j) => j.key === key)) {
+      throw new ApiError(409, `Job "${key}" already exists`);
+    }
+    const intervalSecs = Number(payload.interval_secs ?? 86_400);
+    const graceSecs = Number(payload.grace_secs ?? 3600);
+    const token = `uptn_job_demo_${Math.random().toString(36).slice(2, 12)}`;
+    snap.jobs.push({
+      key,
+      node_id: null,
+      managed_by_node_id: null,
+      label,
+      interval_secs: intervalSecs,
+      grace_secs: graceSecs,
+      muted_until: 0,
+      created_at: now,
+      started_at: null,
+      last_run_at: null,
+      next_run_at: null,
+      overall_status: "pending",
+      last_status: "pending",
+      last_duration_ms: null,
+      last_summary: null,
+      last_detail: null,
+      next_due_at: now + intervalSecs,
+    });
+    snap.jobs.sort((a, b) => a.key.localeCompare(b.key));
+
+    return {
+      ok: true,
+      key,
+      label,
+      token,
+      ping_url: `${snap.public_base_url}/ping/${token}`,
+    } as T;
+  }
+
+  const jobRotateMatch = /^\/api\/v1\/admin\/jobs\/([^/]+)\/rotate-token$/.exec(
+    pathname,
+  );
+  if (jobRotateMatch && method === "POST") {
+    const key = decodeURIComponent(jobRotateMatch[1]);
+    const job = snap.jobs.find((j) => j.key === key);
+    if (!job) {
+      throw new ApiError(404, "Not found");
+    }
+    if (job.managed_by_node_id) {
+      throw new ApiError(
+        409,
+        `Job "${key}" is managed by node "${job.managed_by_node_id}"`,
+      );
+    }
+    const token = `uptn_job_demo_${Math.random().toString(36).slice(2, 12)}`;
+
+    return {
+      ok: true,
+      key,
+      token,
+      ping_url: `${snap.public_base_url}/ping/${token}`,
+    } as T;
+  }
+
   const jobMatch = /^\/api\/v1\/admin\/jobs\/([^/]+)$/.exec(pathname);
-  if (jobMatch && method === "DELETE") {
+  if (jobMatch) {
     const key = decodeURIComponent(jobMatch[1]);
     const idx = snap.jobs.findIndex((j) => j.key === key);
     if (idx === -1) {
       throw new ApiError(404, "Not found");
     }
-    snap.jobs.splice(idx, 1);
+    const job = snap.jobs[idx];
+    if (job.managed_by_node_id) {
+      throw new ApiError(
+        409,
+        `Job "${key}" is managed by node "${job.managed_by_node_id}"`,
+      );
+    }
+    if (method === "PATCH") {
+      if (typeof payload.label === "string" && payload.label.trim()) {
+        job.label = payload.label.trim();
+      }
+      if (typeof payload.interval_secs === "number") {
+        job.interval_secs = payload.interval_secs;
+        job.next_due_at =
+          (job.last_run_at ?? job.created_at) + job.interval_secs;
+      }
+      if (typeof payload.grace_secs === "number") {
+        job.grace_secs = payload.grace_secs;
+      }
 
-    return { ok: true } as T;
+      return { ok: true, ...payload } as T;
+    }
+    if (method === "DELETE") {
+      snap.jobs.splice(idx, 1);
+
+      return { ok: true } as T;
+    }
   }
 
   if (pathname === "/api/v1/admin/maintenances" && method === "POST") {

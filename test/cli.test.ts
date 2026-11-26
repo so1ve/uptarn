@@ -7,7 +7,7 @@ import { loadConfig } from "../src/config.ts";
 import type { NodeDatabase } from "../src/db/node.ts";
 import { applyMigrations, openNodeSqlite } from "../src/db/node.ts";
 import {
-  ingestJobReport,
+  handleJobPing,
   ingestNodeReport,
   runTick,
 } from "../src/domain/index.ts";
@@ -267,23 +267,47 @@ describe("uptarn CLI commands", () => {
   });
 
   it("manages jobs, incidents, mute/unmute, settings, and passkeys", async () => {
-    const added = JSON.parse(
-      (await runCli(["node", "add", "worker", "--json"])).stdoutText(),
-    ) as { token: string };
+    const createdJob = JSON.parse(
+      (
+        await runCli([
+          "job",
+          "add",
+          "Nightly Backup",
+          "--key",
+          "nightly-backup",
+          "--interval",
+          "86400",
+          "--json",
+        ])
+      ).stdoutText(),
+    ) as { key: string; token: string; ping_url: string };
 
-    await ingestJobReport(
-      db,
-      config,
-      {
-        job_key: "nightly-backup",
-        node_id: "worker",
-        label: "Nightly Backup",
-        interval_secs: 86_400,
-        status: "fail",
-        summary: "rsync exit 23",
-      },
-      added.token,
+    expect(createdJob.key).toBe("nightly-backup");
+    expect(createdJob.token).toMatch(/^uptn_job_/);
+    expect(createdJob.ping_url).toBe(
+      `http://hub.local/ping/${createdJob.token}`,
     );
+
+    const pendingJobs = JSON.parse(
+      (await runCli(["job", "ls", "--json"])).stdoutText(),
+    ) as JobSummary[];
+
+    expect(pendingJobs).toHaveLength(1);
+    expect(pendingJobs[0].overall_status).toBe("pending");
+    expect(pendingJobs[0].last_run_at).toBeNull();
+
+    await runCli(["job", "edit", "nightly-backup", "--grace", "1800"]);
+    const rotatedJob = JSON.parse(
+      (
+        await runCli(["job", "rotate", "nightly-backup", "--json"])
+      ).stdoutText(),
+    ) as { key: string; token: string; ping_url: string };
+
+    expect(rotatedJob.token).not.toBe(createdJob.token);
+
+    await handleJobPing(db, config, rotatedJob.token, "fail", {
+      body: "rsync exit 23",
+    });
     await runTick(db, config);
 
     const jobs = JSON.parse(
@@ -292,6 +316,7 @@ describe("uptarn CLI commands", () => {
 
     expect(jobs).toHaveLength(1);
     expect(jobs[0].key).toBe("nightly-backup");
+    expect(jobs[0].grace_secs).toBe(1800);
 
     const jobDetail = await runCli(["job", "show", "nightly-backup"]);
 

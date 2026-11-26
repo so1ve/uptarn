@@ -9,6 +9,15 @@ pub enum HealthStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum JobRunStatus {
+    Pending,
+    Running,
+    Ok,
+    Fail,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SeriesUnit {
     #[serde(rename = "ms")]
     Ms,
@@ -163,6 +172,27 @@ pub struct InfoSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobSnapshot {
+    pub key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub status: JobRunStatus,
+    pub interval_secs: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grace_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_run_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_run_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonitorProbeReport {
     pub ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -246,25 +276,7 @@ pub struct NodeReportPayload {
     pub info: Vec<InfoSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub monitors: Option<Vec<MonitorSpec>>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct JobReportPayload {
-    pub job_key: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub node_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-    pub interval_secs: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub grace_secs: Option<u64>,
-    pub status: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub duration_ms: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub summary: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub detail: Option<String>,
+    pub jobs: Vec<JobSnapshot>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -280,6 +292,8 @@ pub struct StructuredExecOutput {
     pub series: Vec<SeriesSnapshot>,
     #[serde(default)]
     pub info: Vec<InfoSnapshot>,
+    #[serde(default)]
+    pub jobs: Vec<JobSnapshot>,
 }
 
 impl StructuredExecOutput {
@@ -288,6 +302,7 @@ impl StructuredExecOutput {
             && self.checks.is_empty()
             && self.series.is_empty()
             && self.info.is_empty()
+            && self.jobs.is_empty()
     }
 
     pub fn apply_default_group(&mut self, group: &str) {

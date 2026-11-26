@@ -5,7 +5,7 @@ use reqwest::Client;
 use serde::Serialize;
 
 use crate::config::AgentConfig;
-use crate::protocol::{JobReportPayload, NodeReportPayload};
+use crate::protocol::NodeReportPayload;
 
 pub struct HubClient {
     http: Client,
@@ -57,9 +57,5 @@ impl HubClient {
 
     pub async fn post_report(&self, payload: &NodeReportPayload) -> Result<()> {
         self.post_json("/api/v1/ingest/report", payload, true).await
-    }
-
-    pub async fn post_job(&self, payload: &JobReportPayload) -> Result<()> {
-        self.post_json("/api/v1/ingest/job", payload, false).await
     }
 }

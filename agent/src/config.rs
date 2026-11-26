@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::str::FromStr;
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, ensure};
 use serde::Deserialize;
 
 use crate::protocol::{InfoSnapshot, MonitorProbeFrom, MonitorProbeType};
@@ -43,9 +43,9 @@ pub struct AgentConfig {
     #[serde(default)]
     pub mounts: Vec<MountConfig>,
     #[serde(default)]
-    pub checks: Vec<CheckConfig>,
+    pub collectors: Vec<CollectorConfig>,
     #[serde(default)]
-    pub check_dirs: Vec<CheckDirConfig>,
+    pub collector_dirs: Vec<CollectorDirConfig>,
     #[serde(default)]
     pub info: Vec<InfoSnapshot>,
     pub monitors: Option<Vec<MonitorConfig>>,
@@ -111,7 +111,7 @@ pub struct MountConfig {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum CheckKind {
+pub enum CollectorKind {
     #[default]
     Exec,
     Tls,
@@ -141,7 +141,7 @@ impl FromStr for ExecOutputFormat {
 }
 
 #[derive(Debug, Clone)]
-pub struct ExecCheckConfig {
+pub struct ExecCollectorConfig {
     pub key: String,
     pub label: String,
     pub group: Option<String>,
@@ -179,18 +179,18 @@ pub struct TlsCertConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(try_from = "RawCheckConfig")]
-pub enum CheckConfig {
-    Exec(ExecCheckConfig),
+#[serde(try_from = "RawCollectorConfig")]
+pub enum CollectorConfig {
+    Exec(ExecCollectorConfig),
     Tls(TlsCertConfig),
     Tcp(TcpProbeConfig),
 }
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct RawCheckConfig {
+pub struct RawCollectorConfig {
     #[serde(rename = "type", default)]
-    pub kind: CheckKind,
+    pub kind: CollectorKind,
     pub key: Option<String>,
     pub label: Option<String>,
     pub group: Option<String>,
@@ -215,20 +215,20 @@ pub struct RawCheckConfig {
     pub fail_loss_pct: Option<f64>,
 }
 
-impl RawCheckConfig {
-    pub fn into_check(
+impl RawCollectorConfig {
+    pub fn into_collector(
         self,
         key: String,
         label: String,
         group: Option<String>,
-        defaults: CheckDirDefaults<'_>,
-    ) -> std::result::Result<CheckConfig, String> {
+        defaults: CollectorDirDefaults<'_>,
+    ) -> std::result::Result<CollectorConfig, String> {
         match self.kind {
-            CheckKind::Exec => {
+            CollectorKind::Exec => {
                 if self.command.is_empty()
                     || self.command.first().and_then(|s| non_empty(s)).is_none()
                 {
-                    return Err("exec check requires non-empty command".to_string());
+                    return Err("exec collector requires non-empty command".to_string());
                 }
                 if self.target.is_some()
                     || self.path.is_some()
@@ -242,10 +242,10 @@ impl RawCheckConfig {
                     || self.warn_loss_pct.is_some()
                     || self.fail_loss_pct.is_some()
                 {
-                    return Err("exec check cannot set tls or tcp fields".to_string());
+                    return Err("exec collector cannot set tls or tcp fields".to_string());
                 }
 
-                Ok(CheckConfig::Exec(ExecCheckConfig {
+                Ok(CollectorConfig::Exec(ExecCollectorConfig {
                     key,
                     label,
                     group,
@@ -255,11 +255,11 @@ impl RawCheckConfig {
                     timeout_ms: self.timeout_ms.unwrap_or(defaults.timeout_ms),
                 }))
             }
-            CheckKind::Tls => {
+            CollectorKind::Tls => {
                 if self.path.as_deref().and_then(non_empty).is_none()
                     && self.connect.as_deref().and_then(non_empty).is_none()
                 {
-                    return Err("tls check requires either path or connect".to_string());
+                    return Err("tls collector requires either path or connect".to_string());
                 }
                 if !self.command.is_empty()
                     || self.format.is_some()
@@ -271,10 +271,10 @@ impl RawCheckConfig {
                     || self.warn_loss_pct.is_some()
                     || self.fail_loss_pct.is_some()
                 {
-                    return Err("tls check cannot set exec or tcp fields".to_string());
+                    return Err("tls collector cannot set exec or tcp fields".to_string());
                 }
 
-                Ok(CheckConfig::Tls(TlsCertConfig {
+                Ok(CollectorConfig::Tls(TlsCertConfig {
                     key,
                     label,
                     group,
@@ -288,10 +288,10 @@ impl RawCheckConfig {
                     timeout_ms: self.timeout_ms.unwrap_or(PROBE_TIMEOUT_MS),
                 }))
             }
-            CheckKind::Tcp => {
+            CollectorKind::Tcp => {
                 let Some(target) = self.target.and_then(|s| non_empty(&s).map(str::to_string))
                 else {
-                    return Err("tcp check requires target".to_string());
+                    return Err("tcp collector requires target".to_string());
                 };
                 if !self.command.is_empty()
                     || self.format.is_some()
@@ -302,10 +302,10 @@ impl RawCheckConfig {
                     || self.warn_days.is_some()
                     || self.fail_days.is_some()
                 {
-                    return Err("tcp check cannot set exec or tls fields".to_string());
+                    return Err("tcp collector cannot set exec or tls fields".to_string());
                 }
 
-                Ok(CheckConfig::Tcp(TcpProbeConfig {
+                Ok(CollectorConfig::Tcp(TcpProbeConfig {
                     key,
                     label,
                     group,
@@ -322,12 +322,12 @@ impl RawCheckConfig {
     }
 }
 
-impl TryFrom<RawCheckConfig> for CheckConfig {
+impl TryFrom<RawCollectorConfig> for CollectorConfig {
     type Error = String;
 
-    fn try_from(raw: RawCheckConfig) -> std::result::Result<Self, Self::Error> {
+    fn try_from(raw: RawCollectorConfig) -> std::result::Result<Self, Self::Error> {
         let Some(key) = raw.key.as_deref().and_then(non_empty).map(str::to_string) else {
-            return Err("checks[] requires key".to_string());
+            return Err("collectors[] requires key".to_string());
         };
         let label = raw
             .label
@@ -337,11 +337,11 @@ impl TryFrom<RawCheckConfig> for CheckConfig {
             .to_string();
         let group = raw.group.as_deref().and_then(non_empty).map(str::to_string);
 
-        raw.into_check(
+        raw.into_collector(
             key,
             label,
             group,
-            CheckDirDefaults {
+            CollectorDirDefaults {
                 group: None,
                 format: ExecOutputFormat::Exit,
                 warn_exit_code: None,
@@ -352,14 +352,14 @@ impl TryFrom<RawCheckConfig> for CheckConfig {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct CheckDirDefaults<'a> {
+pub struct CollectorDirDefaults<'a> {
     pub group: Option<&'a str>,
     pub format: ExecOutputFormat,
     pub warn_exit_code: Option<i32>,
     pub timeout_ms: u64,
 }
 
-impl Default for CheckDirDefaults<'_> {
+impl Default for CollectorDirDefaults<'_> {
     fn default() -> Self {
         Self {
             group: None,
@@ -372,7 +372,7 @@ impl Default for CheckDirDefaults<'_> {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
-pub enum CheckDirConfig {
+pub enum CollectorDirConfig {
     Path(String),
     Detailed {
         path: String,
@@ -385,10 +385,10 @@ pub enum CheckDirConfig {
     },
 }
 
-impl CheckDirConfig {
-    pub fn parts(&self) -> (&str, CheckDirDefaults<'_>) {
+impl CollectorDirConfig {
+    pub fn parts(&self) -> (&str, CollectorDirDefaults<'_>) {
         match self {
-            Self::Path(path) => (path.as_str(), CheckDirDefaults::default()),
+            Self::Path(path) => (path.as_str(), CollectorDirDefaults::default()),
             Self::Detailed {
                 path,
                 group,
@@ -397,7 +397,7 @@ impl CheckDirConfig {
                 timeout_ms,
             } => (
                 path.as_str(),
-                CheckDirDefaults {
+                CollectorDirDefaults {
                     group: group.as_deref(),
                     format: *format,
                     warn_exit_code: *warn_exit_code,
@@ -627,28 +627,6 @@ impl AgentConfig {
             "UPTARN_ENROLL_TOKEN",
         )
     }
-}
-
-pub fn parse_duration_secs(raw: &str) -> Result<u64> {
-    let s = raw.trim();
-    if s.is_empty() {
-        bail!("duration cannot be empty");
-    }
-
-    let (num_str, mult) = match s.as_bytes().last() {
-        Some(b'd' | b'D') => (&s[..s.len() - 1], 86_400u64),
-        Some(b'h' | b'H') => (&s[..s.len() - 1], 3600u64),
-        Some(b'm' | b'M') => (&s[..s.len() - 1], 60u64),
-        Some(b's' | b'S') => (&s[..s.len() - 1], 1u64),
-        _ => (s, 1u64),
-    };
-
-    let base: u64 = num_str
-        .trim()
-        .parse()
-        .with_context(|| format!("invalid duration '{raw}'"))?;
-
-    Ok(base.saturating_mul(mult))
 }
 
 #[cfg(test)]

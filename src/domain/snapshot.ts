@@ -29,6 +29,7 @@ import {
   worstHealthStatus,
 } from "../shared/index.ts";
 import type { JobRow } from "./jobs.ts";
+import { jobNextDueAt, jobOverallStatus } from "./jobs.ts";
 import type { MaintenanceRow } from "./maintenances.ts";
 import {
   buildPublicMaintenances,
@@ -498,20 +499,13 @@ export async function getDashboardSnapshot(
     };
   });
 
-  const jobs: JobSummary[] = jobRows.map(({ created_at: _c, ...row }) => {
-    const nextDue = row.last_run_at + row.interval_secs;
-
-    return {
+  const jobs: JobSummary[] = jobRows.map(
+    ({ ping_token_hash: _hash, ...row }) => ({
       ...row,
-      overall_status:
-        row.last_status === "fail"
-          ? "fail"
-          : now > nextDue + row.grace_secs
-            ? "overdue"
-            : "ok",
-      next_due_at: nextDue,
-    };
-  });
+      overall_status: jobOverallStatus(row, now),
+      next_due_at: jobNextDueAt(row),
+    }),
+  );
 
   return {
     now,

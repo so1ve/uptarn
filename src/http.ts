@@ -97,3 +97,16 @@ export async function readBoundedText(
 
   return text + decoder.decode();
 }
+
+export async function readOptionalText(
+  c: Context,
+  maxBytes: number,
+): Promise<string | null> {
+  if (c.req.method === "GET" || c.req.method === "HEAD" || !c.req.raw.body) {
+    return null;
+  }
+  const raw = await readBoundedText(c.req.raw as unknown as Response, maxBytes);
+  const trimmed = raw.trim();
+
+  return trimmed || null;
+}

@@ -20,7 +20,11 @@ import {
 } from "../../../src/shared/index.ts";
 
 export type DotStatus =
-  HealthStatus | NodeSummary["overall_status"] | "pending" | "overdue";
+  | HealthStatus
+  | NodeSummary["overall_status"]
+  | "pending"
+  | "running"
+  | "overdue";
 
 export const mountPercent = (mount: MountSnapshot): number =>
   clampPct(percent(mount.used_bytes, mount.total_bytes) ?? 0);

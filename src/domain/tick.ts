@@ -4,6 +4,7 @@ import { formatAge, unixNow } from "../shared/index.ts";
 import type { AlertObservation, AlertStateRow } from "./alerts.ts";
 import { ALERT_STATE_COLUMNS, buildAlertStatements } from "./alerts.ts";
 import type { JobRow } from "./jobs.ts";
+import { jobNextDueAt, jobOverdueSummary } from "./jobs.ts";
 import type { MaintenanceRow } from "./maintenances.ts";
 import {
   SELECT_ACTIVE_MAINTENANCES_SQL,
@@ -108,7 +109,8 @@ export async function runTick(
       sql: "SELECT id, label, interval_secs, grace_secs, muted_until, last_seen_at FROM nodes WHERE last_seen_at IS NOT NULL",
     },
     {
-      sql: "SELECT key, label, interval_secs, grace_secs, muted_until, last_run_at FROM jobs WHERE last_status = 'ok'",
+      sql: `SELECT key, label, interval_secs, grace_secs, muted_until, created_at, last_run_at, next_run_at, last_status
+            FROM jobs WHERE last_status != 'fail'`,
     },
     { sql: `SELECT ${ALERT_STATE_COLUMNS} FROM alert_states` },
     { sql: SELECT_ACTIVE_MAINTENANCES_SQL, params: [now] },
@@ -224,14 +226,14 @@ export async function runTick(
   }
 
   for (const job of jobs) {
-    if (now > job.last_run_at + job.interval_secs + job.grace_secs) {
+    if (now > jobNextDueAt(job) + job.grace_secs) {
       observations.push({
         incidentKey: `job:${job.key}`,
         targetType: "job",
         targetId: job.key,
         label: `Job: ${job.label}`,
         failing: true,
-        summary: `Overdue: last finished ${formatAge(job.last_run_at, now)}`,
+        summary: jobOverdueSummary(job, now),
         threshold: 1,
         targetMutedUntil: job.muted_until,
       });

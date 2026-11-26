@@ -1,4 +1,4 @@
-mod check_dir;
+mod collector_dir;
 mod exec;
 mod monitor;
 mod mounts;
@@ -12,7 +12,7 @@ use std::future::Future;
 use tokio::task::JoinSet;
 
 pub use self::system::{CpuTracker, collect_live_frame};
-use crate::config::{AgentConfig, CheckConfig};
+use crate::config::{AgentConfig, CollectorConfig};
 use crate::protocol::{NodeReportPayload, StructuredExecOutput};
 
 async fn collect_parallel<T, O, F, Fut>(items: &[T], f: F) -> Vec<O>
@@ -37,14 +37,14 @@ where
     out.into_iter().map(|(_, val)| val).collect()
 }
 
-async fn collect_check(cfg: CheckConfig) -> StructuredExecOutput {
+async fn run_collector(cfg: CollectorConfig) -> StructuredExecOutput {
     match cfg {
-        CheckConfig::Exec(exec_cfg) => exec::collect_item(&exec_cfg).await,
-        CheckConfig::Tls(tls_cfg) => StructuredExecOutput {
+        CollectorConfig::Exec(exec_cfg) => exec::collect_item(&exec_cfg).await,
+        CollectorConfig::Tls(tls_cfg) => StructuredExecOutput {
             series: vec![tls::collect_tls_cert(&tls_cfg).await],
             ..StructuredExecOutput::default()
         },
-        CheckConfig::Tcp(tcp_cfg) => StructuredExecOutput {
+        CollectorConfig::Tcp(tcp_cfg) => StructuredExecOutput {
             series: vec![tcp::collect_tcp_probe(&tcp_cfg).await],
             ..StructuredExecOutput::default()
         },
@@ -52,16 +52,16 @@ async fn collect_check(cfg: CheckConfig) -> StructuredExecOutput {
 }
 
 pub async fn collect_report(cfg: &AgentConfig, cpu_tracker: &mut CpuTracker) -> NodeReportPayload {
-    let (discovered_checks, mut checks) = check_dir::discover(&cfg.check_dirs);
-    let mut all_checks = Vec::with_capacity(cfg.checks.len() + discovered_checks.len());
-    all_checks.extend(cfg.checks.iter().cloned());
-    all_checks.extend(discovered_checks);
+    let (discovered_collectors, mut checks) = collector_dir::discover(&cfg.collector_dirs);
+    let mut all_collectors = Vec::with_capacity(cfg.collectors.len() + discovered_collectors.len());
+    all_collectors.extend(cfg.collectors.iter().cloned());
+    all_collectors.extend(discovered_collectors);
 
     let monitor_cfgs = cfg.monitors.as_deref().unwrap_or(&[]);
     let node_interval_secs = cfg.interval_secs;
     let node_grace_secs = cfg.grace_secs;
 
-    let (system, mut mounts, check_outcomes, collected_monitors) = tokio::join!(
+    let (system, mut mounts, collector_outcomes, collected_monitors) = tokio::join!(
         async {
             if cfg.system.enabled {
                 Some(system::collect_system(&cfg.system, cpu_tracker).await)
@@ -73,7 +73,7 @@ pub async fn collect_report(cfg: &AgentConfig, cpu_tracker: &mut CpuTracker) -> 
             &cfg.mounts,
             |m| async move { mounts::collect_mount(&m).await }
         ),
-        collect_parallel(&all_checks, collect_check),
+        collect_parallel(&all_collectors, run_collector),
         collect_parallel(monitor_cfgs, move |m| async move {
             monitor::collect_monitor(&m, node_interval_secs, node_grace_secs).await
         }),
@@ -97,11 +97,13 @@ pub async fn collect_report(cfg: &AgentConfig, cpu_tracker: &mut CpuTracker) -> 
     }
     info.extend(cfg.info.iter().cloned());
 
-    for out in check_outcomes {
+    let mut jobs = Vec::new();
+    for out in collector_outcomes {
         mounts.extend(out.mounts);
         checks.extend(out.checks);
         series.extend(out.series);
         info.extend(out.info);
+        jobs.extend(out.jobs);
     }
 
     NodeReportPayload {
@@ -117,5 +119,6 @@ pub async fn collect_report(cfg: &AgentConfig, cpu_tracker: &mut CpuTracker) -> 
         series,
         info,
         monitors: cfg.monitors.is_some().then_some(collected_monitors),
+        jobs,
     }
 }

@@ -6,7 +6,8 @@ use std::path::Path;
 use serde::Deserialize;
 
 use crate::config::{
-    CheckConfig, CheckDirConfig, CheckDirDefaults, CheckKind, RawCheckConfig, non_empty,
+    CollectorConfig, CollectorDirConfig, CollectorDirDefaults, CollectorKind, RawCollectorConfig,
+    non_empty,
 };
 use crate::protocol::CheckSnapshot;
 
@@ -15,14 +16,14 @@ const SCRIPT_HEADER_CAP_BYTES: usize = 2048;
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MultiDropIn {
-    checks: Vec<RawCheckConfig>,
+    collectors: Vec<RawCollectorConfig>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum DropInFile {
     Multi(MultiDropIn),
-    Single(Box<RawCheckConfig>),
+    Single(Box<RawCollectorConfig>),
 }
 
 fn sanitize_slug(stem: &str) -> String {
@@ -53,13 +54,13 @@ fn unquote(raw: &str) -> &str {
     if quoted { &s[1..s.len() - 1] } else { s }
 }
 
-fn build_check(
-    mut item: RawCheckConfig,
+fn build_collector(
+    mut item: RawCollectorConfig,
     fallback_stem: Option<&str>,
     base_dir: &Path,
-    defaults: CheckDirDefaults<'_>,
-) -> Result<CheckConfig, String> {
-    if item.kind == CheckKind::Exec
+    defaults: CollectorDirDefaults<'_>,
+) -> Result<CollectorConfig, String> {
+    if item.kind == CollectorKind::Exec
         && let Some(first) = item.command.first_mut()
         && (first.starts_with("./") || first.starts_with("../"))
     {
@@ -84,44 +85,44 @@ fn build_check(
         .or(defaults.group)
         .map(str::to_string);
 
-    item.into_check(key, label, group, defaults)
+    item.into_collector(key, label, group, defaults)
 }
 
 fn load_toml_dropin(
     path: &Path,
     stem: &str,
     base_dir: &Path,
-    defaults: CheckDirDefaults<'_>,
-) -> Result<Vec<CheckConfig>, String> {
+    defaults: CollectorDirDefaults<'_>,
+) -> Result<Vec<CollectorConfig>, String> {
     let raw = fs::read_to_string(path).map_err(|err| format!("failed to read drop-in: {err}"))?;
     let parsed: DropInFile =
         toml::from_str(&raw).map_err(|err| format!("invalid drop-in TOML: {err}"))?;
 
     match parsed {
-        DropInFile::Multi(MultiDropIn { checks }) => {
-            if checks.is_empty() {
-                return Err("drop-in [[checks]] list is empty".to_string());
+        DropInFile::Multi(MultiDropIn { collectors }) => {
+            if collectors.is_empty() {
+                return Err("drop-in [[collectors]] list is empty".to_string());
             }
 
-            checks
+            collectors
                 .into_iter()
                 .enumerate()
                 .map(|(idx, item)| {
-                    build_check(item, None, base_dir, defaults)
-                        .map_err(|msg| format!("checks[{idx}]: {msg}"))
+                    build_collector(item, None, base_dir, defaults)
+                        .map_err(|msg| format!("collectors[{idx}]: {msg}"))
                 })
                 .collect()
         }
         DropInFile::Single(item) => {
-            let check = build_check(*item, Some(stem), base_dir, defaults)?;
+            let check = build_collector(*item, Some(stem), base_dir, defaults)?;
 
             Ok(vec![check])
         }
     }
 }
 
-fn parse_script_metadata(path: &Path) -> RawCheckConfig {
-    let mut meta = RawCheckConfig::default();
+fn parse_script_metadata(path: &Path) -> RawCollectorConfig {
+    let mut meta = RawCollectorConfig::default();
     let Ok(file) = File::open(path) else {
         return meta;
     };
@@ -167,7 +168,7 @@ fn parse_script_metadata(path: &Path) -> RawCheckConfig {
     meta
 }
 
-pub fn discover(dirs: &[CheckDirConfig]) -> (Vec<CheckConfig>, Vec<CheckSnapshot>) {
+pub fn discover(dirs: &[CollectorDirConfig]) -> (Vec<CollectorConfig>, Vec<CheckSnapshot>) {
     let mut discovered = Vec::new();
     let mut errors = Vec::new();
 
@@ -179,8 +180,8 @@ pub fn discover(dirs: &[CheckDirConfig]) -> (Vec<CheckConfig>, Vec<CheckSnapshot
             Err(err) if err.kind() == ErrorKind::NotFound => continue,
             Err(err) => {
                 errors.push(CheckSnapshot::failed(
-                    sanitize_slug(&format!("check_dir_{dir_path}")),
-                    format!("check_dir {dir_path}"),
+                    sanitize_slug(&format!("collector_dir_{dir_path}")),
+                    format!("collector_dir {dir_path}"),
                     defaults.group.map(str::to_string),
                     format!("failed to read directory: {err}"),
                     None,
@@ -226,7 +227,7 @@ pub fn discover(dirs: &[CheckDirConfig]) -> (Vec<CheckConfig>, Vec<CheckSnapshot
             } else if (meta.permissions().mode() & 0o111) != 0 {
                 let mut script = parse_script_metadata(&path);
                 script.command = vec![path.to_string_lossy().into_owned()];
-                if let Ok(check) = build_check(script, Some(stem), base_dir, defaults) {
+                if let Ok(check) = build_collector(script, Some(stem), base_dir, defaults) {
                     discovered.push(check);
                 }
             }
