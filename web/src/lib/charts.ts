@@ -349,6 +349,9 @@ export function buildProbeCharts(
   const items: ProbeChartItem[] = [];
 
   for (const s of seriesList) {
+    if (s.unit === "days") {
+      continue;
+    }
     const pts = history[s.key] ?? [];
     if (pts.length < 2) {
       continue;

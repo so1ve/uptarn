@@ -47,6 +47,19 @@ function toggleDetail(check: CheckSnapshot) {
   };
 }
 
+const isFailedZeroDays = (series: SeriesSnapshot): boolean =>
+  series.unit === "days" &&
+  series.status === "fail" &&
+  series.value === 0 &&
+  typeof series.summary === "string" &&
+  series.summary.length > 0 &&
+  !series.summary.startsWith("0 ");
+
+const scalarDisplayValue = (series: SeriesSnapshot): string =>
+  isFailedZeroDays(series)
+    ? "Error"
+    : formatSeriesValue(series.value, series.unit);
+
 function scalarSummaryNote(series: SeriesSnapshot): string | null {
   if (!series.summary || !series.status || series.status === "ok") {
     return null;
@@ -169,7 +182,7 @@ function scalarSummaryNote(series: SeriesSnapshot): string | null {
                 class="font-mono text-xs tabular-nums"
                 :class="statusTextClass(s.status ?? 'ok')"
               >
-                {{ formatSeriesValue(s.value, s.unit) }}
+                {{ scalarDisplayValue(s) }}
               </span>
               <span
                 v-if="hasAnyCheckDetail"

@@ -12,7 +12,7 @@ use tokio_rustls::TlsConnector;
 
 use super::x509;
 use crate::config::TlsCertConfig;
-use crate::protocol::{HealthStatus, SeriesSnapshot, SeriesUnit};
+use crate::protocol::{CheckSnapshot, HealthStatus};
 
 #[derive(Debug)]
 struct InspectOnlyCertVerifier;
@@ -123,8 +123,8 @@ async fn read_tls_days(cfg: &TlsCertConfig) -> Result<f64> {
     cert_days_remaining(leaf.as_ref())
 }
 
-pub async fn collect_tls_cert(cfg: &TlsCertConfig) -> SeriesSnapshot {
-    let (value, status, summary) = match read_tls_days(cfg).await {
+fn build_tls_check(cfg: &TlsCertConfig, result: Result<f64>) -> CheckSnapshot {
+    let (status, summary, detail) = match result {
         Ok(days) => {
             let whole = days.floor() as i64;
             let status = if whole <= cfg.fail_days {
@@ -134,20 +134,73 @@ pub async fn collect_tls_cert(cfg: &TlsCertConfig) -> SeriesSnapshot {
             } else {
                 HealthStatus::Ok
             };
+            let summary = if whole < 0 {
+                format!("expired {} days ago", -whole)
+            } else {
+                format!("{days:.0} days left")
+            };
 
-            (days, status, format!("{days:.0} days left"))
+            (status, summary, None)
         }
-        Err(err) => (0.0, HealthStatus::Fail, format!("TLS check error: {err}")),
+        Err(err) => (
+            HealthStatus::Fail,
+            "TLS check error".to_string(),
+            Some(format!("{err:#}")),
+        ),
     };
 
-    SeriesSnapshot {
+    CheckSnapshot {
         key: cfg.key.clone(),
         label: cfg.label.clone(),
         group: cfg.group.clone(),
-        unit: SeriesUnit::Days,
-        value,
-        loss_pct: None,
-        status: Some(status),
+        status,
         summary: Some(summary),
+        detail,
+    }
+}
+
+pub async fn collect_tls_cert(cfg: &TlsCertConfig) -> CheckSnapshot {
+    build_tls_check(cfg, read_tls_days(cfg).await)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_cfg() -> TlsCertConfig {
+        TlsCertConfig {
+            key: "tls_site".to_string(),
+            label: "example.com TLS".to_string(),
+            group: Some("tls".to_string()),
+            connect: Some("example.com:443".to_string()),
+            server_name: None,
+            path: None,
+            timeout_ms: 5000,
+            warn_days: 14,
+            fail_days: 7,
+        }
+    }
+
+    #[test]
+    fn maps_days_and_errors_to_check_snapshots() {
+        let cfg = sample_cfg();
+
+        let ok = build_tls_check(&cfg, Ok(74.4));
+        assert_eq!(ok.status, HealthStatus::Ok);
+        assert_eq!(ok.summary.as_deref(), Some("74 days left"));
+        assert!(ok.detail.is_none());
+
+        let warn = build_tls_check(&cfg, Ok(10.2));
+        assert_eq!(warn.status, HealthStatus::Warn);
+        assert_eq!(warn.summary.as_deref(), Some("10 days left"));
+
+        let expired = build_tls_check(&cfg, Ok(-2.1));
+        assert_eq!(expired.status, HealthStatus::Fail);
+        assert_eq!(expired.summary.as_deref(), Some("expired 3 days ago"));
+
+        let err = build_tls_check(&cfg, Err(anyhow!("TLS handshake timed out")));
+        assert_eq!(err.status, HealthStatus::Fail);
+        assert_eq!(err.summary.as_deref(), Some("TLS check error"));
+        assert_eq!(err.detail.as_deref(), Some("TLS handshake timed out"));
     }
 }

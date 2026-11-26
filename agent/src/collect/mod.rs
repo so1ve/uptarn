@@ -41,7 +41,7 @@ async fn run_collector(cfg: CollectorConfig) -> StructuredExecOutput {
     match cfg {
         CollectorConfig::Exec(exec_cfg) => exec::collect_item(&exec_cfg).await,
         CollectorConfig::Tls(tls_cfg) => StructuredExecOutput {
-            series: vec![tls::collect_tls_cert(&tls_cfg).await],
+            checks: vec![tls::collect_tls_cert(&tls_cfg).await],
             ..StructuredExecOutput::default()
         },
         CollectorConfig::Tcp(tcp_cfg) => StructuredExecOutput {

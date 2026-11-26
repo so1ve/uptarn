@@ -804,6 +804,9 @@ export async function ingestNodeReport(
     sampleValues._tx_bps = round1(txBps);
   }
   for (const item of series) {
+    if (item.unit === "days") {
+      continue;
+    }
     const val = round1(item.value);
     sampleValues[item.key] =
       item.loss_pct === undefined ? val : [val, round1(item.loss_pct)];

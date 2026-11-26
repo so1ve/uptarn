@@ -1745,6 +1745,14 @@ describe("uptarn portable server", () => {
               loss_pct: loss,
               status: "ok",
             },
+            {
+              key: "tls.cert",
+              label: "TLS",
+              unit: "days",
+              value: 74.5,
+              status: "ok",
+              summary: "75 days left",
+            },
           ],
         },
         token,
@@ -1767,6 +1775,7 @@ describe("uptarn portable server", () => {
       { ts: 900, value: 50, aux: 25 },
       { ts: 1350, value: 50, aux: 0 },
     ]);
+    expect(edge.history["tls.cert"]).toBeUndefined();
 
     const pub = await (
       await app.request("/api/v1/public/status")
