@@ -1,4 +1,5 @@
 export * from "./alerts.ts";
+export * from "./incident-reports.ts";
 export * from "./jobs.ts";
 export * from "./maintenances.ts";
 export * from "./monitors.ts";

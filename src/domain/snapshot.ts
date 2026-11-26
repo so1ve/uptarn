@@ -142,6 +142,7 @@ function sanitizePublicReason(
 function buildPublicIncidents(
   openStates: readonly PublicAlertStateRow[],
   eventRows: readonly PublicAlertEventRow[],
+  noteRows: readonly IncidentNoteRow[],
   publicMonitors: ReadonlyMap<
     string,
     { key: string; name: string; probeType: MonitorKind }
@@ -172,7 +173,8 @@ function buildPublicIncidents(
     string,
     { startedAt: number; reason: string }
   >();
-  const resolved: Omit<PublicIncidentSummary, "key">[] = [];
+  const resolved: (Omit<PublicIncidentSummary, "key"> & { _key: string })[] =
+    [];
 
   for (const ev of [...eventRows].reverse()) {
     const target = resolveTarget(ev.target_type, ev.target_id, ev.incident_key);
@@ -193,6 +195,7 @@ function buildPublicIncidents(
       const started = pendingFiring.get(ev.incident_key);
       pendingFiring.delete(ev.incident_key);
       resolved.push({
+        _key: ev.incident_key,
         target_key: target.targetKey,
         target_type: ev.target_type,
         name: target.name,
@@ -206,7 +209,7 @@ function buildPublicIncidents(
     }
   }
 
-  const ongoing: Omit<PublicIncidentSummary, "key">[] = [];
+  const ongoing: (Omit<PublicIncidentSummary, "key"> & { _key: string })[] = [];
   for (const st of openStates) {
     const target = resolveTarget(st.target_type, st.target_id, st.incident_key);
     if (!target) {
@@ -214,6 +217,7 @@ function buildPublicIncidents(
     }
     const fired = pendingFiring.get(st.incident_key);
     ongoing.push({
+      _key: st.incident_key,
       target_key: target.targetKey,
       target_type: st.target_type,
       name: target.name,
@@ -228,13 +232,67 @@ function buildPublicIncidents(
     });
   }
 
+  const notesByKey = new Map<string, IncidentNoteRow[]>();
+  for (const n of noteRows) {
+    if (n.is_public !== 1) {
+      continue;
+    }
+    const list = notesByKey.get(n.incident_key);
+    if (list) {
+      list.push(n);
+    } else {
+      notesByKey.set(n.incident_key, [n]);
+    }
+  }
+
+  const allRuns: (Omit<PublicIncidentSummary, "key"> & { _key: string })[] = [
+    ...ongoing,
+    ...resolved,
+  ];
+  const runsByIncidentKey = new Map<string, typeof allRuns>();
+  for (const run of allRuns) {
+    const list = runsByIncidentKey.get(run._key);
+    if (list) {
+      list.push(run);
+    } else {
+      runsByIncidentKey.set(run._key, [run]);
+    }
+  }
+  for (const [incKey, runs] of runsByIncidentKey) {
+    const notes = notesByKey.get(incKey);
+    if (!notes || notes.length === 0) {
+      continue;
+    }
+    runs.sort((a, b) => a.started_at - b.started_at);
+    for (let i = 0; i < runs.length; i += 1) {
+      const run = runs[i];
+      const nextStart = runs[i + 1]?.started_at ?? Infinity;
+      const matched = notes
+        .filter(
+          (n) => n.created_at >= run.started_at && n.created_at < nextStart,
+        )
+        .sort((a, b) => a.created_at - b.created_at)
+        .map((n) => ({
+          id: n.id,
+          status: n.status ?? null,
+          message: n.message,
+          created_at: n.created_at,
+        }));
+      if (matched.length > 0) {
+        run.notes = matched;
+      }
+    }
+  }
+
   ongoing.sort((a, b) => b.started_at - a.started_at);
   resolved.sort((a, b) => b.started_at - a.started_at);
 
-  return [...ongoing, ...resolved].slice(0, 20).map((item, idx) => ({
-    key: `i${idx}`,
-    ...item,
-  }));
+  return [...ongoing, ...resolved]
+    .slice(0, 20)
+    .map(({ _key: _, ...item }, idx) => ({
+      key: `i${idx}`,
+      ...item,
+    }));
 }
 
 function parseNodeCore(row: NodeCoreRow, now: number) {
@@ -389,6 +447,8 @@ export async function getDashboardSnapshot(
     monitorRows,
     jobRows,
     incidents,
+    incidentReportRows,
+    incidentNoteRows,
     eventRows,
     maintenanceRows,
   ] = (await db.allBatch([
@@ -409,6 +469,14 @@ export async function getDashboardSnapshot(
             FROM alert_states ORDER BY state DESC, last_changed_at DESC`,
     },
     {
+      sql: `SELECT id, title, status, impact, is_public, targets_json, updates_json, created_at, updated_at, resolved_at
+            FROM incident_reports ORDER BY (resolved_at IS NOT NULL) ASC, updated_at DESC LIMIT 50`,
+    },
+    {
+      sql: `SELECT id, incident_key, status, message, is_public, created_at
+            FROM incident_notes ORDER BY created_at DESC LIMIT 100`,
+    },
+    {
       sql: `SELECT id, incident_key, target_type, target_id, label, kind, summary, created_at, delivery_json
             FROM alert_events ORDER BY created_at DESC LIMIT 100`,
     },
@@ -422,6 +490,8 @@ export async function getDashboardSnapshot(
     MonitorRow[],
     JobRow[],
     IncidentSummary[],
+    IncidentReportRow[],
+    IncidentNoteRow[],
     (Omit<AlertEventSummary, "delivery"> & { delivery_json: string })[],
     MaintenanceRow[],
   ];
@@ -535,6 +605,8 @@ export async function getDashboardSnapshot(
       auth: buildAuthSummary(config, passkeys.length),
     },
     incidents,
+    incident_reports: incidentReportRows.map(toIncidentReportSummary),
+    incident_notes: incidentNoteRows.map(toIncidentNoteSummary),
     maintenances: maintenanceRows.map((row) => toMaintenanceSummary(row, now)),
     nodes,
     monitors,
@@ -592,6 +664,8 @@ export async function getPublicStatusSnapshot(
     nodeRows,
     openAlertStates,
     recentAlertEvents,
+    incidentReportRows,
+    incidentNoteRows,
     maintenanceRows,
   ] = (await db.allBatch([
     { sql: SELECT_SETTINGS_SQL },
@@ -613,6 +687,16 @@ export async function getPublicStatusSnapshot(
             FROM alert_events WHERE target_type IN ('monitor', 'node') ORDER BY created_at DESC LIMIT 60`,
     },
     {
+      sql: `SELECT id, title, status, impact, is_public, targets_json, updates_json, created_at, updated_at, resolved_at
+            FROM incident_reports WHERE is_public = 1 AND (resolved_at IS NULL OR resolved_at >= ?1)
+            ORDER BY (resolved_at IS NOT NULL) ASC, updated_at DESC LIMIT 30`,
+      params: [now - 14 * 86_400],
+    },
+    {
+      sql: `SELECT id, incident_key, status, message, is_public, created_at
+            FROM incident_notes WHERE is_public = 1 ORDER BY created_at DESC LIMIT 100`,
+    },
+    {
       sql: "SELECT id, title, body, starts_at, ends_at, targets_json, created_at FROM maintenances WHERE ends_at > ?1 ORDER BY starts_at ASC",
       params: [now],
     },
@@ -623,6 +707,8 @@ export async function getPublicStatusSnapshot(
     NodeCoreRow[],
     PublicAlertStateRow[],
     PublicAlertEventRow[],
+    IncidentReportRow[],
+    IncidentNoteRow[],
     MaintenanceRow[],
   ];
 
@@ -705,6 +791,13 @@ export async function getPublicStatusSnapshot(
     incidents: buildPublicIncidents(
       openAlertStates,
       recentAlertEvents,
+      incidentNoteRows,
+      publicMonitorsById,
+      publicNodesById,
+    ),
+    incident_reports: buildPublicIncidentReports(
+      incidentReportRows,
+      now,
       publicMonitorsById,
       publicNodesById,
     ),

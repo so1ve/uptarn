@@ -265,6 +265,96 @@ export interface IncidentSummary {
   last_summary: string;
 }
 
+export type IncidentReportStatus =
+  "investigating" | "identified" | "monitoring" | "resolved";
+
+export type IncidentReportImpact = "minor" | "major";
+
+export interface IncidentReportUpdate {
+  id: string;
+  status: IncidentReportStatus | null;
+  message: string;
+  created_at: number;
+}
+
+export interface IncidentReportInput {
+  id?: string;
+  title: string;
+  status?: IncidentReportStatus;
+  impact?: IncidentReportImpact;
+  is_public?: boolean;
+  message?: string;
+  created_at?: number;
+  targets?: MaintenanceTarget[];
+}
+
+export interface IncidentReportUpdateInput {
+  status?: IncidentReportStatus | null;
+  message: string;
+  created_at?: number;
+}
+
+export interface IncidentReportUpdatePatch {
+  status?: IncidentReportStatus | null;
+  message?: string;
+  created_at?: number;
+}
+
+export interface IncidentNoteInput {
+  incident_key: string;
+  status?: IncidentReportStatus | null;
+  message: string;
+  is_public?: boolean;
+  created_at?: number;
+}
+
+export interface IncidentNotePatch {
+  status?: IncidentReportStatus | null;
+  message?: string;
+  is_public?: boolean;
+  created_at?: number;
+}
+
+export interface IncidentNoteSummary {
+  id: string;
+  incident_key: string;
+  status: IncidentReportStatus | null;
+  message: string;
+  is_public: boolean;
+  created_at: number;
+}
+
+export interface PublicIncidentNote {
+  id: string;
+  status: IncidentReportStatus | null;
+  message: string;
+  created_at: number;
+}
+
+export interface IncidentReportSummary {
+  id: string;
+  title: string;
+  status: IncidentReportStatus;
+  impact: IncidentReportImpact;
+  is_public: boolean;
+  targets: MaintenanceTarget[];
+  updates: IncidentReportUpdate[];
+  created_at: number;
+  updated_at: number;
+  resolved_at: number | null;
+}
+
+export interface PublicIncidentReportSummary {
+  key: string;
+  title: string;
+  status: IncidentReportStatus;
+  impact: IncidentReportImpact;
+  targets: string[];
+  updates: IncidentReportUpdate[];
+  created_at: number;
+  updated_at: number;
+  resolved_at: number | null;
+}
 
 export interface AlertEventSummary {
   id: number;
@@ -389,6 +479,8 @@ export interface DashboardSnapshot {
   public_base_url: string;
   settings: AdminSettingsSummary;
   incidents: IncidentSummary[];
+  incident_reports: IncidentReportSummary[];
+  incident_notes: IncidentNoteSummary[];
   maintenances: MaintenanceSummary[];
   nodes: NodeSummary[];
   monitors: MonitorSummary[];
@@ -434,6 +526,7 @@ export interface PublicIncidentSummary {
   started_at: number;
   resolved_at: number | null;
   reason: string;
+  notes?: PublicIncidentNote[];
 }
 
 export interface PublicStatusSnapshot {
@@ -446,6 +539,7 @@ export interface PublicStatusSnapshot {
   monitors: PublicMonitorSummary[];
   nodes: PublicNodeSummary[];
   incidents: PublicIncidentSummary[];
+  incident_reports: PublicIncidentReportSummary[];
   maintenances: PublicMaintenanceSummary[];
 }
 

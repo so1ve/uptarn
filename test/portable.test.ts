@@ -2981,4 +2981,228 @@ describe("uptarn portable server", () => {
       duration_secs: 185,
     });
   });
+
+  it("supports manual incident reports with editable timeline updates, auto-incident notes, and public redaction", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-26T00:00:00Z"));
+    const config = loadConfig({
+      PUBLIC_BASE_URL: "http://localhost:8787",
+      ADMIN_TOKEN: "admin-tok",
+      FAILURE_THRESHOLD: "1",
+    });
+    const app = createApp(db, config);
+    const adminHeaders = {
+      "Authorization": "Bearer admin-tok",
+      "Content-Type": "application/json",
+    };
+
+    await upsertMonitor(db, {
+      id: "pub-web",
+      name: "Public Web",
+      url: "https://web.example.com",
+      is_public: true,
+    });
+    await upsertMonitor(db, {
+      id: "priv-db",
+      name: "Secret DB",
+      url: "https://10.0.0.5/health",
+      is_public: false,
+    });
+
+    // 1. Trigger failing probe -> add public & private timeline notes -> edit public note
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("err", { status: 503 })),
+    );
+    await runTick(db, config, { forceMonitors: true });
+
+    const pubNoteRes = await app.request("/api/v1/admin/incident-notes", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({
+        incident_key: "monitor:pub-web",
+        status: "investigating",
+        message: "Initial draft note.",
+        is_public: true,
+      }),
+    });
+
+    expect(pubNoteRes.status).toBe(201);
+
+    const { note: pubNote } = await pubNoteRes.json<{
+      note: { id: string };
+    }>();
+
+    const editNoteRes = await app.request(
+      `/api/v1/admin/incident-notes/${encodeURIComponent(pubNote.id)}`,
+      {
+        method: "PATCH",
+        headers: adminHeaders,
+        body: JSON.stringify({
+          message: "Investigating upstream CDN 503s.",
+        }),
+      },
+    );
+
+    expect(editNoteRes.status).toBe(200);
+
+    await app.request("/api/v1/admin/incident-notes", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({
+        incident_key: "monitor:pub-web",
+        message: "Internal-only debug hint",
+        is_public: false,
+      }),
+    });
+
+    // 2. Post public manual incident targeting both public & private monitors
+    const postRes = await app.request("/api/v1/admin/incident-reports", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({
+        id: "cdn-outage",
+        title: "Upstream CDN disruption",
+        status: "investigating",
+        impact: "major",
+        is_public: true,
+        message: "Seeing elevated 503s from edge PoP.",
+        targets: [
+          { type: "monitor", id: "pub-web" },
+          { type: "monitor", id: "priv-db" },
+        ],
+      }),
+    });
+
+    expect(postRes.status).toBe(201);
+
+    // 3. Post private-only & private-target-only incidents (must NOT leak publicly)
+    await app.request("/api/v1/admin/incident-reports", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({
+        id: "internal-only",
+        title: "Internal secret outage",
+        is_public: false,
+        message: "Internal note",
+      }),
+    });
+    await app.request("/api/v1/admin/incident-reports", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({
+        id: "priv-target-only",
+        title: "Secret DB failover",
+        is_public: true,
+        targets: [{ type: "monitor", id: "priv-db" }],
+      }),
+    });
+
+    // 4. Append plain update (no status change), edit it, then add resolved update, then delete the plain one
+    vi.advanceTimersByTime(300_000);
+    const plainUpdRes = await app.request(
+      "/api/v1/admin/incident-reports/cdn-outage/updates",
+      {
+        method: "POST",
+        headers: adminHeaders,
+        body: JSON.stringify({
+          message: "Temporary note to edit and delete",
+        }),
+      },
+    );
+
+    expect(plainUpdRes.status).toBe(200);
+
+    const plainBody = await plainUpdRes.json<{
+      report: {
+        status: string;
+        updates: { id: string; message: string; status: string | null }[];
+      };
+    }>();
+
+    expect(plainBody.report.status).toBe("investigating");
+
+    const tempId = plainBody.report.updates[1].id;
+
+    const patchUpdRes = await app.request(
+      `/api/v1/admin/incident-reports/cdn-outage/updates/${encodeURIComponent(tempId)}`,
+      {
+        method: "PATCH",
+        headers: adminHeaders,
+        body: JSON.stringify({ message: "Edited note" }),
+      },
+    );
+
+    expect(patchUpdRes.status).toBe(200);
+
+    const delUpdRes = await app.request(
+      `/api/v1/admin/incident-reports/cdn-outage/updates/${encodeURIComponent(tempId)}`,
+      { method: "DELETE", headers: adminHeaders },
+    );
+
+    expect(delUpdRes.status).toBe(200);
+
+    vi.advanceTimersByTime(300_000);
+    const resolveRes = await app.request(
+      "/api/v1/admin/incident-reports/cdn-outage/updates",
+      {
+        method: "POST",
+        headers: adminHeaders,
+        body: JSON.stringify({
+          status: "resolved",
+          message: "Traffic rerouted and 503s cleared.",
+        }),
+      },
+    );
+
+    expect(resolveRes.status).toBe(200);
+
+    const pubRes = await app.request("/api/v1/public/status");
+    const raw = await pubRes.text();
+
+    expect(raw).not.toContain("Internal-only debug hint");
+    expect(raw).not.toContain("Internal secret outage");
+    expect(raw).not.toContain("Secret DB failover");
+    expect(raw).not.toContain("Secret DB");
+    expect(raw).not.toContain("priv-db");
+
+    const pub = JSON.parse(raw) as {
+      incidents: { name: string; notes?: { message: string }[] }[];
+      incident_reports: {
+        title: string;
+        status: string;
+        targets: string[];
+        updates: { status: string | null; message: string }[];
+        resolved_at: number | null;
+      }[];
+    };
+
+    expect(pub.incidents[0].name).toBe("Public Web");
+    expect(pub.incidents[0].notes?.map((n) => n.message)).toEqual([
+      "Investigating upstream CDN 503s.",
+    ]);
+    expect(pub.incident_reports).toHaveLength(1);
+    expect(pub.incident_reports[0]).toMatchObject({
+      title: "Upstream CDN disruption",
+      status: "resolved",
+      targets: ["Public Web"],
+    });
+    expect(pub.incident_reports[0].updates).toHaveLength(2);
+    expect(pub.incident_reports[0].resolved_at).toBeTypeOf("number");
+
+    // 5. Delete note & report
+    const delNoteRes = await app.request(
+      `/api/v1/admin/incident-notes/${encodeURIComponent(pubNote.id)}`,
+      { method: "DELETE", headers: adminHeaders },
+    );
+
+    expect(delNoteRes.status).toBe(200);
+
+    const delRes = await app.request(
+      "/api/v1/admin/incident-reports/cdn-outage",
+      { method: "DELETE", headers: adminHeaders },
+    );
+
+    expect(delRes.status).toBe(200);
+  });
 });

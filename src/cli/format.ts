@@ -7,6 +7,7 @@ import type {
   CheckSnapshot,
   DashboardSnapshot,
   IncidentHistoryRecord,
+  IncidentReportSummary,
   IncidentSummary,
   JobSummary,
   MaintenanceSummary,
@@ -164,7 +165,11 @@ const formatChannels = (
   theme: Theme,
   channels: AdminSettingsSummary["channels"],
 ): string =>
-  [channels.telegram && "telegram", channels.matrix && "matrix"]
+  [
+    channels.telegram && "telegram",
+    channels.matrix && "matrix",
+    channels.webhook && "webhook",
+  ]
     .filter(Boolean)
     .join(", ") || theme.muted("none");
 
@@ -587,6 +592,32 @@ export const renderIncidentsList = (
     })
     .join("\n");
 
+export const renderIncidentReportsTable = (
+  theme: Theme,
+  reports: readonly IncidentReportSummary[],
+  now: number,
+): string =>
+  renderTable<IncidentReportSummary>(
+    theme,
+    [
+      col("ID", (r) => theme.bold(r.id)),
+      col("STATUS", (r) =>
+        r.status === "resolved"
+          ? theme.success(r.status)
+          : r.impact === "major"
+            ? theme.error(r.status)
+            : theme.warn(r.status),
+      ),
+      col("VIS", (r) =>
+        r.is_public ? theme.muted("public") : theme.muted("private"),
+      ),
+      col("UPDATES", (r) => theme.muted(String(r.updates.length)), "right"),
+      col("UPDATED", (r) => theme.muted(formatAge(r.updated_at, now)), "right"),
+      col("TITLE", (r) => r.title),
+    ],
+    reports,
+  );
+
 export const renderIncidentHistoryTable = (
   theme: Theme,
   records: readonly IncidentHistoryRecord[],
@@ -702,6 +733,8 @@ export function renderSettingsDetail(
           )
         : theme.muted("off"),
     ],
+    ["Failure threshold", `${settings.failure_threshold} consecutive failures`],
+    ["Retention", `${settings.retention_days} days`],
     ["Channels", formatChannels(theme, settings.channels)],
     [
       "Auth methods",

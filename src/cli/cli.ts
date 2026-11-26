@@ -15,6 +15,8 @@ import type { TickReport } from "../domain/tick.ts";
 import { runDatabaseMigrations, startNodeServer } from "../node.ts";
 import type {
   DashboardSnapshot,
+  IncidentReportImpact,
+  IncidentReportStatus,
   MaintenanceInput,
   MaintenanceTarget,
   MonitorInput,
@@ -25,6 +27,7 @@ import { parseTimestampSecs } from "../validation.ts";
 import {
   renderBanner,
   renderIncidentHistoryTable,
+  renderIncidentReportsTable,
   renderIncidentsList,
   renderJobDetail,
   renderJobsTable,
@@ -1040,27 +1043,40 @@ export function createCli() {
         0,
         ctx.flags.limit,
       );
+      const reports = data.incident_reports ?? [];
       emitJsonOr(
         ctx,
-        { incidents: data.incidents, history, events: data.events },
+        {
+          incidents: data.incidents,
+          incident_reports: reports,
+          history,
+          events: data.events,
+        },
         () => {
           const now = data.now || unixNow();
-          ctx.log.raw(
-            [
-              renderSection(
-                theme,
-                "Active Incidents",
-                `(${data.incidents.length})`,
-              ),
-              data.incidents.length === 0
-                ? `  ${theme.success("No active incidents.")}`
-                : renderIncidentsList(theme, data.incidents),
-              renderSection(theme, "History", `(${history.length})`),
-              history.length === 0
-                ? `  ${theme.muted("No incident history recorded.")}`
-                : renderIncidentHistoryTable(theme, history, now),
-            ].join("\n"),
+          const sections = [
+            renderSection(
+              theme,
+              "Active Incidents",
+              `(${data.incidents.length})`,
+            ),
+            data.incidents.length === 0
+              ? `  ${theme.success("No active incidents.")}`
+              : renderIncidentsList(theme, data.incidents),
+          ];
+          if (reports.length > 0) {
+            sections.push(
+              renderSection(theme, "Incident Reports", `(${reports.length})`),
+              renderIncidentReportsTable(theme, reports, now),
+            );
+          }
+          sections.push(
+            renderSection(theme, "History", `(${history.length})`),
+            history.length === 0
+              ? `  ${theme.muted("No incident history recorded.")}`
+              : renderIncidentHistoryTable(theme, history, now),
           );
+          ctx.log.raw(sections.join("\n"));
         },
       );
     },
@@ -1092,6 +1108,152 @@ export function createCli() {
             ? `Acknowledged ${ctx.args.key}`
             : `Cleared acknowledgement on ${ctx.args.key}`,
         );
+      });
+    },
+  });
+
+  incCmd.command("note <key> <message>", {
+    description: "Add a timeline note to an auto-detected incident",
+    args: {
+      key: { description: "Incident key (from incident ls)" },
+      message: { description: "Timeline note text" },
+    },
+    flags: {
+      private: {
+        type: Boolean,
+        default: false,
+        description: "Keep note internal (hide from public status page)",
+      },
+      ...jsonFlag,
+    },
+    async run(ctx) {
+      const res = await ctx.state.request<{ note: { id: string } }>(
+        "POST",
+        "/api/v1/admin/incident-notes",
+        {
+          incident_key: ctx.args.key,
+          message: ctx.args.message,
+          is_public: !ctx.flags.private,
+        },
+      );
+      emitJsonOr(ctx, res, () => {
+        ctx.log.success(`Added note ${res.note.id} to ${ctx.args.key}`);
+      });
+    },
+  });
+
+  const incidentStatusType = Types.Enum<IncidentReportStatus>(
+    "investigating",
+    "identified",
+    "monitoring",
+    "resolved",
+  );
+  const incidentImpactType = Types.Enum<IncidentReportImpact>("minor", "major");
+
+  incCmd.command("post", {
+    description: "Post a manual incident report for the status page",
+    flags: {
+      id: { type: String, description: "Optional slug id" },
+      title: { type: String, required: true, description: "Incident title" },
+      message: { type: String, description: "Initial timeline update message" },
+      status: {
+        type: incidentStatusType,
+        default: "investigating",
+        description: "investigating, identified, monitoring, or resolved",
+      },
+      impact: {
+        type: incidentImpactType,
+        default: "minor",
+        description: "minor or major",
+      },
+      private: {
+        type: Boolean,
+        default: false,
+        description: "Keep internal (hide from public status page)",
+      },
+      target: {
+        type: nonEmptyString,
+        multiple: true,
+        placeholder: "<type:id>",
+        description:
+          "Affected target as monitor:<id> or node:<id> (repeatable)",
+      },
+      ...jsonFlag,
+    },
+    async run(ctx) {
+      const targets: MaintenanceTarget[] = (ctx.flags.target ?? []).map(
+        (raw) => {
+          const sep = raw.indexOf(":");
+          const type = raw.slice(0, sep);
+          const id = raw.slice(sep + 1);
+          if ((type !== "monitor" && type !== "node") || !id) {
+            throw new Error(
+              `Invalid --target "${raw}": expected monitor:<id> or node:<id>`,
+            );
+          }
+
+          return { type, id };
+        },
+      );
+      const res = await ctx.state.request<{ id: string }>(
+        "POST",
+        "/api/v1/admin/incident-reports",
+        {
+          id: ctx.flags.id,
+          title: ctx.flags.title,
+          message: ctx.flags.message,
+          status: ctx.flags.status,
+          impact: ctx.flags.impact,
+          is_public: !ctx.flags.private,
+          targets,
+        },
+      );
+      emitJsonOr(ctx, { ok: true, id: res.id }, () => {
+        ctx.log.success(`Posted incident ${res.id}`);
+      });
+    },
+  });
+
+  incCmd.command("update <id>", {
+    description: "Append a timeline update to a manual incident report",
+    args: { id: { description: "Incident report id" } },
+    flags: {
+      message: {
+        type: String,
+        required: true,
+        description: "Timeline update message",
+      },
+      status: {
+        type: incidentStatusType,
+        description:
+          "New status (investigating, identified, monitoring, resolved)",
+      },
+      ...jsonFlag,
+    },
+    async run(ctx) {
+      const res = await ctx.state.request(
+        "POST",
+        `/api/v1/admin/incident-reports/${encodeURIComponent(ctx.args.id)}/updates`,
+        { message: ctx.flags.message, status: ctx.flags.status },
+      );
+      emitJsonOr(ctx, res, () => {
+        ctx.log.success(`Updated incident ${ctx.args.id}`);
+      });
+    },
+  });
+
+  incCmd.command("rm <id>", {
+    aliases: ["delete", "del"],
+    description: "Delete a manual incident report",
+    args: { id: { description: "Incident report id" } },
+    flags: { ...jsonFlag },
+    async run(ctx) {
+      await ctx.state.request(
+        "DELETE",
+        `/api/v1/admin/incident-reports/${encodeURIComponent(ctx.args.id)}`,
+      );
+      emitJsonOr(ctx, { ok: true, id: ctx.args.id }, () => {
+        ctx.log.success(`Deleted incident ${ctx.args.id}`);
       });
     },
   });

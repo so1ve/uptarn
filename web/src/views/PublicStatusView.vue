@@ -64,6 +64,16 @@ const ongoingIncidents = computed(() =>
 const resolvedIncidents = computed(() =>
   props.status.incidents.filter((i) => i.state === "resolved"),
 );
+const activeReports = computed(() =>
+  (props.status.incident_reports ?? []).filter(
+    (r) => r.resolved_at === null && r.status !== "resolved",
+  ),
+);
+const resolvedReports = computed(() =>
+  (props.status.incident_reports ?? []).filter(
+    (r) => r.resolved_at !== null || r.status === "resolved",
+  ),
+);
 const incidentsByMonitorKey = computed(() => {
   const map = new Map<string, typeof props.status.incidents>();
   for (const inc of props.status.incidents) {
@@ -88,16 +98,21 @@ const banner = computed(() => {
     props.status.nodes.filter(
       (n) => n.overall_status === "fail" || n.overall_status === "offline",
     ).length;
-  if (failing > 0) {
+  if (failing > 0 || activeReports.value.some((r) => r.impact === "major")) {
     return {
       tone: "fail" as const,
       text:
-        failing === 1
-          ? "1 service experiencing issues"
-          : `${failing} services experiencing issues`,
+        failing > 0
+          ? failing === 1
+            ? "1 service experiencing issues"
+            : `${failing} services experiencing issues`
+          : "Active service disruption",
     };
   }
-  if (props.status.nodes.some((n) => n.overall_status === "warn")) {
+  if (
+    activeReports.value.length > 0 ||
+    props.status.nodes.some((n) => n.overall_status === "warn")
+  ) {
     return { tone: "warn" as const, text: "Partial system degradation" };
   }
 
@@ -157,6 +172,7 @@ async function onSignedIn() {
         highlight
         :incidents="ongoingIncidents"
         :now="status.now"
+        :reports="activeReports"
         title="Active incidents"
       />
 
@@ -295,6 +311,7 @@ async function onSignedIn() {
       <PublicIncidentsSection
         :incidents="resolvedIncidents"
         :now="status.now"
+        :reports="resolvedReports"
         title="Recent incidents"
       />
     </div>

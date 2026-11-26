@@ -4,10 +4,15 @@ import type {
   AlertEventSummary,
   BootPayload,
   DashboardSnapshot,
+  IncidentNoteSummary,
+  IncidentReportImpact,
+  IncidentReportStatus,
+  IncidentReportSummary,
   JobSummary,
   LiveNodeSample,
   MaintenanceInput,
   MaintenanceSummary,
+  MaintenanceTarget,
   MonitorInput,
   MonitorRollupBucket,
   MonitorRollups,
@@ -15,6 +20,7 @@ import type {
   MonitorSummary,
   NodeHistoryResponse,
   NodeSummary,
+  PublicIncidentReportSummary,
   PublicIncidentSummary,
   PublicLiveMessage,
   PublicLiveNodeSample,
@@ -1237,6 +1243,52 @@ function createInitialState(): DemoState {
           last_summary: "Volume 1 (RAID) at 87% capacity",
         },
       ],
+      incident_reports: [
+        {
+          id: "inc-eu-packet-loss",
+          title: "Elevated packet loss on EU upstream transit",
+          status: "resolved",
+          impact: "minor",
+          is_public: true,
+          targets: [{ type: "monitor", id: "chat" }],
+          updates: [
+            {
+              id: "upd-eu-1",
+              status: "investigating",
+              message:
+                "Investigating intermittent 502 responses and elevated latency affecting Team Chat.",
+              created_at: now - 3 * 3600 - 2500,
+            },
+            {
+              id: "upd-eu-2",
+              status: "monitoring",
+              message:
+                "Rerouted outbound traffic through Frankfurt backup transit. Error rate has dropped to zero.",
+              created_at: now - 3 * 3600 - 1200,
+            },
+            {
+              id: "upd-eu-3",
+              status: "resolved",
+              message:
+                "Primary upstream carrier completed route reconvergence. All metrics back to normal.",
+              created_at: now - 3 * 3600,
+            },
+          ],
+          created_at: now - 3 * 3600 - 2500,
+          updated_at: now - 3 * 3600,
+          resolved_at: now - 3 * 3600,
+        },
+      ],
+      incident_notes: [
+        {
+          id: "note-nas-1",
+          incident_key: "node:nas-01:mount:/volume1",
+          status: "identified",
+          message: "Replacing 8 TiB drive during weekend maintenance window.",
+          is_public: false,
+          created_at: now - 1200,
+        },
+      ],
       maintenances,
       nodes,
       monitors,
@@ -1347,15 +1399,31 @@ function buildPublicStatus(st: DemoState): PublicStatusSnapshot {
   const incidents: PublicIncidentSummary[] = [];
   const chatKey = monitorKeyById.get("chat");
   if (chatKey) {
+    const startedAt = st.bootedAt - 3 * 3600 - 240;
+    const chatNotes = snap.incident_notes
+      .filter(
+        (n) =>
+          n.is_public &&
+          n.incident_key === "monitor:chat" &&
+          n.created_at >= startedAt,
+      )
+      .sort((a, b) => a.created_at - b.created_at)
+      .map((n) => ({
+        id: n.id,
+        status: n.status,
+        message: n.message,
+        created_at: n.created_at,
+      }));
     incidents.push({
       key: "pub-inc-chat",
       target_key: chatKey,
       target_type: "monitor",
       name: "Team Chat",
       state: "resolved",
-      started_at: st.bootedAt - 3 * 3600 - 240,
+      started_at: startedAt,
       resolved_at: st.bootedAt - 3 * 3600,
       reason: "HTTP 502",
+      ...(chatNotes.length > 0 ? { notes: chatNotes } : {}),
     });
   }
 
@@ -1388,6 +1456,35 @@ function buildPublicStatus(st: DemoState): PublicStatusSnapshot {
 
   void nodeKeyById;
 
+  const incident_reports: PublicIncidentReportSummary[] = snap.incident_reports
+    .filter((r) => r.is_public)
+    .flatMap((r, idx) => {
+      const targetNames = r.targets
+        .map((tItem) =>
+          tItem.type === "node"
+            ? (publicNodes.find((n) => n.id === tItem.id)?.label ?? null)
+            : (publicMonitors.find((mon) => mon.id === tItem.id)?.name ?? null),
+        )
+        .filter((x): x is string => x !== null);
+      if (r.targets.length > 0 && targetNames.length === 0) {
+        return [];
+      }
+
+      return [
+        {
+          key: `ir${idx}`,
+          title: r.title,
+          status: r.status,
+          impact: r.impact,
+          targets: targetNames,
+          updates: r.updates,
+          created_at: r.created_at,
+          updated_at: r.updated_at,
+          resolved_at: r.resolved_at,
+        },
+      ];
+    });
+
   return {
     now,
     version: snap.version,
@@ -1398,6 +1495,7 @@ function buildPublicStatus(st: DemoState): PublicStatusSnapshot {
     monitors,
     nodes,
     incidents,
+    incident_reports,
     maintenances,
   };
 }
@@ -1871,6 +1969,214 @@ export async function demoApiFetch<T = Record<string, unknown>>(
     target.acknowledged_at = acknowledged ? now : null;
 
     return { ok: true, acknowledged_at: target.acknowledged_at } as T;
+  }
+
+  if (pathname === "/api/v1/admin/incident-notes" && method === "POST") {
+    const incidentKey = String(payload.incident_key ?? "").trim();
+    const message = String(payload.message ?? "").trim();
+    if (!incidentKey || !message) {
+      throw new ApiError(400, "incident_key and message are required");
+    }
+    const note: IncidentNoteSummary = {
+      id: `note-${Math.random().toString(36).slice(2, 8)}`,
+      incident_key: incidentKey,
+      status: (payload.status ?? null) as IncidentReportStatus | null,
+      message,
+      is_public: payload.is_public !== false,
+      created_at:
+        typeof payload.created_at === "number" ? payload.created_at : now,
+    };
+    snap.incident_notes.unshift(note);
+
+    return { ok: true, note } as T;
+  }
+
+  const noteMatch = /^\/api\/v1\/admin\/incident-notes\/([^/]+)$/.exec(
+    pathname,
+  );
+  if (noteMatch) {
+    const id = decodeURIComponent(noteMatch[1]);
+    const idx = snap.incident_notes.findIndex((n) => n.id === id);
+    if (idx === -1) {
+      throw new ApiError(404, "Not found");
+    }
+    if (method === "PATCH") {
+      const note = snap.incident_notes[idx];
+      if (typeof payload.message === "string" && payload.message.trim()) {
+        note.message = payload.message.trim();
+      }
+      if (payload.status !== undefined) {
+        note.status = (payload.status ?? null) as IncidentReportStatus | null;
+      }
+      if (typeof payload.is_public === "boolean") {
+        note.is_public = payload.is_public;
+      }
+      if (typeof payload.created_at === "number") {
+        note.created_at = payload.created_at;
+      }
+
+      return { ok: true, note } as T;
+    }
+    if (method === "DELETE") {
+      snap.incident_notes.splice(idx, 1);
+
+      return { ok: true } as T;
+    }
+  }
+
+  if (pathname === "/api/v1/admin/incident-reports" && method === "POST") {
+    const title = String(payload.title ?? "").trim();
+    if (!title) {
+      throw new ApiError(400, "title is required");
+    }
+    const status = (payload.status ?? "investigating") as IncidentReportStatus;
+    const impact = (payload.impact ?? "minor") as IncidentReportImpact;
+    const isPublic = payload.is_public !== false;
+    const message = String(payload.message ?? "").trim();
+    const createdAt =
+      typeof payload.created_at === "number" ? payload.created_at : undefined;
+    const targets = Array.isArray(payload.targets)
+      ? (payload.targets as MaintenanceTarget[])
+      : [];
+    const requestedId = String(payload.id ?? "").trim();
+    const existing = requestedId
+      ? snap.incident_reports.find((r) => r.id === requestedId)
+      : undefined;
+
+    if (existing) {
+      existing.title = title;
+      existing.status = status;
+      existing.impact = impact;
+      existing.is_public = isPublic;
+      existing.targets = targets;
+      if (createdAt !== undefined) {
+        existing.created_at = createdAt;
+      }
+      if (message) {
+        existing.updates.push({
+          id: `upd-${Math.random().toString(36).slice(2, 8)}`,
+          status,
+          message,
+          created_at: now,
+        });
+      }
+      existing.updated_at = now;
+      existing.resolved_at =
+        status === "resolved" ? (existing.resolved_at ?? now) : null;
+
+      return { ok: true, id: existing.id } as T;
+    }
+
+    const id = requestedId || `inc-${Math.random().toString(36).slice(2, 8)}`;
+    const startedAt = createdAt ?? now;
+    const report: IncidentReportSummary = {
+      id,
+      title,
+      status,
+      impact,
+      is_public: isPublic,
+      targets,
+      updates: message
+        ? [
+            {
+              id: `upd-${Math.random().toString(36).slice(2, 8)}`,
+              status,
+              message,
+              created_at: startedAt,
+            },
+          ]
+        : [],
+      created_at: startedAt,
+      updated_at: now,
+      resolved_at: status === "resolved" ? now : null,
+    };
+    snap.incident_reports.unshift(report);
+
+    return { ok: true, id } as T;
+  }
+
+  const reportEntryMatch =
+    /^\/api\/v1\/admin\/incident-reports\/([^/]+)\/updates\/([^/]+)$/.exec(
+      pathname,
+    );
+  if (reportEntryMatch) {
+    const reportId = decodeURIComponent(reportEntryMatch[1]);
+    const updateId = decodeURIComponent(reportEntryMatch[2]);
+    const report = snap.incident_reports.find((r) => r.id === reportId);
+    if (!report) {
+      throw new ApiError(404, "Incident report not found");
+    }
+    const idx = report.updates.findIndex((u) => u.id === updateId);
+    if (idx === -1) {
+      throw new ApiError(404, "Timeline update not found");
+    }
+    if (method === "PATCH") {
+      const entry = report.updates[idx];
+      if (typeof payload.message === "string" && payload.message.trim()) {
+        entry.message = payload.message.trim();
+      }
+      if (payload.status !== undefined) {
+        entry.status = (payload.status ?? null) as IncidentReportStatus | null;
+      }
+      if (typeof payload.created_at === "number") {
+        entry.created_at = payload.created_at;
+      }
+      report.updates.sort((a, b) => a.created_at - b.created_at);
+      report.updated_at = now;
+
+      return { ok: true, report } as T;
+    }
+    if (method === "DELETE") {
+      report.updates.splice(idx, 1);
+      report.updated_at = now;
+
+      return { ok: true, report } as T;
+    }
+  }
+
+  const reportUpdateMatch =
+    /^\/api\/v1\/admin\/incident-reports\/([^/]+)\/updates$/.exec(pathname);
+  if (reportUpdateMatch && method === "POST") {
+    const id = decodeURIComponent(reportUpdateMatch[1]);
+    const report = snap.incident_reports.find((r) => r.id === id);
+    if (!report) {
+      throw new ApiError(404, "Incident report not found");
+    }
+    const message = String(payload.message ?? "").trim();
+    if (!message) {
+      throw new ApiError(400, "message is required");
+    }
+    const nextStatus = (payload.status ?? null) as IncidentReportStatus | null;
+    if (nextStatus !== null) {
+      report.status = nextStatus;
+      report.resolved_at =
+        nextStatus === "resolved" ? (report.resolved_at ?? now) : null;
+    }
+    report.updates.push({
+      id: `upd-${Math.random().toString(36).slice(2, 8)}`,
+      status: nextStatus,
+      message,
+      created_at:
+        typeof payload.created_at === "number" ? payload.created_at : now,
+    });
+    report.updates.sort((a, b) => a.created_at - b.created_at);
+    report.updated_at = now;
+
+    return { ok: true, report } as T;
+  }
+
+  const reportDelMatch = /^\/api\/v1\/admin\/incident-reports\/([^/]+)$/.exec(
+    pathname,
+  );
+  if (reportDelMatch && method === "DELETE") {
+    const id = decodeURIComponent(reportDelMatch[1]);
+    const idx = snap.incident_reports.findIndex((r) => r.id === id);
+    if (idx === -1) {
+      throw new ApiError(404, "Not found");
+    }
+    snap.incident_reports.splice(idx, 1);
+
+    return { ok: true } as T;
   }
 
   if (pathname === "/api/v1/admin/mute" && method === "POST") {

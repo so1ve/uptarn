@@ -2,6 +2,13 @@ import { generateRandomToken } from "./auth/index.ts";
 import { httpError } from "./http.ts";
 import type {
   HealthStatus,
+  IncidentNoteInput,
+  IncidentNotePatch,
+  IncidentReportImpact,
+  IncidentReportInput,
+  IncidentReportStatus,
+  IncidentReportUpdateInput,
+  IncidentReportUpdatePatch,
   JobInput,
   JobRunStatus,
   MaintenanceInput,
@@ -899,3 +906,140 @@ export function parseIncidentAckInput(raw: unknown): {
   return { incident_key: incidentKey, acknowledged: acknowledged ?? true };
 }
 
+const INCIDENT_REPORT_STATUSES = [
+  "investigating",
+  "identified",
+  "monitoring",
+  "resolved",
+] as const;
+
+const INCIDENT_REPORT_IMPACTS = ["minor", "major"] as const;
+
+function parseOptionalReportStatus(
+  val: unknown,
+): IncidentReportStatus | null | undefined {
+  if (val === undefined) {
+    return undefined;
+  }
+  if (val === null || val === "") {
+    return null;
+  }
+
+  return reqOneOf(val, "status", INCIDENT_REPORT_STATUSES);
+}
+
+export function parseIncidentNoteInput(raw: IncidentNoteInput | unknown) {
+  const obj = asObj(raw, "incident note input");
+  const incidentKey = reqStr(obj.incident_key, "incident_key", 200);
+  const status = parseOptionalReportStatus(obj.status) ?? null;
+  const message = reqStr(obj.message, "message", 1000);
+  const isPublic = bool(obj.is_public, "is_public") ?? true;
+  const createdAt =
+    obj.created_at === undefined
+      ? undefined
+      : parseTimestampSecs(obj.created_at, "created_at");
+
+  return {
+    incident_key: incidentKey,
+    status,
+    message,
+    is_public: isPublic,
+    created_at: createdAt,
+  };
+}
+
+export function parseIncidentNotePatch(raw: IncidentNotePatch | unknown) {
+  const obj = asObj(raw, "incident note patch");
+  const status = parseOptionalReportStatus(obj.status);
+  const message =
+    obj.message === undefined
+      ? undefined
+      : reqStr(obj.message, "message", 1000);
+  const isPublic = bool(obj.is_public, "is_public");
+  const createdAt =
+    obj.created_at === undefined
+      ? undefined
+      : parseTimestampSecs(obj.created_at, "created_at");
+
+  return {
+    status,
+    message,
+    is_public: isPublic,
+    created_at: createdAt,
+  };
+}
+
+export function parseIncidentReportInput(raw: IncidentReportInput | unknown) {
+  const obj = asObj(raw, "incident report input");
+  const title = reqStr(obj.title, "title", 100);
+  const rawId = str(obj.id, "id", 64);
+  const id = rawId ? slug(rawId, "id") : generateSlugId("inc", title);
+  const status: IncidentReportStatus =
+    obj.status === undefined
+      ? "investigating"
+      : reqOneOf(obj.status, "status", INCIDENT_REPORT_STATUSES);
+  const impact: IncidentReportImpact =
+    obj.impact === undefined
+      ? "minor"
+      : reqOneOf(obj.impact, "impact", INCIDENT_REPORT_IMPACTS);
+  const isPublic = bool(obj.is_public, "is_public") ?? true;
+  const message = str(obj.message, "message", 1000) ?? "";
+  const createdAt =
+    obj.created_at === undefined
+      ? undefined
+      : parseTimestampSecs(obj.created_at, "created_at");
+  const seen = new Set<string>();
+  const targets: MaintenanceTarget[] = [];
+  for (const item of list(obj.targets, "targets", 100, (tItem, prefix) => ({
+    type: reqOneOf(tItem.type, `${prefix}.type`, MAINTENANCE_TARGET_TYPES),
+    id: slug(tItem.id, `${prefix}.id`),
+  }))) {
+    const key = `${item.type}:${item.id}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      targets.push(item);
+    }
+  }
+
+  return {
+    id,
+    title,
+    status,
+    impact,
+    is_public: isPublic,
+    message,
+    created_at: createdAt,
+    targets,
+  };
+}
+
+export function parseIncidentReportUpdateInput(
+  raw: IncidentReportUpdateInput | unknown,
+) {
+  const obj = asObj(raw, "incident report update");
+  const status = parseOptionalReportStatus(obj.status) ?? null;
+  const message = reqStr(obj.message, "message", 1000);
+  const createdAt =
+    obj.created_at === undefined
+      ? undefined
+      : parseTimestampSecs(obj.created_at, "created_at");
+
+  return { status, message, created_at: createdAt };
+}
+
+export function parseIncidentReportUpdatePatch(
+  raw: IncidentReportUpdatePatch | unknown,
+) {
+  const obj = asObj(raw, "incident report update patch");
+  const status = parseOptionalReportStatus(obj.status);
+  const message =
+    obj.message === undefined
+      ? undefined
+      : reqStr(obj.message, "message", 1000);
+  const createdAt =
+    obj.created_at === undefined
+      ? undefined
+      : parseTimestampSecs(obj.created_at, "created_at");
+
+  return { status, message, created_at: createdAt };
+}

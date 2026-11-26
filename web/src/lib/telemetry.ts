@@ -1,11 +1,17 @@
 import type {
   DashboardSnapshot,
   HealthStatus,
+  IncidentHistoryRecord,
+  IncidentNoteSummary,
+  IncidentReportImpact,
+  IncidentReportStatus,
+  IncidentReportUpdate,
   IncidentSummary,
   MonitorRollupBucket,
   MonitorSummary,
   MountSnapshot,
   NodeSummary,
+  PublicIncidentNote,
   PublicMonitorSummary,
   TargetType,
 } from "../../../src/shared/index.ts";
@@ -302,4 +308,206 @@ export function deliveryStatus(
     muted: false,
     detail: channels.size > 0 ? `Sent via ${[...channels].join(", ")}` : null,
   };
+}
+
+export const INCIDENT_REPORT_STATUS_LABEL: Record<
+  IncidentReportStatus,
+  string
+> = {
+  investigating: "Investigating",
+  identified: "Identified",
+  monitoring: "Monitoring",
+  resolved: "Resolved",
+};
+
+export function incidentReportBadgeColor(
+  status: IncidentReportStatus,
+  impact: IncidentReportImpact,
+): "success" | "warning" | "error" | "info" {
+  if (status === "resolved") {
+    return "success";
+  }
+  if (status === "monitoring") {
+    return "info";
+  }
+  if (status === "investigating" && impact === "major") {
+    return "error";
+  }
+
+  return "warning";
+}
+
+export function incidentReportDotStatus(
+  status: IncidentReportStatus,
+  impact: IncidentReportImpact,
+): "ok" | "warn" | "fail" | "running" {
+  if (status === "resolved") {
+    return "ok";
+  }
+  if (status === "monitoring") {
+    return "running";
+  }
+
+  return impact === "major" ? "fail" : "warn";
+}
+
+export interface TimelineEntry {
+  key: string;
+  editId?: string;
+  status?: IncidentReportStatus | null;
+  isPublic?: boolean;
+  label: string;
+  tone: "ok" | "warn" | "fail" | "info" | "neutral";
+  message: string;
+  timestamp: number;
+  meta?: string | null;
+  metaWarn?: boolean;
+}
+
+function statusTone(
+  status: IncidentReportStatus | null,
+  impact: IncidentReportImpact = "minor",
+): TimelineEntry["tone"] {
+  if (status === null) {
+    return "neutral";
+  }
+  if (status === "resolved") {
+    return "ok";
+  }
+  if (status === "monitoring") {
+    return "info";
+  }
+  if (status === "investigating" && impact === "major") {
+    return "fail";
+  }
+
+  return "warn";
+}
+
+export const incidentReportTimeline = (
+  updates: readonly IncidentReportUpdate[],
+  impact: IncidentReportImpact,
+  editable = false,
+): TimelineEntry[] =>
+  [...updates]
+    .sort((a, b) => b.created_at - a.created_at)
+    .map((u): TimelineEntry => ({
+      key: u.id,
+      editId: editable ? u.id : undefined,
+      status: u.status,
+      label: u.status ? INCIDENT_REPORT_STATUS_LABEL[u.status] : "Update",
+      tone: statusTone(u.status, impact),
+      message: u.message,
+      timestamp: u.created_at,
+    }));
+
+export function activeAutoIncidentTimeline(
+  inc: IncidentSummary,
+  notes: readonly IncidentNoteSummary[],
+): TimelineEntry[] {
+  const entries: TimelineEntry[] = notes.map((n) => ({
+    key: n.id,
+    editId: n.id,
+    status: n.status,
+    isPublic: n.is_public,
+    label: n.status ? INCIDENT_REPORT_STATUS_LABEL[n.status] : "Update",
+    tone: statusTone(n.status),
+    message: n.message,
+    timestamp: n.created_at,
+    meta: n.is_public ? null : "Internal only",
+  }));
+
+  entries.push({
+    key: `auto:${inc.incident_key}`,
+    label: inc.state === "open" ? "Alert firing" : "Check failing",
+    tone: inc.state === "open" ? "fail" : "warn",
+    message: inc.last_summary,
+    timestamp: inc.opened_at ?? inc.last_changed_at,
+  });
+
+  return entries.sort((a, b) => b.timestamp - a.timestamp);
+}
+
+export function historyRecordTimeline(
+  rec: IncidentHistoryRecord,
+  notes: readonly IncidentNoteSummary[] = [],
+): TimelineEntry[] {
+  const entries: TimelineEntry[] = [];
+
+  if (rec.state === "resolved" && rec.resolved_at !== null) {
+    const d = rec.resolved_delivery
+      ? deliveryStatus(rec.resolved_delivery)
+      : null;
+    entries.push({
+      key: `resolved:${rec.id}`,
+      label: "Resolved",
+      tone: "ok",
+      message: rec.resolved_summary ?? "Target recovered",
+      timestamp: rec.resolved_at,
+      meta: d ? (d.detail ?? d.text) : null,
+      metaWarn: d?.warn ?? false,
+    });
+  }
+
+  for (const n of notes) {
+    entries.push({
+      key: n.id,
+      editId: n.id,
+      status: n.status,
+      isPublic: n.is_public,
+      label: n.status ? INCIDENT_REPORT_STATUS_LABEL[n.status] : "Update",
+      tone: statusTone(n.status),
+      message: n.message,
+      timestamp: n.created_at,
+      meta: n.is_public ? null : "Internal only",
+    });
+  }
+
+  const firingD = deliveryStatus(rec.firing_delivery);
+  entries.push({
+    key: `firing:${rec.id}`,
+    label: "Alert firing",
+    tone: "fail",
+    message: rec.summary,
+    timestamp: rec.started_at,
+    meta: firingD.detail ?? firingD.text,
+    metaWarn: firingD.warn,
+  });
+
+  return entries.sort((a, b) => b.timestamp - a.timestamp);
+}
+
+export function publicAutoIncidentTimeline(
+  reason: string,
+  startedAt: number,
+  resolvedAt: number | null,
+  notes: readonly PublicIncidentNote[],
+): TimelineEntry[] {
+  const entries: TimelineEntry[] = notes.map((n) => ({
+    key: n.id,
+    label: n.status ? INCIDENT_REPORT_STATUS_LABEL[n.status] : "Update",
+    tone: statusTone(n.status),
+    message: n.message,
+    timestamp: n.created_at,
+  }));
+
+  if (resolvedAt !== null) {
+    entries.push({
+      key: `pub-resolved:${resolvedAt}`,
+      label: "Resolved",
+      tone: "ok",
+      message: "Service recovered",
+      timestamp: resolvedAt,
+    });
+  }
+
+  entries.push({
+    key: `pub-started:${startedAt}`,
+    label: "Detected",
+    tone: "fail",
+    message: reason,
+    timestamp: startedAt,
+  });
+
+  return entries.sort((a, b) => b.timestamp - a.timestamp);
 }

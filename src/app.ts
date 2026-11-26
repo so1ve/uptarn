@@ -19,9 +19,14 @@ import type { SqlDatabase } from "./db/index.ts";
 import type { SettingRow } from "./domain/index.ts";
 import {
   SELECT_SETTINGS_SQL,
+  appendIncidentReportUpdate,
   buildChannelsFlags,
+  createIncidentNote,
   createNode,
   createPushJob,
+  deleteIncidentNote,
+  deleteIncidentReport,
+  deleteIncidentReportEntry,
   deleteMaintenance,
   deleteTarget,
   getDashboardSnapshot,
@@ -37,10 +42,13 @@ import {
   sendTestNotification,
   setIncidentAcknowledged,
   setTargetMute,
+  updateIncidentNote,
+  updateIncidentReportEntry,
   updateMonitor,
   updateNode,
   updatePushJob,
   updateRuntimeSettings,
+  upsertIncidentReport,
   upsertMaintenance,
   upsertMonitor,
 } from "./domain/index.ts";
@@ -346,6 +354,84 @@ export function createApp(
     }
 
     return c.json({ ok: true, acknowledged_at: res.acknowledged_at });
+  });
+
+  app.post("/api/v1/admin/incident-notes", async (c) => {
+    const note = await createIncidentNote(db, await readJson(c));
+
+    return c.json({ ok: true, note }, 201);
+  });
+
+  app.patch("/api/v1/admin/incident-notes/:id", async (c) => {
+    const note = await updateIncidentNote(
+      db,
+      c.req.param("id"),
+      await readJson(c),
+    );
+    if (!note) {
+      throw httpError(404, "Not found");
+    }
+
+    return c.json({ ok: true, note });
+  });
+
+  app.delete("/api/v1/admin/incident-notes/:id", async (c) => {
+    if (!(await deleteIncidentNote(db, c.req.param("id")))) {
+      throw httpError(404, "Not found");
+    }
+
+    return c.json({ ok: true });
+  });
+
+  app.post("/api/v1/admin/incident-reports", async (c) => {
+    const res = await upsertIncidentReport(db, await readJson(c));
+
+    return c.json({ ok: true, id: res.id }, res.created ? 201 : 200);
+  });
+
+  app.post("/api/v1/admin/incident-reports/:id/updates", async (c) => {
+    const report = await appendIncidentReportUpdate(
+      db,
+      c.req.param("id"),
+      await readJson(c),
+    );
+
+    return c.json({ ok: true, report });
+  });
+
+  app.patch(
+    "/api/v1/admin/incident-reports/:id/updates/:updateId",
+    async (c) => {
+      const report = await updateIncidentReportEntry(
+        db,
+        c.req.param("id"),
+        c.req.param("updateId"),
+        await readJson(c),
+      );
+
+      return c.json({ ok: true, report });
+    },
+  );
+
+  app.delete(
+    "/api/v1/admin/incident-reports/:id/updates/:updateId",
+    async (c) => {
+      const report = await deleteIncidentReportEntry(
+        db,
+        c.req.param("id"),
+        c.req.param("updateId"),
+      );
+
+      return c.json({ ok: true, report });
+    },
+  );
+
+  app.delete("/api/v1/admin/incident-reports/:id", async (c) => {
+    if (!(await deleteIncidentReport(db, c.req.param("id")))) {
+      throw httpError(404, "Not found");
+    }
+
+    return c.json({ ok: true });
   });
 
   app.post("/api/v1/admin/mute", async (c) => {
