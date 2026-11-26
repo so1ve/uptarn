@@ -3,7 +3,11 @@ import type { Ref } from "vue";
 import { reactive, ref, watch } from "vue";
 
 import type { TargetType } from "../../../src/shared/index.ts";
-import { errorMessage, formatDuration } from "../../../src/shared/index.ts";
+import {
+  PERMANENT_MUTE_UNTIL,
+  errorMessage,
+  formatDuration,
+} from "../../../src/shared/index.ts";
 import { apiFetch } from "../lib/api.ts";
 import { useUptarnStore } from "../lib/store.ts";
 import type { MonitorWindow } from "../lib/telemetry.ts";
@@ -59,20 +63,34 @@ export function useAction() {
     targetType: TargetType,
     targetId: string,
     label: string,
-    durationSecs: number,
+    duration: number | "forever",
   ) =>
     run(
       key,
       "Failed to update mute",
       async () => {
-        await apiFetch("/api/v1/admin/mute", "POST", {
-          target_type: targetType,
-          target_id: targetId,
-          duration_secs: durationSecs,
-        });
+        await apiFetch(
+          "/api/v1/admin/mute",
+          "POST",
+          duration === "forever"
+            ? {
+                target_type: targetType,
+                target_id: targetId,
+                muted_until: PERMANENT_MUTE_UNTIL,
+              }
+            : {
+                target_type: targetType,
+                target_id: targetId,
+                duration_secs: duration,
+              },
+        );
 
-        return durationSecs > 0
-          ? `Muted ${label} for ${formatDuration(durationSecs)}`
+        if (duration === "forever") {
+          return `Muted ${label} forever`;
+        }
+
+        return duration > 0
+          ? `Muted ${label} for ${formatDuration(duration)}`
           : `Resumed notifications for ${label}`;
       },
       true,

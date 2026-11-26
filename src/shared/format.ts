@@ -115,6 +115,11 @@ export function formatAge(ts: number | null | undefined, now: number): string {
   return delta < 5 ? "just now" : `${formatDuration(delta)} ago`;
 }
 
+export const PERMANENT_MUTE_UNTIL = 253_402_300_799;
+
+export const isPermanentMute = (untilTs: number): boolean =>
+  untilTs >= PERMANENT_MUTE_UNTIL;
+
 export const formatRemaining = (untilTs: number, now: number): string =>
   untilTs <= now ? "expired" : formatDuration(untilTs - now);
 

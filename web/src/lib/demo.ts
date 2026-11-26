@@ -2213,7 +2213,12 @@ export async function demoApiFetch<T = Record<string, unknown>>(
     if (payload.rotate_enrollment_token) {
       snap.settings.enrollment_token = `uptn_enroll_demo_${Math.random().toString(36).slice(2, 10)}`;
     }
-    if (typeof payload.global_mute_secs === "number") {
+    if (typeof payload.global_muted_until === "number") {
+      snap.settings.global_muted_until = Math.max(
+        0,
+        Math.floor(payload.global_muted_until),
+      );
+    } else if (typeof payload.global_mute_secs === "number") {
       snap.settings.global_muted_until =
         payload.global_mute_secs > 0 ? now + payload.global_mute_secs : 0;
     }

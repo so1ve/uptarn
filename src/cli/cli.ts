@@ -22,7 +22,12 @@ import type {
   MonitorInput,
   TargetType,
 } from "../shared/index.ts";
-import { pairIncidentEvents, unixNow } from "../shared/index.ts";
+import {
+  PERMANENT_MUTE_UNTIL,
+  isPermanentMute,
+  pairIncidentEvents,
+  unixNow,
+} from "../shared/index.ts";
 import { parseTimestampSecs } from "../validation.ts";
 import {
   renderBanner,
@@ -1268,13 +1273,23 @@ export function createCli() {
     request: AdminRequestFn,
     targetType: TargetType,
     targetId: string,
-    durationSecs: number,
+    duration: number | "forever",
   ) =>
-    request<{ muted_until: number }>("POST", "/api/v1/admin/mute", {
-      target_type: targetType,
-      target_id: targetId,
-      duration_secs: durationSecs,
-    });
+    request<{ muted_until: number }>(
+      "POST",
+      "/api/v1/admin/mute",
+      duration === "forever"
+        ? {
+            target_type: targetType,
+            target_id: targetId,
+            muted_until: PERMANENT_MUTE_UNTIL,
+          }
+        : {
+            target_type: targetType,
+            target_id: targetId,
+            duration_secs: duration,
+          },
+    );
 
   admin.command("mute <targetType> <targetId>", {
     description: "Mute or unmute notifications for a node, monitor, or job",
@@ -1286,18 +1301,25 @@ export function createCli() {
         default: 3600,
         description: "Mute duration in seconds (0 unmutes)",
       },
+      forever: {
+        type: Boolean,
+        default: false,
+        description: "Mute indefinitely until unmuted",
+      },
     },
     async run(ctx) {
       const res = await applyMute(
         ctx.state.request,
         ctx.args.targetType,
         ctx.args.targetId,
-        ctx.flags.duration,
+        ctx.flags.forever ? "forever" : ctx.flags.duration,
       );
       ctx.log.success(
         res.muted_until === 0
           ? `Unmuted ${ctx.args.targetType} ${ctx.log.theme.bold(ctx.args.targetId)}.`
-          : `Muted ${ctx.args.targetType} ${ctx.log.theme.bold(ctx.args.targetId)} for ${ctx.flags.duration}s.`,
+          : isPermanentMute(res.muted_until)
+            ? `Muted ${ctx.args.targetType} ${ctx.log.theme.bold(ctx.args.targetId)} forever.`
+            : `Muted ${ctx.args.targetType} ${ctx.log.theme.bold(ctx.args.targetId)} for ${ctx.flags.duration}s.`,
       );
     },
   });
@@ -1397,17 +1419,27 @@ export function createCli() {
         default: 3600,
         description: "Global mute duration in seconds (0 unmutes)",
       },
+      forever: {
+        type: Boolean,
+        default: false,
+        description: "Mute indefinitely until unmuted",
+      },
       ...jsonFlag,
     },
     async run(ctx) {
-      const res = await patchSettings(ctx.state.request, {
-        global_mute_secs: ctx.flags.duration,
-      });
+      const res = await patchSettings(
+        ctx.state.request,
+        ctx.flags.forever
+          ? { global_muted_until: PERMANENT_MUTE_UNTIL }
+          : { global_mute_secs: ctx.flags.duration },
+      );
       emitJsonOr(ctx, res, () => {
         ctx.log.success(
           res.global_muted_until === 0
             ? "Unmuted global notifications."
-            : `Muted all notifications globally for ${ctx.flags.duration}s.`,
+            : isPermanentMute(res.global_muted_until)
+              ? "Muted all notifications globally forever."
+              : `Muted all notifications globally for ${ctx.flags.duration}s.`,
         );
       });
     },

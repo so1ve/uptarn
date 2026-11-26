@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { formatRemaining } from "../../lib/index.ts";
+import { formatRemaining, isPermanentMute } from "../../lib/index.ts";
 
 defineProps<{
   until: number;
@@ -16,6 +16,12 @@ defineProps<{
     size="xs"
     variant="subtle"
   >
-    {{ compact ? "Muted" : `Muted ${formatRemaining(until, now)}` }}
+    {{
+      compact
+        ? "Muted"
+        : isPermanentMute(until)
+          ? "Muted forever"
+          : `Muted ${formatRemaining(until, now)}`
+    }}
   </UBadge>
 </template>

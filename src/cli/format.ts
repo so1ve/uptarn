@@ -26,6 +26,7 @@ import {
   formatSeriesValue,
   formatTimestamp,
   formatUsage,
+  isPermanentMute,
   memPercent,
   percent,
   summarizeDisk,
@@ -156,7 +157,12 @@ const pctCell = (theme: Theme, pct: number | null | undefined): string =>
   pct === null || pct === undefined ? theme.muted("-") : `${pct.toFixed(0)}%`;
 
 const mutedEntry = (theme: Theme, until: number, now: number): KvEntry =>
-  until > now && ["Muted", theme.warn(`for ${formatRemaining(until, now)}`)];
+  until > now && [
+    "Muted",
+    theme.warn(
+      isPermanentMute(until) ? "forever" : `for ${formatRemaining(until, now)}`,
+    ),
+  ];
 
 const formatMonitorState = (theme: Theme, mon: MonitorSummary): string =>
   mon.enabled ? formatStatus(theme, mon.last_status) : theme.muted("paused");
@@ -729,7 +735,9 @@ export function renderSettingsDetail(
       "Global mute",
       settings.global_muted_until > now
         ? theme.warn(
-            `muted for ${formatRemaining(settings.global_muted_until, now)}`,
+            isPermanentMute(settings.global_muted_until)
+              ? "muted forever"
+              : `muted for ${formatRemaining(settings.global_muted_until, now)}`,
           )
         : theme.muted("off"),
     ],

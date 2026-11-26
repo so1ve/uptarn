@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
+import { computed, ref } from "vue";
 
 import IncidentTimeline from "../components/incidents/IncidentTimeline.vue";
 import IncidentReportModal from "../components/modals/IncidentReportModal.vue";
 import EmptyState from "../components/ui/EmptyState.vue";
+import MuteButton from "../components/ui/MuteButton.vue";
 import MutedBadge from "../components/ui/MutedBadge.vue";
 import PageHeader from "../components/ui/PageHeader.vue";
 import SegmentedControl from "../components/ui/SegmentedControl.vue";
@@ -56,19 +57,12 @@ const FILTER_OPTIONS: readonly { value: HistoryFilter; label: string }[] = [
   { value: "job", label: "Jobs" },
 ];
 
-const MUTE_DURATIONS = [
-  { label: "1h", secs: 3600 },
-  { label: "6h", secs: 21_600 },
-  { label: "24h", secs: 86_400 },
-] as const;
-
 const historyFilter = ref<HistoryFilter>("all");
 const historyQuery = ref("");
 
 const reportModalOpen = ref(false);
 const editingReport = ref<IncidentReportSummary | null>(null);
 const toggledItems = ref(new Set<string>());
-const mutePopovers = reactive<Record<string, boolean>>({});
 
 function isExpanded(itemKey: string, defaultOpen: boolean): boolean {
   const toggled = toggledItems.value.has(itemKey);
@@ -492,32 +486,6 @@ function onToggleBanner(inc: IncidentSummary) {
   );
 }
 
-async function onMuteTarget(
-  inc: IncidentSummary,
-  targetName: string,
-  durationSecs: number,
-) {
-  const ok = await run(
-    `mute:${inc.incident_key}`,
-    "Mute failed",
-    async () => {
-      await apiFetch("/api/v1/admin/mute", "POST", {
-        target_type: inc.target_type,
-        target_id: inc.target_id,
-        duration_secs: durationSecs,
-      });
-
-      return durationSecs > 0
-        ? `Muted all alerts for ${targetName}`
-        : `Unmuted ${targetName}`;
-    },
-    true,
-  );
-  if (ok) {
-    mutePopovers[inc.incident_key] = false;
-  }
-}
-
 function timelineBusyKey(prefix: string): string | null {
   if (!busy.value?.startsWith(`${prefix}:`)) {
     return null;
@@ -765,67 +733,15 @@ function timelineBusyKey(prefix: string): string | null {
                     }}
                   </UButton>
 
-                  <UPopover
-                    :open="Boolean(mutePopovers[item.inc.incident_key])"
-                    @update:open="
-                      (v) => (mutePopovers[item.inc.incident_key] = v)
-                    "
-                  >
-                    <UButton
-                      color="neutral"
-                      :icon="
-                        item.mutedUntil > snap.now
-                          ? 'i-lucide-bell'
-                          : 'i-lucide-bell-off'
-                      "
-                      :loading="busy === `mute:${item.inc.incident_key}`"
-                      size="xs"
-                      variant="ghost"
-                    >
-                      {{
-                        item.mutedUntil > snap.now
-                          ? `Unmute ${item.kind.toLowerCase()}`
-                          : `Mute ${item.kind.toLowerCase()}`
-                      }}
-                    </UButton>
-                    <template #content>
-                      <div class="w-60 space-y-2.5 p-3">
-                        <p class="text-xs leading-relaxed text-muted">
-                          {{
-                            item.mutedUntil > snap.now
-                              ? `Notifications for ${item.targetName} are currently muted.`
-                              : `Silence all alert notifications for ${item.targetName}:`
-                          }}
-                        </p>
-                        <div
-                          v-if="item.mutedUntil > snap.now"
-                          class="flex justify-end"
-                        >
-                          <UButton
-                            color="primary"
-                            size="xs"
-                            @click="onMuteTarget(item.inc, item.targetName, 0)"
-                          >
-                            Resume alerts
-                          </UButton>
-                        </div>
-                        <div v-else class="flex items-center gap-1.5">
-                          <UButton
-                            v-for="d in MUTE_DURATIONS"
-                            :key="d.secs"
-                            color="neutral"
-                            size="xs"
-                            variant="soft"
-                            @click="
-                              onMuteTarget(item.inc, item.targetName, d.secs)
-                            "
-                          >
-                            {{ d.label }}
-                          </UButton>
-                        </div>
-                      </div>
-                    </template>
-                  </UPopover>
+                  <MuteButton
+                    :idle-label="`Mute ${item.kind.toLowerCase()}`"
+                    :label="item.targetName"
+                    :muted-until="item.mutedUntil"
+                    :now="snap.now"
+                    :scope-note="`Silences all alert notifications for ${item.targetName}.`"
+                    :target-id="item.inc.target_id"
+                    :target-type="item.inc.target_type"
+                  />
                 </div>
               </div>
             </div>

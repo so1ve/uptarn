@@ -3,9 +3,11 @@ import { computed, ref } from "vue";
 
 import type { TargetType } from "../../lib/index.ts";
 import {
+  PERMANENT_MUTE_UNTIL,
   apiFetch,
   formatDuration,
   formatRemaining,
+  isPermanentMute,
   useAction,
 } from "../../lib/index.ts";
 
@@ -14,6 +16,7 @@ const props = withDefaults(
     targetType: TargetType | "global";
     targetId?: string;
     label?: string;
+    idleLabel?: string;
     scopeNote?: string;
     mutedUntil: number;
     now: number;
@@ -25,10 +28,12 @@ const props = withDefaults(
 );
 
 const PRESETS = [
-  { label: "30m", secs: 1800 },
-  { label: "1h", secs: 3600 },
-  { label: "6h", secs: 21_600 },
-  { label: "24h", secs: 86_400 },
+  { label: "30m", value: 1800 as number | "forever" },
+  { label: "1h", value: 3600 as number | "forever" },
+  { label: "6h", value: 21_600 as number | "forever" },
+  { label: "24h", value: 86_400 as number | "forever" },
+  { label: "7d", value: 604_800 as number | "forever" },
+  { label: "Forever", value: "forever" as number | "forever" },
 ] as const;
 
 const UNITS = [
@@ -45,6 +50,7 @@ const customAmount = ref("");
 const customUnit = ref<UnitLabel>("h");
 
 const isMuted = computed(() => props.mutedUntil > props.now);
+const isPermanent = computed(() => isPermanentMute(props.mutedUntil));
 const actionKey = computed(() =>
   props.targetType === "global"
     ? "mute:global"
@@ -53,11 +59,13 @@ const actionKey = computed(() =>
 const isBusy = computed(() => busy.value === actionKey.value);
 
 const remainingText = computed(() =>
-  isMuted.value ? formatRemaining(props.mutedUntil, props.now) : "",
+  isMuted.value && !isPermanent.value
+    ? formatRemaining(props.mutedUntil, props.now)
+    : "",
 );
 
 const untilLabel = computed(() => {
-  if (!isMuted.value) {
+  if (!isMuted.value || isPermanent.value) {
     return "";
   }
   const end = new Date(props.mutedUntil * 1000);
@@ -83,12 +91,18 @@ const untilLabel = computed(() => {
 
 const triggerLabel = computed(() => {
   if (isMuted.value) {
+    if (isPermanent.value) {
+      return props.targetType === "global" ? "All muted" : "Muted forever";
+    }
+
     return props.targetType === "global"
       ? `All muted ${remainingText.value}`
       : `Muted ${remainingText.value}`;
   }
 
-  return props.targetType === "global" ? "Mute all" : "Mute";
+  return (
+    props.idleLabel ?? (props.targetType === "global" ? "Mute all" : "Mute")
+  );
 });
 
 const triggerAriaLabel = computed(() => {
@@ -97,9 +111,13 @@ const triggerAriaLabel = computed(() => {
       ? "all notifications"
       : (props.label ?? props.targetType);
 
-  return isMuted.value
-    ? `Muted ${target} (${remainingText.value} remaining)`
-    : `Mute ${target}`;
+  if (!isMuted.value) {
+    return `Mute ${target}`;
+  }
+
+  return isPermanent.value
+    ? `Muted ${target} forever`
+    : `Muted ${target} (${remainingText.value} remaining)`;
 });
 
 const activeUnit = computed(
@@ -115,19 +133,27 @@ const customSecs = computed(() => {
   return n * activeUnit.value.secs;
 });
 
-async function applyMute(durationSecs: number) {
+async function applyMute(duration: number | "forever") {
   let ok = false;
   if (props.targetType === "global") {
     ok = await run(
       actionKey.value,
       "Failed to update mute",
       async () => {
-        await apiFetch("/api/v1/admin/settings", "PATCH", {
-          global_mute_secs: durationSecs,
-        });
+        await apiFetch(
+          "/api/v1/admin/settings",
+          "PATCH",
+          duration === "forever"
+            ? { global_muted_until: PERMANENT_MUTE_UNTIL }
+            : { global_mute_secs: duration },
+        );
 
-        return durationSecs > 0
-          ? `Muted all notifications for ${formatDuration(durationSecs)}`
+        if (duration === "forever") {
+          return "Muted all notifications forever";
+        }
+
+        return duration > 0
+          ? `Muted all notifications for ${formatDuration(duration)}`
           : "All notifications unmuted";
       },
       true,
@@ -138,7 +164,7 @@ async function applyMute(durationSecs: number) {
       props.targetType,
       props.targetId,
       props.label ?? props.targetId,
-      durationSecs,
+      duration,
     );
   }
   if (ok) {
@@ -156,7 +182,11 @@ function onCustomSubmit() {
 </script>
 
 <template>
-  <UPopover v-if="!mutedOnly || isMuted" v-model:open="open">
+  <UPopover
+    v-if="!mutedOnly || isMuted"
+    v-model:open="open"
+    :ui="{ content: 'z-[100]' }"
+  >
     <UButton
       :aria-label="iconOnly ? triggerAriaLabel : undefined"
       :class="isMuted ? 'tabular-nums' : ''"
@@ -180,10 +210,10 @@ function onCustomSubmit() {
             <div
               class="text-xs font-medium text-amber-600 tabular-nums dark:text-amber-400"
             >
-              Muted {{ remainingText }}
+              {{ isPermanent ? "Muted forever" : `Muted ${remainingText}` }}
             </div>
             <div class="text-[11px] text-dimmed tabular-nums">
-              Until {{ untilLabel }}
+              {{ isPermanent ? "Until unmuted" : `Until ${untilLabel}` }}
             </div>
           </div>
           <UButton
@@ -201,16 +231,16 @@ function onCustomSubmit() {
           {{ scopeNote }}
         </p>
 
-        <div class="grid grid-cols-4 gap-1.5">
+        <div class="grid grid-cols-3 gap-1.5">
           <UButton
             v-for="p in PRESETS"
-            :key="p.secs"
+            :key="String(p.value)"
             block
             color="neutral"
             :disabled="isBusy"
             size="xs"
             variant="soft"
-            @click="applyMute(p.secs)"
+            @click="applyMute(p.value)"
           >
             {{ p.label }}
           </UButton>

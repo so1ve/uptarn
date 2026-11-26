@@ -329,6 +329,11 @@ describe("uptarn CLI commands", () => {
 
     expect(incidents.incidents.length).toBeGreaterThanOrEqual(1);
 
+    await runCli(["mute", "job", "nightly-backup", "--forever"]);
+    const foreverJobDetail = await runCli(["job", "show", "nightly-backup"]);
+
+    expect(foreverJobDetail.stdoutText()).toContain("forever");
+
     await runCli(["mute", "job", "nightly-backup", "-d", "600"]);
     const mutedJob = JSON.parse(
       (await runCli(["job", "show", "nightly-backup", "--json"])).stdoutText(),
@@ -356,6 +361,11 @@ describe("uptarn CLI commands", () => {
     ) as { enrollment_token: string };
 
     expect(rotated.enrollment_token).toMatch(/^uptn_enroll_/);
+
+    await runCli(["settings", "mute", "--forever"]);
+    const foreverSettingsOut = await runCli(["settings", "show"]);
+
+    expect(foreverSettingsOut.stdoutText()).toContain("muted forever");
 
     await runCli(["settings", "mute", "-d", "900"]);
     const settings = JSON.parse(
