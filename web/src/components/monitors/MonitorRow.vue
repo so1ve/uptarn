@@ -91,6 +91,12 @@ const displayLink = computed(() => {
     if (probe.type === "http" && probe.target) {
       return { href: probe.target, text: stripUrlScheme(probe.target) };
     }
+    if (adminMon.value.public_url) {
+      return {
+        href: adminMon.value.public_url,
+        text: stripUrlScheme(adminMon.value.public_url),
+      };
+    }
 
     return null;
   }
@@ -98,12 +104,6 @@ const displayLink = computed(() => {
 
   return url ? { href: url, text: stripUrlScheme(url) } : null;
 });
-
-const titleHref = computed(
-  () =>
-    displayLink.value?.href ??
-    (adminMon.value ? adminMon.value.public_url : null),
-);
 
 const targetText = computed(() => {
   const probe = adminMon.value?.probe;
@@ -150,21 +150,9 @@ const errorText = computed(() =>
         <StatusDot :status="dotStatus" />
       </div>
 
-      <div
-        class="min-w-0 flex-1 space-y-0.5 [&:has(.monitor-link:hover)_.monitor-link]:text-primary"
-      >
+      <div class="min-w-0 flex-1 space-y-0.5">
         <div class="flex min-w-0 items-center gap-1.5">
-          <a
-            v-if="titleHref"
-            class="monitor-link truncate text-[13.5px] leading-5 font-semibold transition-colors"
-            :href="titleHref"
-            rel="noreferrer"
-            target="_blank"
-            @click.stop
-          >
-            {{ monitor.name }}
-          </a>
-          <span v-else class="truncate text-[13.5px] leading-5 font-semibold">
+          <span class="truncate text-[13.5px] leading-5 font-semibold">
             {{ monitor.name }}
           </span>
 
@@ -200,7 +188,7 @@ const errorText = computed(() =>
 
         <a
           v-if="displayLink"
-          class="monitor-link inline-flex max-w-full items-center gap-1 font-mono text-[11.5px] text-dimmed transition-colors"
+          class="inline-flex max-w-full items-center gap-1 font-mono text-[11.5px] text-dimmed transition-colors hover:text-primary"
           :href="displayLink.href"
           rel="noreferrer"
           target="_blank"

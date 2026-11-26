@@ -168,6 +168,7 @@ type UnifiedHistoryItem =
       rec: IncidentHistoryRecord;
       kind: string;
       title: string;
+      targetName: string;
       to: string;
       delivery: ReturnType<typeof deliveryStatus>;
       timeline: TimelineEntry[];
@@ -282,6 +283,7 @@ const allHistoryItems = computed<UnifiedHistoryItem[]>(() => {
       rec,
       kind,
       title,
+      targetName: targetEntityName(rec.target_type, rec.target_id),
       to: incidentTargetPath(rec.target_type, rec.target_id),
       delivery: deliveryStatus(rec.firing_delivery, rec.resolved_delivery),
       timeline: historyRecordTimeline(rec, notes),
@@ -1028,19 +1030,17 @@ function timelineBusyKey(prefix: string): string | null {
                 :status="item.rec.state === 'resolved' ? 'ok' : 'warn'"
               />
               <div class="min-w-0 flex-1 space-y-1">
-                <div
-                  class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-sm"
+                <button
+                  :aria-expanded="isExpanded(item.itemKey, false)"
+                  class="flex w-full cursor-pointer flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-left text-sm focus-visible:outline-2 focus-visible:outline-primary"
+                  type="button"
+                  @click="toggleItem(item.itemKey)"
                 >
                   <div class="flex min-w-0 flex-wrap items-center gap-2">
                     <UBadge color="neutral" size="xs" variant="subtle">
                       {{ item.kind }}
                     </UBadge>
-                    <RouterLink
-                      class="font-medium transition-colors hover:text-primary"
-                      :to="item.to"
-                    >
-                      {{ item.title }}
-                    </RouterLink>
+                    <span class="font-medium">{{ item.title }}</span>
                     <UBadge
                       v-if="item.delivery.muted"
                       color="neutral"
@@ -1064,7 +1064,7 @@ function timelineBusyKey(prefix: string): string | null {
                       </span>
                     </UTooltip>
                   </div>
-                </div>
+                </button>
 
                 <button
                   :aria-expanded="isExpanded(item.itemKey, false)"
@@ -1098,7 +1098,10 @@ function timelineBusyKey(prefix: string): string | null {
                   </span>
                 </button>
 
-                <div v-if="isExpanded(item.itemKey, false)" class="pt-3">
+                <div
+                  v-if="isExpanded(item.itemKey, false)"
+                  class="space-y-3 pt-3"
+                >
                   <IncidentTimeline
                     :busy-key="timelineBusyKey(`auto:${item.rec.incident_key}`)"
                     can-add
@@ -1111,6 +1114,16 @@ function timelineBusyKey(prefix: string): string | null {
                     "
                     @edit="(p) => onEditAutoNote(item.rec.incident_key, p)"
                   />
+
+                  <div class="flex items-center justify-between pt-1">
+                    <RouterLink
+                      class="inline-flex items-center gap-1 text-xs font-medium text-muted transition-colors hover:text-primary"
+                      :to="item.to"
+                    >
+                      <span>Open {{ item.targetName }}</span>
+                      <UIcon class="size-3.5" name="i-lucide-arrow-up-right" />
+                    </RouterLink>
+                  </div>
                 </div>
               </div>
             </div>
