@@ -3,7 +3,7 @@ import { computed } from "vue";
 import { useRoute } from "vue-router";
 
 import IssuedTokenModal from "../components/modals/IssuedTokenModal.vue";
-import MutedBadge from "../components/ui/MutedBadge.vue";
+import MuteButton from "../components/ui/MuteButton.vue";
 import StatusBanner from "../components/ui/StatusBanner.vue";
 import {
   apiFetch,
@@ -133,10 +133,13 @@ async function onSignOut() {
     </template>
 
     <template #actions-prefix>
-      <MutedBadge
+      <MuteButton
         class="mr-1"
+        muted-only
+        :muted-until="snap.settings.global_muted_until"
         :now="snap.now"
-        :until="snap.settings.global_muted_until"
+        target-type="global"
+        variant="soft"
       />
       <UTooltip text="Run monitor checks now">
         <button

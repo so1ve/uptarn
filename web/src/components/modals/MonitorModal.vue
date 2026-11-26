@@ -290,7 +290,7 @@ async function onDelete() {
             and its history?
           </ConfirmPopover>
           <MuteButton
-            v-if="props.monitor && props.monitor.probe.type === 'exec'"
+            v-if="props.monitor"
             :label="props.monitor.name"
             :muted-until="props.monitor.muted_until"
             :now

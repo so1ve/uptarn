@@ -5,7 +5,7 @@ import { useRoute, useRouter } from "vue-router";
 import NodeChartsGrid from "../components/nodes/NodeChartsGrid.vue";
 import NodeTelemetryPanel from "../components/nodes/NodeTelemetryPanel.vue";
 import ConfirmPopover from "../components/ui/ConfirmPopover.vue";
-import MutedBadge from "../components/ui/MutedBadge.vue";
+import MuteButton from "../components/ui/MuteButton.vue";
 import StatusDot from "../components/ui/StatusDot.vue";
 import {
   apiFetch,
@@ -26,15 +26,10 @@ import {
   useUptarnStore,
 } from "../lib/index.ts";
 
-const MUTE_OPTIONS = [
-  { label: "Mute 1h", secs: 3600 },
-  { label: "Mute 1d", secs: 86_400 },
-] as const;
-
 const route = useRoute();
 const router = useRouter();
 const snap = useSnapshot();
-const { busy, run, mute } = useAction();
+const { busy, run } = useAction();
 const { isDark, showIssuedToken } = useUptarnStore();
 
 const nodeId = computed(() => String(route.params.id ?? ""));
@@ -42,9 +37,6 @@ const node = computed(
   () => snap.value.nodes.find((n) => n.id === nodeId.value) ?? null,
 );
 usePageTitle(() => node.value?.label ?? nodeId.value);
-const isMuted = computed(
-  () => node.value !== null && node.value.muted_until > snap.value.now,
-);
 const memPct = computed(() =>
   node.value ? memPercent(node.value.system) : null,
 );
@@ -171,10 +163,6 @@ async function onSaveGroup(raw: string | null) {
     groupPopoverOpen.value = false;
   }
 }
-
-const onMute = (secs: number) =>
-  node.value &&
-  mute(`mute:${secs}`, "node", node.value.id, node.value.label, secs);
 
 const onTogglePublic = () =>
   node.value &&
@@ -304,7 +292,6 @@ async function onDelete() {
             >
               Private
             </UBadge>
-            <MutedBadge :now="snap.now" :until="node.muted_until" />
           </div>
           <div
             class="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-xs text-muted tabular-nums"
@@ -421,29 +408,14 @@ async function onDelete() {
               {{ node.is_public ? "Make private" : "Make public" }}
             </UButton>
           </UTooltip>
-          <UButton
-            v-if="isMuted"
-            color="neutral"
-            :loading="busy === 'mute:0'"
-            size="xs"
+          <MuteButton
+            :label="node.label"
+            :muted-until="node.muted_until"
+            :now="snap.now"
+            :target-id="node.id"
+            target-type="node"
             variant="soft"
-            @click="onMute(0)"
-          >
-            Unmute
-          </UButton>
-          <template v-else>
-            <UButton
-              v-for="m in MUTE_OPTIONS"
-              :key="m.secs"
-              color="neutral"
-              :loading="busy === `mute:${m.secs}`"
-              size="xs"
-              variant="soft"
-              @click="onMute(m.secs)"
-            >
-              {{ m.label }}
-            </UButton>
-          </template>
+          />
 
           <ConfirmPopover
             confirm-color="primary"

@@ -4,7 +4,6 @@ import { computed, reactive, ref } from "vue";
 import MonitorModal from "../components/modals/MonitorModal.vue";
 import MonitorItem from "../components/monitors/MonitorItem.vue";
 import EmptyState from "../components/ui/EmptyState.vue";
-import MuteButton from "../components/ui/MuteButton.vue";
 import PageHeader from "../components/ui/PageHeader.vue";
 import SegmentedControl from "../components/ui/SegmentedControl.vue";
 import type { MonitorSummary } from "../lib/index.ts";
@@ -160,18 +159,7 @@ function openMonitorModal(mon: MonitorSummary | null) {
               @move-down="moveBy(mon.id, 1)"
               @move-up="moveBy(mon.id, -1)"
               @toggle="toggleExpand(mon.id)"
-            >
-              <template #chart-meta>
-                <MuteButton
-                  :label="mon.name"
-                  :muted-until="mon.muted_until"
-                  :now="snap.now"
-                  :target-id="mon.id"
-                  target-type="monitor"
-                  variant="soft"
-                />
-              </template>
-            </MonitorItem>
+            />
           </div>
         </div>
       </div>

@@ -17,6 +17,7 @@ import {
   uptimeToneClass,
 } from "../../lib/index.ts";
 import DragHandle from "../ui/DragHandle.vue";
+import MuteButton from "../ui/MuteButton.vue";
 import MutedBadge from "../ui/MutedBadge.vue";
 import StatusDot from "../ui/StatusDot.vue";
 import MonitorBars from "./MonitorBars.vue";
@@ -255,16 +256,28 @@ const errorText = computed(() =>
       </UTooltip>
     </div>
 
-    <UButton
+    <div
       v-if="adminMon"
-      aria-label="Edit monitor"
-      class="order-3 self-start lg:order-5 lg:self-center"
-      color="neutral"
-      icon="i-lucide-pencil"
-      size="xs"
-      variant="ghost"
-      @click.stop="emit('edit')"
-    />
+      class="order-3 flex items-center gap-0.5 self-start lg:order-5 lg:self-center"
+      @click.stop
+    >
+      <MuteButton
+        icon-only
+        :label="adminMon.name"
+        :muted-until="adminMon.muted_until"
+        :now
+        :target-id="adminMon.id"
+        target-type="monitor"
+      />
+      <UButton
+        aria-label="Edit monitor"
+        color="neutral"
+        icon="i-lucide-pencil"
+        size="xs"
+        variant="ghost"
+        @click.stop="emit('edit')"
+      />
+    </div>
 
     <div
       :class="
