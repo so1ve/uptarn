@@ -2,7 +2,7 @@
   "name": "uptarn",
   "private": true,
   "version": "0.7.0",
-  "packageManager": "pnpm@12.11.2",
+  "packageManager": "pnpm@12.23.0",
   "author": "Ray <i@mk1.io> (https://github.com/so1ve/)",
   "type": "module",
   "description": "Push-based monitoring hub built for Cloudflare Workers, unifying flexible node reporting, HTTP probes, and cron jobs",
